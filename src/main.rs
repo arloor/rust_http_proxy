@@ -3,6 +3,7 @@
 mod logx;
 
 use std::convert::Infallible;
+use std::env;
 use std::net::SocketAddr;
 use std::process::Command;
 
@@ -28,16 +29,22 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 #[tokio::main]
 async fn main() {
     init_log("proxy.log");
+    let cert = env::var("cert").unwrap_or("cert.pem".to_string());
+    let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
+    let basic_auth = env::var("basic_auth").unwrap_or("Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg==".to_string());
+    let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("false".to_string());
+    let key = env::var("key").unwrap_or("pkcs8_private_key.pem".to_string());
+
     let output = Command::new("sh")
         .arg("-c")
-        .arg("openssl pkcs8 -topk8 -inform PEM -in /root/.acme.sh/arloor.dev/arloor.dev.key -out /root/.acme.sh/arloor.dev/arloor.dev.pkcs8 -nocrypt")
+        .arg(format!("openssl pkcs8 -topk8 -inform PEM -in {} -out {} -nocrypt",raw_key.as_str(),key.as_str()))
         .output()
         .expect("error ensure pkcs8 private key");
     info!("{}",output.status);
     let stderr = String::from_utf8(output.stderr).unwrap();
-    info!("{}",stderr);
+    info!("stderr: {}",stderr);
     let stdout = String::from_utf8(output.stdout).unwrap();
-    info!("{}",stdout);
+    info!("stdout: {}",stdout);
     let addr = SocketAddr::from(([0, 0, 0, 0], 444));
 
     let client = Client::builder()
@@ -47,11 +54,15 @@ async fn main() {
 
     let make_service = make_service_fn(move |_| {
         let client = client.clone();
-        async move { Ok::<_, Infallible>(service_fn(move |req| proxy(client.clone(), req))) }
+        let basic_auth = basic_auth.clone();
+        async move {
+            Ok::<_, Infallible>(service_fn(move |req| {
+                proxy(client.clone(), req, basic_auth.clone(), ask_for_auth)
+            }))
+        }
     });
 
-    // let server = hyper_from_pem_files("cert.pem","privkey.pem", Protocols::ALL, &addr).expect("")
-    let server = hyper_from_pem_files("/root/.acme.sh/arloor.dev/fullchain.cer", "/root/.acme.sh/arloor.dev/arloor.dev.pkcs8", Protocols::ALL, &addr).expect("")
+    let server = hyper_from_pem_files(cert, key, Protocols::ALL, &addr).expect("")
         .http1_preserve_header_case(true)
         .http1_title_case_headers(true)
         .serve(make_service);
@@ -63,7 +74,7 @@ async fn main() {
     }
 }
 
-async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool) -> Result<Response<Body>, hyper::Error> {
     info!("req: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
     if let Some(host) = req.uri().host() {
         if host.ends_with("arloor.dev") {
@@ -71,24 +82,32 @@ async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Bo
             return Ok(resp);
         }
     }
-    let auth = req.headers().get("Proxy-Authorization");
-    match auth {
-        None => {
-            // return Ok(build_need_auth_resp());
-            return Ok(build_500_resp());
-        }
-        Some(header) => {
-            let x = header.to_str().unwrap();
-            if x != "Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg==" {
-                // return Ok(build_need_auth_resp());
-                return Ok(build_500_resp());
-            } else {
-                // 删除代理
-                req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
-                req.headers_mut().remove("Proxy-Connection");
+    if basic_auth.len() != 0 { //需要检验鉴权
+        let auth = req.headers().get("Proxy-Authorization");
+        match auth {
+            None => {
+                return if ask_for_auth {
+                    Ok(build_need_auth_resp())
+                }else {
+                    Ok(build_500_resp())
+                }
+            }
+            Some(header) => {
+                let x = header.to_str().unwrap();
+                if x != basic_auth {
+                    return if ask_for_auth {
+                        Ok(build_need_auth_resp())
+                    }else {
+                        Ok(build_500_resp())
+                    }
+                }
             }
         }
     }
+
+    // 删除代理
+    req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
+    req.headers_mut().remove("Proxy-Connection");
 
     if Method::CONNECT == req.method() {
         // Received an HTTP request like:
@@ -129,12 +148,12 @@ async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Bo
     }
 }
 
-// fn build_need_auth_resp() -> Response<Body> {
-//     let mut resp = Response::new(Body::from("auth need"));
-//     resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
-//     *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
-//     resp
-// }
+fn build_need_auth_resp() -> Response<Body> {
+    let mut resp = Response::new(Body::from("auth need"));
+    resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
+    *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+    resp
+}
 
 fn build_500_resp() -> Response<Body> {
     let mut resp = Response::new(Body::from("Internal Server Error"));
