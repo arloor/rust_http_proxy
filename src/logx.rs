@@ -6,11 +6,11 @@ use log4rs::config::{Appender, Config, Root};
 
 pub fn init_log(log_path:&str) {
     let stdout = ConsoleAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{d} - {l} -{t} - {m}{n}")))
+        .encoder(Box::new(PatternEncoder::new("{d} - {l} - {m}{n}")))
         .build();
 
     let file = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{d} - {l} - {t} - {m}{n}")))
+        .encoder(Box::new(PatternEncoder::new("{d} - {l} - {m}{n}")))
         .build(log_path)
         .unwrap();
 
