@@ -29,6 +29,7 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 #[tokio::main]
 async fn main() {
     init_log("proxy.log");
+    let port=env::var("port").unwrap_or("444".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
     let basic_auth = env::var("basic_auth").unwrap_or("".to_string());
@@ -45,7 +46,7 @@ async fn main() {
     info!("stderr: {}",stderr);
     let stdout = String::from_utf8(output.stdout).unwrap();
     info!("stdout: {}",stdout);
-    let addr = SocketAddr::from(([0, 0, 0, 0], 444));
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     let client = Client::builder()
         .http1_title_case_headers(true)
