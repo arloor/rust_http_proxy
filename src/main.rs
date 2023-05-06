@@ -1,4 +1,5 @@
-#![deny(warnings)]
+// #![deny(warnings)]
+
 mod logx;
 
 use std::convert::Infallible;
@@ -62,7 +63,7 @@ async fn main() {
     }
 }
 
-async fn proxy(client: HttpClient, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     info!("req: {:?}", req);
     if let Some(host) = req.uri().host() {
         if host.ends_with("arloor.dev") {
@@ -73,20 +74,18 @@ async fn proxy(client: HttpClient, req: Request<Body>) -> Result<Response<Body>,
     let auth = req.headers().get("Proxy-Authorization");
     match auth {
         None => {
-            let mut resp = Response::new(Body::from("auth need"));
-            resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
-            *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
-
-            return Ok(resp);
+            // return Ok(build_need_auth_resp());
+            return Ok(build_500_resp());
         }
         Some(header) => {
             let x = header.to_str().unwrap();
             if x != "Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg==" {
-                let mut resp = Response::new(Body::from("auth need"));
-                resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
-                *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
-
-                return Ok(resp);
+                // return Ok(build_need_auth_resp());
+                return Ok(build_500_resp());
+            } else {
+                // 删除代理
+                req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
+                req.headers_mut().remove("Proxy-Connection");
             }
         }
     }
@@ -128,6 +127,19 @@ async fn proxy(client: HttpClient, req: Request<Body>) -> Result<Response<Body>,
     } else {
         client.request(req).await
     }
+}
+
+fn build_need_auth_resp() -> Response<Body> {
+    let mut resp = Response::new(Body::from("auth need"));
+    resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
+    *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+    resp
+}
+
+fn build_500_resp() -> Response<Body> {
+    let mut resp = Response::new(Body::from("Internal Server Error"));
+    *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+    resp
 }
 
 fn host_addr(uri: &http::Uri) -> Option<String> {
