@@ -5,7 +5,9 @@ use std::net::SocketAddr;
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Client, http, Method, Request, Response, Server};
+use hyper::{Body, Client, http, Method, Request, Response};
+use hyper::http::HeaderValue;
+use simple_hyper_server_tls::{hyper_from_pem_files, Protocols};
 
 use tokio::net::TcpStream;
 
@@ -20,7 +22,7 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8100));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 444));
 
     let client = Client::builder()
         .http1_title_case_headers(true)
@@ -32,7 +34,7 @@ async fn main() {
         async move { Ok::<_, Infallible>(service_fn(move |req| proxy(client.clone(), req))) }
     });
 
-    let server = Server::bind(&addr)
+    let server = hyper_from_pem_files("cert.pem","privkey.pem", Protocols::ALL, &addr).expect("")
         .http1_preserve_header_case(true)
         .http1_title_case_headers(true)
         .serve(make_service);
@@ -46,6 +48,26 @@ async fn main() {
 
 async fn proxy(client: HttpClient, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     println!("req: {:?}", req);
+    let auth = req.headers().get("Proxy-Authorization");
+    match auth {
+        None=>{
+            let mut resp = Response::new(Body::from("auth need"));
+            resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
+            *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+
+            return Ok(resp);
+        },
+        Some(header)=>{
+            let x = header.to_str().unwrap();
+            if x != "Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg=="{
+                let mut resp = Response::new(Body::from("auth need"));
+                resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
+                *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+
+                return Ok(resp);
+            }
+        }
+    }
 
     if Method::CONNECT == req.method() {
         // Received an HTTP request like:
