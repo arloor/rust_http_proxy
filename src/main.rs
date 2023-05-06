@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::process::Command;
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
@@ -22,6 +23,9 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() {
+    let _ = Command::new("openssl pkcs8 -topk8 -inform PEM -in /root/.acme.sh/arloor.dev/arloor.dev.key -out /root/.acme.sh/arloor.dev/arloor.dev.pkcs8 -nocrypt")
+        .output()
+        .expect("error ensure pkcs8 private key");
     let addr = SocketAddr::from(([0, 0, 0, 0], 444));
 
     let client = Client::builder()
@@ -34,12 +38,13 @@ async fn main() {
         async move { Ok::<_, Infallible>(service_fn(move |req| proxy(client.clone(), req))) }
     });
 
-    let server = hyper_from_pem_files("cert.pem","privkey.pem", Protocols::ALL, &addr).expect("")
+    // let server = hyper_from_pem_files("cert.pem","privkey.pem", Protocols::ALL, &addr).expect("")
+    let server = hyper_from_pem_files("/root/.acme.sh/arloor.dev/fullchain.cer", "/root/.acme.sh/arloor.dev/arloor.dev.pkcs8", Protocols::ALL, &addr).expect("")
         .http1_preserve_header_case(true)
         .http1_title_case_headers(true)
         .serve(make_service);
 
-    println!("Listening on http://{}", addr);
+    println!("Listening on https://{}", addr);
 
     if let Err(e) = server.await {
         eprintln!("server error: {}", e);
@@ -48,18 +53,24 @@ async fn main() {
 
 async fn proxy(client: HttpClient, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     println!("req: {:?}", req);
+    if let Some(host) = req.uri().host() {
+        if host.ends_with("arloor.dev") {
+            let resp = Response::new(Body::from("hello world!"));
+            return Ok(resp);
+        }
+    }
     let auth = req.headers().get("Proxy-Authorization");
     match auth {
-        None=>{
+        None => {
             let mut resp = Response::new(Body::from("auth need"));
             resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
             *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
 
             return Ok(resp);
-        },
-        Some(header)=>{
+        }
+        Some(header) => {
             let x = header.to_str().unwrap();
-            if x != "Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg=="{
+            if x != "Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg==" {
                 let mut resp = Response::new(Body::from("auth need"));
                 resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
                 *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
