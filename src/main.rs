@@ -11,7 +11,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Client, http, Method, Request, Response};
 use hyper::http::HeaderValue;
-use log::{info, warn};
+use log::{debug, info, warn};
 use simple_hyper_server_tls::{hyper_from_pem_files, Protocols};
 
 use tokio::net::TcpStream;
@@ -175,11 +175,11 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
     let (from_client, from_server) =
         tokio::io::copy_bidirectional(&mut upgraded, &mut server).await?;
 
-    // // Print message when done
-    // info!(
-    //     "client wrote {} bytes and received {} bytes",
-    //     from_client, from_server
-    // );
+    // Print message when done
+    debug!(
+        "client wrote {} bytes and received {} bytes",
+        from_client, from_server
+    );
 
     Ok(())
 }
