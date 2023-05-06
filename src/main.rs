@@ -175,11 +175,11 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
     let (from_client, from_server) =
         tokio::io::copy_bidirectional(&mut upgraded, &mut server).await?;
 
-    // Print message when done
-    info!(
-        "client wrote {} bytes and received {} bytes",
-        from_client, from_server
-    );
+    // // Print message when done
+    // info!(
+    //     "client wrote {} bytes and received {} bytes",
+    //     from_client, from_server
+    // );
 
     Ok(())
 }
