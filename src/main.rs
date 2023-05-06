@@ -1,4 +1,4 @@
-#![deny(warnings)]
+// #![deny(warnings)]
 
 mod logx;
 
@@ -9,9 +9,10 @@ use std::process::Command;
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Client, http, Method, Request, Response};
+use hyper::{Body, Client, http, Method, Request, Response, Server, Uri};
 use hyper::http::HeaderValue;
-use log::{debug, info, warn};
+use hyper::http::uri::PathAndQuery;
+use log::{debug, error, info, warn};
 use simple_hyper_server_tls::{hyper_from_pem_files, Protocols};
 
 use tokio::net::TcpStream;
@@ -29,23 +30,15 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 #[tokio::main]
 async fn main() {
     init_log("proxy.log");
-    let port=env::var("port").unwrap_or("444".to_string()).parse::<u16>().unwrap_or(444);
+    let port = env::var("port").unwrap_or("444".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
     let basic_auth = env::var("basic_auth").unwrap_or("".to_string());
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("false".to_string());
+    //new
+    let over_tls = "true" == env::var("over_tls").unwrap_or("false".to_string());
     let key = env::var("key").unwrap_or("pkcs8_private_key.pem".to_string());
 
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(format!("openssl pkcs8 -topk8 -inform PEM -in {} -out {} -nocrypt",raw_key.as_str(),key.as_str()))
-        .output()
-        .expect("error ensure pkcs8 private key");
-    info!("{}",output.status);
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    info!("stderr: {}",stderr);
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    info!("stdout: {}",stdout);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     let client = Client::builder()
@@ -53,58 +46,86 @@ async fn main() {
         .http1_preserve_header_case(true)
         .build_http();
 
-    let make_service = make_service_fn(move |_| {
-        let client = client.clone();
-        let basic_auth = basic_auth.clone();
-        async move {
-            Ok::<_, Infallible>(service_fn(move |req| {
-                proxy(client.clone(), req, basic_auth.clone(), ask_for_auth)
-            }))
+    info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
+    if over_tls {
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(format!("openssl pkcs8 -topk8 -inform PEM -in {} -out {} -nocrypt", raw_key.as_str(), key.as_str()))
+            .output()
+            .expect("error ensure pkcs8 private key");
+        info!("build pkcs8 key {}",output.status);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        info!("build pkcs8 key stderr: {}",stderr);
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        info!("build pkcs8 key stdout: {}",stdout);
+        let make_service1 = make_service_fn(move |_| {
+            let client = client.clone();
+            let basic_auth = basic_auth.clone();
+            async move {
+                Ok::<_, Infallible>(service_fn(move |req| {
+                    proxy(client.clone(), req, basic_auth.clone(), ask_for_auth)
+                }))
+            }
+        });
+        // Run this server for... forever!
+        if let Err(e) = hyper_from_pem_files(cert, key, Protocols::ALL, &addr).expect("")
+            .http1_preserve_header_case(true)
+            .http1_title_case_headers(true)
+            .serve(make_service1).await {
+            error!("server error: {}", e);
         }
-    });
-
-    let server = hyper_from_pem_files(cert, key, Protocols::ALL, &addr).expect("")
-        .http1_preserve_header_case(true)
-        .http1_title_case_headers(true)
-        .serve(make_service);
-
-    info!("Listening on https://{}", addr);
-
-    if let Err(e) = server.await {
-        warn!("server error: {}", e);
+    } else {
+        let make_service2 = make_service_fn(move |_| {
+            let client = client.clone();
+            let basic_auth = basic_auth.clone();
+            async move {
+                Ok::<_, Infallible>(service_fn(move |req| {
+                    proxy(client.clone(), req, basic_auth.clone(), ask_for_auth)
+                }))
+            }
+        });
+        if let Err(e) = Server::bind(&addr)
+            .http1_preserve_header_case(true)
+            .http1_title_case_headers(true)
+            .serve(make_service2).await {
+            error!("server error: {}", e);
+        }
     }
 }
 
 async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
-        info!("req: {:?} {:?}", req.method(),req.uri());
-    }else {
-        info!("req: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+        info!("proxy request: {:?} {:?}", req.method(),req.uri());
     }
-    if let Some(host) = req.uri().host() {
-        if host.ends_with("arloor.dev") {
+    match req.uri().host() {
+        Some(_) => {
+            info!("proxy request: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+        }
+        None => {
+            info!("web request: {:?} {:?}", req.method(),req.uri());
             let resp = Response::new(Body::from("hello world!"));
             return Ok(resp);
         }
     }
+
     if basic_auth.len() != 0 { //需要检验鉴权
         let auth = req.headers().get("Proxy-Authorization");
         match auth {
             None => {
                 return if ask_for_auth {
                     Ok(build_need_auth_resp())
-                }else {
+                } else {
                     Ok(build_500_resp())
-                }
+                };
             }
             Some(header) => {
                 let x = header.to_str().unwrap();
                 if x != basic_auth {
                     return if ask_for_auth {
                         Ok(build_need_auth_resp())
-                    }else {
+                    } else {
                         Ok(build_500_resp())
-                    }
+                    };
                 }
             }
         }
