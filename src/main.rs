@@ -63,7 +63,7 @@ async fn main() {
 }
 
 async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    info!("req: {:?} {:?} {:?} {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST),req.headers().get(http::header::USER_AGENT));
+    info!("req: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).expect("null"),req.headers().get(http::header::USER_AGENT).expect("null"));
     if let Some(host) = req.uri().host() {
         if host.ends_with("arloor.dev") {
             let resp = Response::new(Body::from("hello world!"));
