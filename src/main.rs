@@ -9,7 +9,6 @@ use std::process::Command;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Client, http, Method, Request, Response};
-use hyper::http::HeaderValue;
 use log::{info, warn};
 use simple_hyper_server_tls::{hyper_from_pem_files, Protocols};
 
