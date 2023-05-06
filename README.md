@@ -32,3 +32,14 @@ tail -f /opt/proxy/proxy.log
 "
 
 ```
+
+```shell
+host=dc6.arloor.dev
+scp root@hk.arloor.dev:/lib/systemd/system/proxy.service root@${host}:/lib/systemd/system/proxy.service
+scp root@hk.arloor.dev:/opt/proxy/jvm_option root@${host}:/opt/proxy/jvm_option
+scp root@hk.arloor.dev:/opt/proxy/rust_http_proxy root@${host}:/opt/proxy/rust_http_proxy
+ssh root@${host} -t "chmod +x /opt/proxy/rust_http_proxy
+systemctl daemon-reload
+service proxy restart
+"
+```
