@@ -9,5 +9,5 @@ openssl pkcs8 -topk8 -inform PEM -in priv.key -out pkcs8_private_key.pem -nocryp
 或者使用acme：
 
 ```shell
-acme.sh -d arloor.com  --toPkcs8
+acme.sh -d arloor.dev  --toPkcs8
 ```
