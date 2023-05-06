@@ -31,7 +31,7 @@ async fn main() {
     init_log("proxy.log");
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
-    let basic_auth = env::var("basic_auth").unwrap_or("Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg==".to_string());
+    let basic_auth = env::var("basic_auth").unwrap_or("".to_string());
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("false".to_string());
     let key = env::var("key").unwrap_or("pkcs8_private_key.pem".to_string());
 
