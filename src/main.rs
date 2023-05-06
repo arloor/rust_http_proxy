@@ -1,4 +1,5 @@
 #![deny(warnings)]
+mod logx;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -8,9 +9,11 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Client, http, Method, Request, Response};
 use hyper::http::HeaderValue;
+use log::{info, warn};
 use simple_hyper_server_tls::{hyper_from_pem_files, Protocols};
 
 use tokio::net::TcpStream;
+use crate::logx::init_log;
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
@@ -23,16 +26,17 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() {
+    init_log("proxy.log");
     let output = Command::new("sh")
         .arg("-c")
         .arg("openssl pkcs8 -topk8 -inform PEM -in /root/.acme.sh/arloor.dev/arloor.dev.key -out /root/.acme.sh/arloor.dev/arloor.dev.pkcs8 -nocrypt")
         .output()
         .expect("error ensure pkcs8 private key");
-    println!("{:#}",output.status);
+    info!("{}",output.status);
     let stderr = String::from_utf8(output.stderr).unwrap();
-    println!("{:}",stderr);
+    info!("{}",stderr);
     let stdout = String::from_utf8(output.stdout).unwrap();
-    println!("{:}",stdout);
+    info!("{}",stdout);
     let addr = SocketAddr::from(([0, 0, 0, 0], 444));
 
     let client = Client::builder()
@@ -51,15 +55,15 @@ async fn main() {
         .http1_title_case_headers(true)
         .serve(make_service);
 
-    println!("Listening on https://{}", addr);
+    info!("Listening on https://{}", addr);
 
     if let Err(e) = server.await {
-        eprintln!("server error: {}", e);
+        warn!("server error: {}", e);
     }
 }
 
 async fn proxy(client: HttpClient, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    println!("req: {:?}", req);
+    info!("req: {:?}", req);
     if let Some(host) = req.uri().host() {
         if host.ends_with("arloor.dev") {
             let resp = Response::new(Body::from("hello world!"));
@@ -106,16 +110,16 @@ async fn proxy(client: HttpClient, req: Request<Body>) -> Result<Response<Body>,
                 match hyper::upgrade::on(req).await {
                     Ok(upgraded) => {
                         if let Err(e) = tunnel(upgraded, addr).await {
-                            eprintln!("server io error: {}", e);
+                            warn!("server io error: {}", e);
                         };
                     }
-                    Err(e) => eprintln!("upgrade error: {}", e),
+                    Err(e) => warn!("upgrade error: {}", e),
                 }
             });
 
             Ok(Response::new(Body::empty()))
         } else {
-            eprintln!("CONNECT host is not socket addr: {:?}", req.uri());
+            warn!("CONNECT host is not socket addr: {:?}", req.uri());
             let mut resp = Response::new(Body::from("CONNECT must be to a socket address"));
             *resp.status_mut() = http::StatusCode::BAD_REQUEST;
 
@@ -141,7 +145,7 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
         tokio::io::copy_bidirectional(&mut upgraded, &mut server).await?;
 
     // Print message when done
-    println!(
+    info!(
         "client wrote {} bytes and received {} bytes",
         from_client, from_server
     );
