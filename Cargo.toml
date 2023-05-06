@@ -10,3 +10,5 @@ hyper = { version = "0.14", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 simple-hyper-server-tls = {version="0.3.2", features = ["tls-rustls"]}
 tls-listener  = "0.7.0"
+log = "0.4.17"
+log4rs = "1.2.0"
