@@ -86,6 +86,7 @@ async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Bo
                 // 删除代理
                 req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
                 req.headers_mut().remove("Proxy-Connection");
+                info!("req: {:?}", req);
             }
         }
     }
