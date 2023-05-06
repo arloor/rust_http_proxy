@@ -23,7 +23,8 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() {
-    let _ = Command::new("openssl pkcs8 -topk8 -inform PEM -in /root/.acme.sh/arloor.dev/arloor.dev.key -out /root/.acme.sh/arloor.dev/arloor.dev.pkcs8 -nocrypt")
+    let _ = Command::new("openssl")
+        .arg("pkcs8 -topk8 -inform PEM -in /root/.acme.sh/arloor.dev/arloor.dev.key -out /root/.acme.sh/arloor.dev/arloor.dev.pkcs8 -nocrypt")
         .output()
         .expect("error ensure pkcs8 private key");
     let addr = SocketAddr::from(([0, 0, 0, 0], 444));
