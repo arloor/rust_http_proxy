@@ -9,6 +9,7 @@ use std::process::Command;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Client, http, Method, Request, Response};
+use hyper::http::HeaderValue;
 use log::{info, warn};
 use simple_hyper_server_tls::{hyper_from_pem_files, Protocols};
 
@@ -63,7 +64,7 @@ async fn main() {
 }
 
 async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    info!("req: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).expect("null"),req.headers().get(http::header::USER_AGENT).expect("null"));
+    info!("req: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
     if let Some(host) = req.uri().host() {
         if host.ends_with("arloor.dev") {
             let resp = Response::new(Body::from("hello world!"));
