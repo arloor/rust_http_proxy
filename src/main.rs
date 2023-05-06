@@ -63,7 +63,7 @@ async fn main() {
 }
 
 async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    info!("req: {:?}", req);
+    info!("req: {:?} {:?} {:?} {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST),req.headers().get(http::header::USER_AGENT));
     if let Some(host) = req.uri().host() {
         if host.ends_with("arloor.dev") {
             let resp = Response::new(Body::from("hello world!"));
@@ -85,7 +85,6 @@ async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Bo
                 // 删除代理
                 req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
                 req.headers_mut().remove("Proxy-Connection");
-                info!("req: {:?}", req);
             }
         }
     }
