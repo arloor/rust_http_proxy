@@ -75,7 +75,11 @@ async fn main() {
 }
 
 async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool) -> Result<Response<Body>, hyper::Error> {
-    info!("req: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+    if Method::CONNECT == req.method() {
+        info!("req: {:?} {:?}", req.method(),req.uri());
+    }else {
+        info!("req: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+    }
     if let Some(host) = req.uri().host() {
         if host.ends_with("arloor.dev") {
             let resp = Response::new(Body::from("hello world!"));
