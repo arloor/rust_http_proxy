@@ -1,4 +1,4 @@
-// #![deny(warnings)]
+#![deny(warnings)]
 
 mod logx;
 
@@ -129,12 +129,12 @@ async fn proxy(client: HttpClient, mut req: Request<Body>) -> Result<Response<Bo
     }
 }
 
-fn build_need_auth_resp() -> Response<Body> {
-    let mut resp = Response::new(Body::from("auth need"));
-    resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
-    *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
-    resp
-}
+// fn build_need_auth_resp() -> Response<Body> {
+//     let mut resp = Response::new(Body::from("auth need"));
+//     resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
+//     *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+//     resp
+// }
 
 fn build_500_resp() -> Response<Body> {
     let mut resp = Response::new(Body::from("Internal Server Error"));
