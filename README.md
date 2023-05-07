@@ -19,7 +19,7 @@ cargo run --package rust_http_proxy --bin rust_http_proxy
 
 ## 高级配置
 
-环境变量及其默认值
+通过环境变量进行配置，相关环境变量及其默认值：
 
 ```shell
 # 监听的端口
