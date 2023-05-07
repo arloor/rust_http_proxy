@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let basic_auth = env::var("basic_auth").unwrap_or("".to_string());
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("false".to_string());
     //new
-    let over_tls = "true" == env::var("over_tls").unwrap_or("true".to_string());
+    let over_tls = "true" == env::var("over_tls").unwrap_or("false".to_string());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
