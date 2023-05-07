@@ -6,13 +6,16 @@ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
 
 pub type Acceptor = tokio_rustls::TlsAcceptor;
 
-fn tls_acceptor_impl(raw_key: &String, cert: &String) -> Acceptor {
+fn tls_acceptor_impl(key: &String, cert: &String) -> Acceptor {
+    tls_config(key, cert).into()
+}
+
+fn tls_config(key:&String, cert: &String ) -> Arc<ServerConfig> {
     use std::io::{self, BufReader};
     let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(cert).unwrap()))
         .map(|mut certs| certs.drain(..).map(Certificate).collect()).unwrap();
-    let mut keys: Vec<PrivateKey> = rustls_pemfile::rsa_private_keys(&mut BufReader::new(File::open(raw_key).unwrap()))
+    let mut keys: Vec<PrivateKey> = rustls_pemfile::rsa_private_keys(&mut BufReader::new(File::open(key).unwrap()))
         .map(|mut keys| keys.drain(..).map(PrivateKey).collect()).unwrap();
-    // let cert = Certificate(key_der.into());
     Arc::new(
         ServerConfig::builder()
             .with_safe_defaults()
@@ -21,7 +24,6 @@ fn tls_acceptor_impl(raw_key: &String, cert: &String) -> Acceptor {
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
             .unwrap(),
     )
-        .into()
 }
 
 pub fn tls_acceptor(raw_key:&String,cert:&String) -> Acceptor {
