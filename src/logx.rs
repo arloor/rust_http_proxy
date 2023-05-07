@@ -8,9 +8,9 @@ use log4rs::append::rolling_file::RollingFileAppender;
 use log4rs::config::{Appender, Config, Root};
 
 pub fn init_log(log_path: &str) {
-    let window_size = 3; // log0, log1, log2
+    let window_size = 3; // proxy.log, proxy.log0, proxy.log1, proxy.log2
     let fixed_window_roller =
-        FixedWindowRoller::builder().build("proxy.log{}", window_size).unwrap();
+        FixedWindowRoller::builder().build(format!("{}.{}",log_path,"{}").as_str(), window_size).unwrap();
     let size_limit = 10 * 1024 * 1024; // 10MB as max log file size to roll
     let size_trigger = SizeTrigger::new(size_limit);
     let compound_policy = CompoundPolicy::new(Box::new(size_trigger), Box::new(fixed_window_roller));
