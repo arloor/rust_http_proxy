@@ -1,6 +1,7 @@
 // #![deny(warnings)]
 
 mod logx;
+mod tls_helper;
 
 use std::convert::Infallible;
 use std::env;
@@ -12,11 +13,13 @@ use hyper::upgrade::Upgraded;
 use hyper::{Body, Client, http, Method, Request, Response, Server, Uri};
 use hyper::http::HeaderValue;
 use hyper::http::uri::PathAndQuery;
+use hyper::server::conn::AddrIncoming;
 use log::{debug, error, info, warn};
-use simple_hyper_server_tls::{hyper_from_pem_files, Protocols};
+use tls_listener::TlsListener;
 
 use tokio::net::TcpStream;
 use crate::logx::init_log;
+use crate::tls_helper::tls_acceptor;
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
@@ -28,7 +31,7 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 // 3. send requests
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>>{
     init_log("proxy.log");
     let port = env::var("port").unwrap_or("444".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
@@ -36,8 +39,7 @@ async fn main() {
     let basic_auth = env::var("basic_auth").unwrap_or("".to_string());
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("false".to_string());
     //new
-    let over_tls = "true" == env::var("over_tls").unwrap_or("false".to_string());
-    let key = env::var("key").unwrap_or("pkcs8_private_key.pem".to_string());
+    let over_tls = "true" == env::var("over_tls").unwrap_or("true".to_string());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
@@ -48,16 +50,6 @@ async fn main() {
 
     info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
     if over_tls {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(format!("openssl pkcs8 -topk8 -inform PEM -in {} -out {} -nocrypt", raw_key.as_str(), key.as_str()))
-            .output()
-            .expect("error ensure pkcs8 private key");
-        info!("build pkcs8 key {}",output.status);
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        info!("build pkcs8 key stderr: {}",stderr);
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        info!("build pkcs8 key stdout: {}",stdout);
         let make_service1 = make_service_fn(move |_| {
             let client = client.clone();
             let basic_auth = basic_auth.clone();
@@ -67,13 +59,14 @@ async fn main() {
                 }))
             }
         });
+        let incoming = TlsListener::new(tls_acceptor(&raw_key,&cert), AddrIncoming::bind(&addr)?);
+
         // Run this server for... forever!
-        if let Err(e) = hyper_from_pem_files(cert, key, Protocols::ALL, &addr).expect("")
+       Server::builder(incoming)
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
-            .serve(make_service1).await {
-            error!("server error: {}", e);
-        }
+            .serve(make_service1).await?;
+        Ok(())
     } else {
         let make_service2 = make_service_fn(move |_| {
             let client = client.clone();
@@ -84,12 +77,11 @@ async fn main() {
                 }))
             }
         });
-        if let Err(e) = Server::bind(&addr)
+        Server::bind(&addr)
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
-            .serve(make_service2).await {
-            error!("server error: {}", e);
-        }
+            .serve(make_service2).await?;
+        Ok(())
     }
 }
 
