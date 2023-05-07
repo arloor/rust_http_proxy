@@ -16,6 +16,15 @@ fn tls_config(key:&String, cert: &String ) -> Arc<ServerConfig> {
         .map(|mut certs| certs.drain(..).map(Certificate).collect()).unwrap();
     let mut keys: Vec<PrivateKey> = rustls_pemfile::rsa_private_keys(&mut BufReader::new(File::open(key).unwrap()))
         .map(|mut keys| keys.drain(..).map(PrivateKey).collect()).unwrap();
+    if keys.len()==0 {
+        keys = rustls_pemfile::pkcs8_private_keys(&mut BufReader::new(File::open(key).unwrap()))
+            .map(|mut keys| keys.drain(..).map(PrivateKey).collect()).unwrap();
+    }
+    if keys.len()==0 {
+        keys = rustls_pemfile::ec_private_keys(&mut BufReader::new(File::open(key).unwrap()))
+            .map(|mut keys| keys.drain(..).map(PrivateKey).collect()).unwrap();
+    }
+
     Arc::new(
         ServerConfig::builder()
             .with_safe_defaults()
