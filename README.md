@@ -4,9 +4,9 @@
 
 ```shell
 # 生成PKCS#1私钥
-openssl genrsa -out private_key.pem 4096
+openssl genrsa -out privkey.pem 4096
 # 从私钥生成证书
-openssl req -x509 -key private_key.pem -sha256 -nodes -out cert.pem -days 3650 -subj "/C=/ST=/L=/O=/OU=/CN=example.com"
+openssl req -x509 -key privkey.pem -sha256 -nodes -out cert.pem -days 3650 -subj "/C=/ST=/L=/O=/OU=/CN=example.com"
 ```
 
 ### 生成证书和PKCS#8私钥
