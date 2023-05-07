@@ -2,6 +2,6 @@ port=444
 log_path=/data/var/log/proxy/proxy.log
 cert=/usr/share/rust_http_proxy/cert.pem
 raw_key=/usr/share/rust_http_proxy/privkey.pem
-basic_auth="Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg=="
+basic_auth=""
 ask_for_auth=false
-over_tls=true
+over_tls=false
