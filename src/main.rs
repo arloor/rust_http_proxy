@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .http1_title_case_headers(true)
         .http1_preserve_header_case(true)
         .build_http();
-
+    info!("new!!!!!!!!!!!");
     if over_tls {
         let make_service1 = make_service_fn(move |_| {
             let client = client.clone();
