@@ -1,6 +1,6 @@
 基于 `hyper` 和 `tls-listener` 的http代理。
 
-整体功能完全对标[HttpProxy(Java)](https://github.com/arloor/HttpProxy)。 内存仅为Java版本的十分之一，为20MB以下。
+整体功能完全对标[Java版本HttpProxy](https://github.com/arloor/HttpProxy)。 内存仅为Java版本的十分之一，为20MB以下。
 
 相比 `hyper`的[正向代理example](https://github.com/hyperium/hyper/blob/0.14.x/examples/http_proxy.rs)增加了以下特性：
 
@@ -37,6 +37,14 @@ export raw_key=privkey.pem
 # 日志文件路径
 export log_path=proxy.log 
 ```
+
+tls证书和pem格式的私钥可以通过以下openssl命令一键生成：
+
+```shell
+openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout privkey.pem -out cert.pem -days 3650 -subj "/C=/ST=/L=/O=/OU=/CN=example.com"
+```
+
+如需签名证书，请购买ssl证书或免费解决方案（acme.sh等）
 
 ## 客户端
 
