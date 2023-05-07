@@ -1,21 +1,25 @@
-// #![deny(warnings)]
+#![deny(warnings)]
 
 mod logx;
+
+use futures_util::stream::StreamExt;
+
 mod tls_helper;
 
 use std::convert::Infallible;
 use std::env;
 use std::net::SocketAddr;
-use std::process::Command;
+
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Client, http, Method, Request, Response, Server, Uri};
+use hyper::{Body, Client, http, Method, Request, Response, Server};
 use hyper::http::HeaderValue;
-use hyper::http::uri::PathAndQuery;
+
 use hyper::server::conn::AddrIncoming;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use tls_listener::TlsListener;
+use std::future::ready;
 
 use tokio::net::TcpStream;
 use crate::logx::init_log;
@@ -31,7 +35,7 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 // 3. send requests
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>>{
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_log("proxy.log");
     let port = env::var("port").unwrap_or("444".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
@@ -48,7 +52,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         .http1_preserve_header_case(true)
         .build_http();
 
-    info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
     if over_tls {
         let make_service1 = make_service_fn(move |_| {
             let client = client.clone();
@@ -59,13 +62,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 }))
             }
         });
-        let incoming = TlsListener::new(tls_acceptor(&raw_key,&cert), AddrIncoming::bind(&addr)?);
+        // This uses a filter to handle errors with connecting
+        let acceptor = tls_acceptor(&raw_key, &cert);
+        let incoming = TlsListener::new(acceptor, AddrIncoming::bind(&addr)?).filter(|conn| {
+            match conn {
+                Ok(stream) => {
+                    info!("accept from {:?}",stream.get_ref().0.remote_addr());
+                    ready(true)
+                }
+                Err(err) => {
+                    warn!("Error: {:?}", err);
+                    ready(false)
+                }
+            }
+        });
 
-        // Run this server for... forever!
-       Server::builder(incoming)
-            .http1_preserve_header_case(true)
+        let server = Server::builder(hyper::server::accept::from_stream(incoming))
             .http1_title_case_headers(true)
-            .serve(make_service1).await?;
+            .serve(make_service1);
+        info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
+        server.await?;
         Ok(())
     } else {
         let make_service2 = make_service_fn(move |_| {
@@ -77,10 +93,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 }))
             }
         });
-        Server::bind(&addr)
+        let server = Server::bind(&addr)
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
-            .serve(make_service2).await?;
+            .serve(make_service2);
+        info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
+        server.await?;
         Ok(())
     }
 }
