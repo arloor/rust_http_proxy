@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
     let basic_auth = env::var("basic_auth").unwrap_or("".to_string());
-    let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("false".to_string());
+    let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("true".to_string());
     //new
     let over_tls = "true" == env::var("over_tls").unwrap_or("false".to_string());
 
