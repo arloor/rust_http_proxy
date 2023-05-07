@@ -1,6 +1,6 @@
 Name:           rust_http_proxy
 Version:        0.1
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Rust Http Proxy
 
 License:        Apache License 2.0
@@ -52,8 +52,8 @@ systemctl daemon-reload
 
 %files
 /usr/bin/rust_http_proxy
-/lib/systemd/system/rust_http_proxy.service
-/etc/rust_http_proxy/env
+%config /lib/systemd/system/rust_http_proxy.service
+%config(noreplace) /etc/rust_http_proxy/env
 
 
 
