@@ -1,5 +1,5 @@
-port=444
-log_path=/data/var/log/proxy/proxy.log
+port=3128
+log_path=/var/log/proxy/proxy.log
 cert=/usr/share/rust_http_proxy/cert.pem
 raw_key=/usr/share/rust_http_proxy/privkey.pem
 basic_auth=""
