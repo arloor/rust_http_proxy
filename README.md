@@ -1,6 +1,6 @@
 基于 `hyper` 和 `tls-listener` 的http代理。
 
-整体功能完全对标[Java版本Http代理](https://github.com/arloor/HttpProxy)。 内存仅为Java版本的十分之一，为20MB以下。
+整体功能完全对标[HttpProxy(Java)](https://github.com/arloor/HttpProxy)。 内存仅为Java版本的十分之一，为20MB以下。
 
 相比 `hyper`的[正向代理example](https://github.com/hyperium/hyper/blob/0.14.x/examples/http_proxy.rs)增加了以下特性：
 
