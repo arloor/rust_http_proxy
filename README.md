@@ -1,45 +1,21 @@
-## 下载证书和私钥
+## 生成证书和私钥
 
 ```shell
-scp root@hk.arloor.dev:/root/.acme.sh/arloor.dev/fullchain.cer ./cert.pem
-scp root@hk.arloor.dev:/root/.acme.sh/arloor.dev/arloor.dev.key ./privkey.pem
-```
-
-## 转换格式
-
-需要pkcs8的私钥，转换命令为：
-
-```shell
-openssl pkcs8 -topk8 -inform PEM -in privkey.pem -out pkcs8_private_key.pem -nocrypt
-```
-
-或者使用acme：
-
-```shell
-acme.sh -d arloor.dev  --toPkcs8
-```
-
-## 部署
-
-```shell
-ssh root@hk.arloor.dev -t "
-cd ~/rust_http_proxy
-git pull
-cargo build --release
-mv target/release/rust_http_proxy /opt/proxy/
-service proxy restart
-tail -f /opt/proxy/proxy.log
-"
-
+openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout temp.pem -out cert.pem -days 3650 -subj "/C=/ST=/L=/O=/OU=/CN=example.com"
+## 将私钥进行RSA加密（本程序需要RSA加密的私钥）
+openssl rsa -inform PEM -in temp.pem -outform PEM -out privkey.pem
 ```
 
 ```shell
-host=dc6.arloor.dev
-scp root@hk.arloor.dev:/lib/systemd/system/proxy.service root@${host}:/lib/systemd/system/proxy.service
-scp root@hk.arloor.dev:/opt/proxy/jvm_option root@${host}:/opt/proxy/jvm_option
-scp root@hk.arloor.dev:/opt/proxy/rust_http_proxy root@${host}:/opt/proxy/rust_http_proxy
-ssh root@${host} -t "chmod +x /opt/proxy/rust_http_proxy
-systemctl daemon-reload
-service proxy restart
-"
+openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout privkey.pem -out cert.pem -days 3650 -subj "/C=/ST=/L=/O=/OU=/CN=example.com"
+
+```
+
+## 备注：私钥转换格式的常用命令
+
+```shell
+# 转换成pkcs8
+openssl pkcs8 -topk8 -inform PEM -in privkey.pem -out pkcs8_private_key.pem -outform PEM -nocrypt
+# 转换成RSA加密
+openssl rsa -inform PEM -in privkey.pem -outform PEM -out rsa_aes_privkey.pem
 ```
