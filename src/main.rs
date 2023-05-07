@@ -36,7 +36,8 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_log("proxy.log");
+    let log_path = env::var("log_path").unwrap_or("proxy.log".to_string());
+    init_log(&log_path);
     let port = env::var("port").unwrap_or("444".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
