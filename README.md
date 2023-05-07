@@ -38,7 +38,7 @@ export raw_key=privkey.pem
 export log_path=proxy.log 
 ```
 
-tls证书和pem格式的私钥可以通过以下openssl命令一键生成：
+其中，tls证书(`cert`)和pem格式的私钥(`raw_key`)可以通过openssl命令一键生成：
 
 ```shell
 openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout privkey.pem -out cert.pem -days 3650 -subj "/C=/ST=/L=/O=/OU=/CN=example.com"
