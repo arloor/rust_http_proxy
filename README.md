@@ -46,6 +46,10 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout privkey.pem -out cert.
 
 如需签名证书，请购买ssl证书或免费解决方案（acme.sh等）
 
+## 安装说明
+
+见[releases v0.1.0](https://github.com/arloor/rust_http_proxy/releases/tag/v0.1.0)
+
 ## 客户端
 
 可以使用clash作为客户端，见：
