@@ -1,7 +1,7 @@
-port=3128
-basic_auth=""
-ask_for_auth=true
-over_tls=false     
-cert=cert.pem
-raw_key=privkey.pem
-log_path=proxy.log 
+port=444
+log_path=/data/var/log/proxy/proxy.log
+cert=/usr/share/rust_http_proxy/cert.pem
+raw_key=/usr/share/rust_http_proxy/privkey.pem
+basic_auth="Basic aGFsb3NoaXQ6YXNhXjc4c3NkWSY3QXNBJjg4Jig5JikqKg=="
+ask_for_auth=false
+over_tls=true
