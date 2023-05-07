@@ -38,7 +38,7 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_path = env::var("log_path").unwrap_or("proxy.log".to_string());
     init_log(&log_path);
-    let port = env::var("port").unwrap_or("444".to_string()).parse::<u16>().unwrap_or(444);
+    let port = env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
     let basic_auth = env::var("basic_auth").unwrap_or("".to_string());
