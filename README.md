@@ -23,19 +23,19 @@ cargo run --package rust_http_proxy --bin rust_http_proxy
 
 ```shell
 # 监听的端口
-port=3128
+export port=3128
 # 默认为空，表示不鉴权。格式为 Basic aGFsNkWSY3QXNBJjg4Jig5JikqKg==
-basic_auth=""
+export basic_auth=""
 # 主动发起Proxy-Authenticate。在公网下推荐设置为false。
-ask_for_auth=true
+export ask_for_auth=true
 # 是否使用tls，默认为http
-over_tls=false     
+export over_tls=false     
 # tls证书
-cert=cert.pem
+export cert=cert.pem
 # 私钥 pem格式
-raw_key=privkey.pem
+export raw_key=privkey.pem
 # 日志文件路径
-log_path=proxy.log 
+export log_path=proxy.log 
 ```
 
 ## 客户端
