@@ -1,0 +1,7 @@
+port=3128
+basic_auth=""
+ask_for_auth=true
+over_tls=false     
+cert=cert.pem
+raw_key=privkey.pem
+log_path=proxy.log 
