@@ -44,7 +44,7 @@ export log_path=proxy.log
 openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout privkey.pem -out cert.pem -days 3650 -subj "/C=/ST=/L=/O=/OU=/CN=example.com"
 ```
 
-如需签名证书，请购买ssl证书或免费解决方案（acme.sh等）
+如需签名证书，请购买tls证书或免费解决方案（acme.sh等）
 
 ## 安装说明
 
