@@ -106,15 +106,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("proxy request: {:?} {:?}", req.method(),req.uri());
-    }
-    match req.uri().host() {
-        Some(_) => {
-            info!("proxy request: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
-        }
-        None => {
-            info!("web request: {:?} {:?}", req.method(),req.uri());
-            let resp = Response::new(Body::from("hello world!"));
-            return Ok(resp);
+    } else {
+        match req.uri().host() {
+            Some(_) => {
+                info!("proxy request: {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+            }
+            None => {
+                info!("web request: {:?} {:?}", req.method(),req.uri());
+                let resp = Response::new(Body::from("hello world!"));
+                return Ok(resp);
+            }
         }
     }
 
