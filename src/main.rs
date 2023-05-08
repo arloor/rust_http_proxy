@@ -188,7 +188,7 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
 
 fn build_need_auth_resp() -> Response<Body> {
     let mut resp = Response::new(Body::from("auth need"));
-    resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"netty forwardproxy\""));
+    resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"are you kidding me\""));
     *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
     resp
 }
