@@ -118,20 +118,6 @@ rpmdev-bumpspec --comment=$(date) --userstring=root  rpm/rust_http_proxy.spec
 ### 一键完成
 
 ```shell
-## 准备工作
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-host x86_64-unknown-linux-gnu -y
-source "$HOME/.cargo/env"
-cd /var/
-wget http://musl.libc.org/releases/musl-1.2.3.tar.gz -O musl-1.2.3.tar.gz
-yum install -y gcc
-tar -zxvf musl-1.2.3.tar.gz
-cd musl-1.2.3
-./configure
-make -j 2
-make install
-ln -fs /usr/local/musl/bin/musl-gcc /usr/local/bin/musl-gcc
-rustup target add x86_64-unknown-linux-musl
-
 ## 打包
 yum install -y rpm-build
 yum install -y rpmdevtools
@@ -150,8 +136,11 @@ echo 配置文件;rpm -qpc ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${r
 echo 所有文件;rpm -qpl ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
 # rpm -ivh在安装新版本时会报错文件冲突，原因是他没有进行更新或降级的能力，而yum install可以处理可执行文件的更新或降级
 yum install -y ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
+
+
 ## 启动
 service rust_http_proxy restart
 service rust_http_proxy status --no-page
+## 关闭
 service rust_http_proxy stop
 ```
