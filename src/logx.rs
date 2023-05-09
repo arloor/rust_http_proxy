@@ -14,7 +14,7 @@ pub fn init_log(log_path: &str) {
     let size_limit = 10 * 1024 * 1024; // 10MB as max log file size to roll
     let size_trigger = SizeTrigger::new(size_limit);
     let compound_policy = CompoundPolicy::new(Box::new(size_trigger), Box::new(fixed_window_roller));
-    let pattern = "{d} - {l} - {m}{n}";
+    let pattern = "{d(%Y-%m-%d %H:%M:%S)} [ {({l}):5.5}] {f}:{L} — {m}{n}";
     let stdout = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new(pattern)))
         .build();
