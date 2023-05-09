@@ -46,6 +46,9 @@ install  -m755 rpm/env %{buildroot}/etc/rust_http_proxy/env
   mkdir -p /usr/share/rust_http_proxy
 }
 [ ! -f /usr/share/rust_http_proxy/privkey.pem ]&&{
+  if [ -f /usr/share/rust_http_proxy/cert.pem ]; then
+    rm -f /usr/share/rust_http_proxy/cert.pem
+  fi
   openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_proxy/privkey.pem -out /usr/share/rust_http_proxy/cert.pem -days 3650 -subj "/C=cn/ST=hl/L=sd/O=op/OU=as/CN=example.com"
 }
 systemctl daemon-reload
