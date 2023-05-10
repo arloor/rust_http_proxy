@@ -121,7 +121,7 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
     }
 
     if basic_auth.len() != 0 { //需要检验鉴权
-        let auth = req.headers().get("Proxy-Authorization");
+        let auth = req.headers().get(http::header::PROXY_AUTHORIZATION);
         match auth {
             None => {
                 return if ask_for_auth {
@@ -188,7 +188,7 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
 
 fn build_proxy_authenticate_resp() -> Response<Body> {
     let mut resp = Response::new(Body::from("auth need"));
-    resp.headers_mut().append("Proxy-Authenticate", HeaderValue::from_static("Basic realm=\"are you kidding me\""));
+    resp.headers_mut().append(http::header::PROXY_AUTHENTICATE, HeaderValue::from_static("Basic realm=\"are you kidding me\""));
     *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
     resp
 }
