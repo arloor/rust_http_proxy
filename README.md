@@ -41,7 +41,7 @@ export log_path=proxy.log
 其中，tls证书(`cert`)和pem格式的私钥(`raw_key`)可以通过openssl命令一键生成：
 
 ```shell
-openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout privkey.pem -out cert.pem -days 3650 -subj "/C=/ST=/L=/O=/OU=/CN=example.com"
+openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_proxy/privkey.pem -out /usr/share/rust_http_proxy/cert.pem -days 3650 -subj "/C=cn/ST=hl/L=sd/O=op/OU=as/CN=example.com"
 ```
 
 如需签名证书，请购买tls证书或免费解决方案（acme.sh等）
