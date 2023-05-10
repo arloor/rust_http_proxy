@@ -17,7 +17,12 @@ Rust Http Proxy which is based on hyper and Tls-Listener.
 %prep
 if [ -d /tmp/rust_http_proxy ]; then
         cd /tmp/rust_http_proxy;
-        git pull;
+          git pull --ff-only || {
+            echo "git pull 失败，重新clone"
+            cd /tmp
+            rm -rf /tmp/rust_http_proxy
+            git clone %{URL} /tmp/rust_http_proxy
+          }
 fi
 if [ ! -d /tmp/rust_http_proxy ]; then
         git clone %{URL} /tmp/rust_http_proxy
