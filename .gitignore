@@ -4,3 +4,4 @@ Cargo.lock
 *.pem
 proxy.log*
 scp.sh
+deploy.sh
