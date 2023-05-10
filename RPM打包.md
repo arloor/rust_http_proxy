@@ -125,22 +125,30 @@ rm -rf ~/rpmbuild
 rpmdev-setuptree
 git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
 cd /var/rust_http_proxy
-git pull
+git pull --ff-only || {
+  echo "git pull 失败，重新clone"
+  cd /var
+  rm -rf /var/rust_http_proxy
+  git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
+}
 rpmbuild -bb /var/rust_http_proxy/rpm/rust_http_proxy.spec
 
 ## 安装
 version=0.1
 release=6.all
-echo RPM信息;rpm -qpi ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
-echo 配置文件;rpm -qpc ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
-echo 所有文件;rpm -qpl ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
+echo RPM信息
+rpm -qpi ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
+echo 配置文件
+rpm -qpc ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
+echo 所有文件
+rpm -qpl ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
 # rpm -ivh在安装新版本时会报错文件冲突，原因是他没有进行更新或降级的能力，而yum install可以处理可执行文件的更新或降级
 yum install -y ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
-
 
 ## 启动
 service rust_http_proxy restart
 service rust_http_proxy status --no-page
 ## 关闭
 service rust_http_proxy stop
+
 ```
