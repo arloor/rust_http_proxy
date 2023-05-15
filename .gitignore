@@ -1,6 +1,5 @@
 /target
 .idea
-Cargo.lock
 *.pem
 proxy.log*
 scp.sh
