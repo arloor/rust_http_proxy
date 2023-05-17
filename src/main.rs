@@ -20,6 +20,8 @@ use hyper::server::conn::AddrIncoming;
 use log::{debug, info, warn};
 use tls_listener::TlsListener;
 use std::future::ready;
+use std::ops::Add;
+use std::process::Command;
 
 use tokio::net::TcpStream;
 use crate::logx::init_log;
@@ -104,6 +106,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+fn count_stream() -> String {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg("netstat -nt|tail -n +3|awk -F \"[ :]+\"  -v OFS=\"\" '$5<10000 && $5!=\"22\" && $7>1024 {printf(\"%15s   => %15s:%-5s %s\\n\",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn")
+        .output()
+        .expect("error call netstat");
+    String::from_utf8(output.stdout).unwrap().add(&*String::from_utf8(output.stderr).unwrap())
+}
+
 async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("proxy request: {:?} {:?} {:?}", req.method(),req.uri(),req.version());
@@ -114,7 +125,7 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
             }
             None => {
                 info!("web request: {:?} {:?} {:?}", req.method(),req.uri(),req.version());
-                let resp = Response::new(Body::from("hello world!"));
+                let resp = Response::new(Body::from(count_stream()));
                 return Ok(resp);
             }
         }
