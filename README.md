@@ -7,9 +7,18 @@
 1. proxy over tls特性(`over_tls=true`)：使用tls来对代理流量进行加密以**surf the global Internet**
 2. 支持Proxy-Authorization鉴权。
 3. 开启Proxy-Authorization鉴权时，结合`ask_for_auth=false`配置防止嗅探。
-4. 删除代理相关的header，以保持高匿，例如`Proxy-Connection`等。
+4. 删除代理相关的header，以保持高匿，例如`Proxy-Connection`等，效果如下：
 
-以上特性详见"高级配置"部分。
+代理服务器收到的消息：
+
+![](traffic_at_proxy.png)
+
+Nginx收到的消息：
+
+![](traffic_at_nginx.png)
+
+请求URL和`Proxy-Connection`都被正确处理了，以上测试使用tcpdump进行。
+
 
 ## 运行
 
