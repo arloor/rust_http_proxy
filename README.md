@@ -4,21 +4,12 @@
 
 相比 `hyper`的[正向代理example](https://github.com/hyperium/hyper/blob/0.14.x/examples/http_proxy.rs)增加了以下特性：
 
-1. proxy over tls特性(`over_tls=true`)：使用tls来对代理流量进行加密以**surf the global Internet**
+1. proxy over tls特性(`over_tls=true`)：使用tls来对代理流量进行加密以**surf the global Internet**。
 2. 支持Proxy-Authorization鉴权。
 3. 开启Proxy-Authorization鉴权时，结合`ask_for_auth=false`配置防止嗅探。
-4. 删除代理相关的header，以保持高匿，例如`Proxy-Connection`等，效果如下：
+4. 删除代理相关的header，以保持高匿。
 
-代理服务器收到的消息：
-
-![](traffic_at_proxy.png)
-
-Nginx收到的消息：
-
-![](traffic_at_nginx.png)
-
-请求URL和`Proxy-Connection`都被正确处理了，以上测试使用tcpdump进行。
-
+提及的参数详见[高级配置](#高级配置)
 
 ## 运行
 
@@ -66,3 +57,24 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 - [clash for windows](https://github.com/Fndroid/clash_for_windows_pkg/releases)
 - [clashX pro](https://install.appcenter.ms/users/clashx/apps/clashx-pro/distribution_groups/public)
 - [ClashForAndroid](https://github.com/Kr328/ClashForAndroid/releases)
+
+## 高匿实现
+
+代理服务器收到的http请求有一些特征，如果代理服务器不能正确处理，则会暴露自己是一个代理。高匿代理就是能去除这些特征的代理。具体特征有三个：
+
+- 代理服务器收到的request line中有完整url，即包含schema、host。而正常http请求的url只包含路径
+- 代理服务器收到http header中有Proxy-Connection请求头，需要去掉
+- 代理服务器收到http header中有Proxy-Authentication请求头，需要去掉
+
+本代理能去除以上特征。下面是使用tcpdump测试的结果，分别展示代理服务器收到的http请求和nginx web服务器收到的http请求已验证去除以上特征。
+
+
+代理服务器收到的消息：
+
+![](traffic_at_proxy.png)
+
+Nginx收到的消息：
+
+![](traffic_at_nginx.png)
+
+可以看到请求URL和`Proxy-Connection`都被正确处理了。
