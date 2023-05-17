@@ -125,7 +125,8 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
             }
             None => {
                 info!("web request: {:?} {:?} {:?}", req.method(),req.uri(),req.version());
-                let resp = Response::new(Body::from(count_stream()));
+                let mut resp = Response::new(Body::from(count_stream()));
+                resp.headers_mut().append(http::header::REFRESH, HeaderValue::from_static("2"));
                 return Ok(resp);
             }
         }
