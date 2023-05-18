@@ -128,16 +128,13 @@ rm -rf ~/rpmbuild
 rpmdev-setuptree
 ```
 
-### 打包
+### 打包和安装
 
 ```shell
+## 打包
 wget https://raw.githubusercontent.com/arloor/rust_http_proxy/master/rpm/rust_http_proxy.spec -O /var/rust_http_proxy.spec
 rpmbuild -bb /var/rust_http_proxy.spec
-```
 
-### 安装
-
-```shell
 ## 安装
 version=0.1
 release=13.all
