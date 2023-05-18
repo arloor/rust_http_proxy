@@ -1,6 +1,6 @@
 Name:           rust_http_proxy
 Version:        0.1
-Release:        10.all
+Release:        11.all
 Summary:        Rust Http Proxy
 
 License:        Apache License 2.0
