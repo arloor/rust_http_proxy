@@ -27,25 +27,6 @@ rpmdev-setuptree
 |-- SRPMS
 ```
 
-### 打包此软件的前置准备工作：
-
-安装rust和musl支持，以打包静态链接的可执行文件
-
-```shell
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-host x86_64-unknown-linux-gnu -y
-source "$HOME/.cargo/env"
-cd /var/
-wget http://musl.libc.org/releases/musl-1.2.3.tar.gz -O musl-1.2.3.tar.gz
-yum install -y gcc
-tar -zxvf musl-1.2.3.tar.gz
-cd musl-1.2.3
-./configure
-make -j 2
-make install
-ln -fs /usr/local/musl/bin/musl-gcc /usr/local/bin/musl-gcc
-rustup target add x86_64-unknown-linux-musl
-```
-
 ### spec文件说明
 
 `rust_http_proxy.spec`写的比较简单，没有使用内置宏或内置变量，适合我这种不熟悉rpm打包的人。总体思路就是能自己写的全部自己写，最终只用到了`%{buildroot}`这一个内置变量，用于控制将编译输出到哪里。
@@ -115,7 +96,29 @@ rpmdev-bumpspec --comment=$(date) --userstring=root  rpm/rust_http_proxy.spec
 - [CentOS 如何打 RPM 包](https://idevz.org/2017/07/centos-%E5%A6%82%E4%BD%95%E6%89%93-rpm-%E5%8C%85/)
 - [第 1 章 RPM 打包入门](https://access.redhat.com/documentation/zh-cn/red_hat_enterprise_linux/8/html/packaging_and_distributing_software/getting-started-with-rpm-packaging_packaging-and-distributing-software)
 
-### 一键完成
+## 具体shell命令
+
+
+### 安装musl和Rust
+
+安装rust和musl支持，以打包静态链接的可执行文件
+
+```shell
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-host x86_64-unknown-linux-gnu -y
+source "$HOME/.cargo/env"
+cd /var/
+wget http://musl.libc.org/releases/musl-1.2.3.tar.gz -O musl-1.2.3.tar.gz
+yum install -y gcc
+tar -zxvf musl-1.2.3.tar.gz
+cd musl-1.2.3
+./configure
+make -j 2
+make install
+ln -fs /usr/local/musl/bin/musl-gcc /usr/local/bin/musl-gcc
+rustup target add x86_64-unknown-linux-musl
+```
+
+### rpmbuild的准备工作
 
 ```shell
 ## 打包
@@ -123,19 +126,19 @@ yum install -y rpm-build
 yum install -y rpmdevtools
 rm -rf ~/rpmbuild
 rpmdev-setuptree
-git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
-cd /var/rust_http_proxy
-git pull --ff-only || {
-  echo "git pull 失败，重新clone"
-  cd /var
-  rm -rf /var/rust_http_proxy
-  git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
-}
-rpmbuild -bb /var/rust_http_proxy/rpm/rust_http_proxy.spec
+```
 
+### 打包
+
+```shell
+wget https://raw.githubusercontent.com/arloor/rust_http_proxy/master/rpm/rust_http_proxy.spec -O /var/rust_http_proxy.spec
+rpmbuild -bb /var/rust_http_proxy.spec
+```
+
+```shell
 ## 安装
 version=0.1
-release=11.all
+release=12.all
 echo RPM信息
 rpm -qpi ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_64.rpm
 echo 配置文件
@@ -148,7 +151,4 @@ yum install -y ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_
 ## 启动
 service rust_http_proxy restart
 service rust_http_proxy status --no-page
-## 关闭
-service rust_http_proxy stop
-
 ```

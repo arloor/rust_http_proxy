@@ -1,6 +1,6 @@
 Name:           rust_http_proxy
 Version:        0.1
-Release:        11.all
+Release:        12.all
 Summary:        Rust Http Proxy
 
 License:        Apache License 2.0
@@ -23,8 +23,7 @@ if [ -d /tmp/rust_http_proxy ]; then
             rm -rf /tmp/rust_http_proxy
             git clone %{URL} /tmp/rust_http_proxy
           }
-fi
-if [ ! -d /tmp/rust_http_proxy ]; then
+else
         git clone %{URL} /tmp/rust_http_proxy
 fi
 
