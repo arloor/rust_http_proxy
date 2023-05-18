@@ -135,6 +135,8 @@ wget https://raw.githubusercontent.com/arloor/rust_http_proxy/master/rpm/rust_ht
 rpmbuild -bb /var/rust_http_proxy.spec
 ```
 
+### 安装
+
 ```shell
 ## 安装
 version=0.1
