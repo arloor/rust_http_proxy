@@ -143,7 +143,7 @@ if [ -d /var/rust_http_proxy ]; then
 else
         git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
 fi
-rpmbuild -bb /var/rust_http_proxy.spec
+rpmbuild -bb /var/rust_http_proxy/rpm/rust_http_proxy.spec
 
 ## 安装
 version=0.1
