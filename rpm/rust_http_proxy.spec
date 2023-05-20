@@ -46,6 +46,10 @@ install  -m755 rpm/env %{buildroot}/etc/rust_http_proxy/env
 
 
 %post
+# 处理%config(noreplace)类型的.rpmsave文件
+[ -f /etc/rust_http_proxy/env.rpmsave ]&&{
+  mv /etc/rust_http_proxy/env.rpmsave /etc/rust_http_proxy/env
+}
 [ ! -d /usr/share/rust_http_proxy ]&&{
   mkdir -p /usr/share/rust_http_proxy
 }
