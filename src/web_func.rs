@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::env;
 use hyper::{Body, http, Method, Request, Response, StatusCode};
 use hyper::http::HeaderValue;
@@ -10,24 +11,30 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use mime_guess::from_path;
 use httpdate::fmt_http_date;
 use std::time::SystemTime;
+use log::info;
 use percent_encoding::percent_decode_str;
 
 
 pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr) -> Response<Body> {
+    let raw_path = req.uri().path();
+    let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
+    let path=path.as_ref();
+    info!("web request: {:?} {:?} {:?} from {:?}", req.method(),path,req.version(),client_socket_addr);
+
     let web_content_path: String = env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()); //默认为工作目录下
-    let path = match (req.method(), req.uri().path()) {
+    let path = match (req.method(), path) {
         (&Method::GET, "/ip") => return serve_ip(client_socket_addr),
         (&Method::GET, "/nt") => return count_stream(),
         (&Method::GET, path) => {
-            let path = percent_decode_str(path).decode_utf8().unwrap();
-            if String::from(path.as_ref()).contains("/../") {
+
+            if String::from(path).contains("/../") {
                 return not_found();
             }
             PathBuf::from(
-                if String::from(path.as_ref()).ends_with("/") {
-                    format!("{}/{}index.html", web_content_path, path)
+                if String::from(path).ends_with("/") {
+                    format!("{}{}index.html", web_content_path, path)
                 } else {
-                    format!("{}/{}", web_content_path, path)
+                    format!("{}{}", web_content_path, path)
                 })
         }
         _ => return not_found(),
