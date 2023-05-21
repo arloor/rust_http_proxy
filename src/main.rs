@@ -116,7 +116,6 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
                 info!("proxy request: {:?} {:?} {:?} Host: {:?} User-Agent: {:?} from {:?}", req.method(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()),client_socket_addr);
             }
             None => {
-                info!("web request: {:?} {:?} {:?} from {:?}", req.method(),req.uri(),req.version(),client_socket_addr);
                 return Ok(web_func::serve_http_request(&req,client_socket_addr).await)
             }
         }
