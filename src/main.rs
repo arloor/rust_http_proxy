@@ -6,6 +6,7 @@ use futures_util::stream::StreamExt;
 
 mod tls_helper;
 mod web_func;
+
 use std::convert::Infallible;
 use std::env;
 use std::net::SocketAddr;
@@ -13,7 +14,7 @@ use std::net::SocketAddr;
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Client, http, Method, Request, Response, Server};
+use hyper::{Body, Client, http, Method, Request, Response, Server, Version};
 use hyper::http::HeaderValue;
 
 use hyper::server::conn::{AddrIncoming, AddrStream};
@@ -106,17 +107,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-
 async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("proxy request: {:?} {:?} {:?} from {:?}", req.method(),req.uri(),req.version(),client_socket_addr);
     } else {
+        if req.version() == Version::HTTP_2 {
+            return Ok(web_func::serve_http_request(&req, client_socket_addr).await);
+        }
         match req.uri().host() {
             Some(_) => {
                 info!("proxy request: {:?} {:?} {:?} Host: {:?} User-Agent: {:?} from {:?}", req.method(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()),client_socket_addr);
             }
             None => {
-                return Ok(web_func::serve_http_request(&req,client_socket_addr).await)
+                return Ok(web_func::serve_http_request(&req, client_socket_addr).await);
             }
         }
     }
@@ -192,7 +195,6 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
         client.request(req).await
     }
 }
-
 
 
 fn build_proxy_authenticate_resp() -> Response<Body> {
