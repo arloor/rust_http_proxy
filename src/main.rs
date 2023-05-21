@@ -5,7 +5,7 @@ mod logx;
 use futures_util::stream::StreamExt;
 
 mod tls_helper;
-
+mod web_func;
 use std::convert::Infallible;
 use std::env;
 use std::net::SocketAddr;
@@ -16,15 +16,14 @@ use hyper::upgrade::Upgraded;
 use hyper::{Body, Client, http, Method, Request, Response, Server};
 use hyper::http::HeaderValue;
 
-use hyper::server::conn::AddrIncoming;
+use hyper::server::conn::{AddrIncoming, AddrStream};
 use log::{debug, info, warn};
 use tls_listener::TlsListener;
 use std::future::ready;
-use std::ops::Add;
-use std::process::Command;
 use rand::Rng;
 
 use tokio::net::TcpStream;
+use tokio_rustls::server::TlsStream;
 use crate::logx::init_log;
 use crate::tls_helper::tls_acceptor;
 
@@ -57,21 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_http();
     info!("rust_http_proxy is starting!");
     if over_tls {
-        let make_service1 = make_service_fn(move |_| {
-            let client = client.clone();
-            let basic_auth = basic_auth.clone();
-            async move {
-                Ok::<_, Infallible>(service_fn(move |req| {
-                    proxy(client.clone(), req, basic_auth.clone(), ask_for_auth)
-                }))
-            }
-        });
         // This uses a filter to handle errors with connecting
         let acceptor = tls_acceptor(&raw_key, &cert);
         let incoming = TlsListener::new(acceptor, AddrIncoming::bind(&addr)?).filter(|conn| {
             match conn {
-                Ok(stream) => {
-                    info!("accept from {:?}",stream.get_ref().0.remote_addr());
+                Ok(_) => {
                     ready(true)
                 }
                 Err(err) => {
@@ -83,52 +72,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let server = Server::builder(hyper::server::accept::from_stream(incoming))
             .http1_title_case_headers(true)
-            .serve(make_service1);
+            .serve(make_service_fn(move |conn: &TlsStream<AddrStream>| {
+                let client_socket_addr = conn.get_ref().0.remote_addr();
+                let client = client.clone();
+                let basic_auth = basic_auth.clone();
+                async move {
+                    Ok::<_, Infallible>(service_fn(move |req| {
+                        proxy(client.clone(), req, basic_auth.clone(), ask_for_auth, client_socket_addr)
+                    }))
+                }
+            }));
         info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
         server.await?;
         Ok(())
     } else {
-        let make_service2 = make_service_fn(move |_| {
-            let client = client.clone();
-            let basic_auth = basic_auth.clone();
-            async move {
-                Ok::<_, Infallible>(service_fn(move |req| {
-                    proxy(client.clone(), req, basic_auth.clone(), ask_for_auth)
-                }))
-            }
-        });
         let server = Server::bind(&addr)
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
-            .serve(make_service2);
+            .serve(make_service_fn(move |conn: &AddrStream| {
+                let client_socket_addr = conn.remote_addr();
+                let client = client.clone();
+                let basic_auth = basic_auth.clone();
+                async move {
+                    Ok::<_, Infallible>(service_fn(move |req| {
+                        proxy(client.clone(), req, basic_auth.clone(), ask_for_auth, client_socket_addr)
+                    }))
+                }
+            }));
         info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
         server.await?;
         Ok(())
     }
 }
 
-fn count_stream() -> String {
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg("netstat -nt|tail -n +3|grep -E  \"ESTABLISHED|CLOSE_WAIT\"|awk -F \"[ :]+\"  -v OFS=\"\" '$5<10000 && $5!=\"22\" && $7>1024 {printf(\"%15s   => %15s:%-5s %s\\n\",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn")
-        .output()
-        .expect("error call netstat");
-    String::from_utf8(output.stdout).unwrap().add(&*String::from_utf8(output.stderr).unwrap())
-}
 
-async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool) -> Result<Response<Body>, hyper::Error> {
+
+async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
-        info!("proxy request: {:?} {:?} {:?}", req.method(),req.uri(),req.version());
+        info!("proxy request: {:?} {:?} {:?} from {:?}", req.method(),req.uri(),req.version(),client_socket_addr);
     } else {
         match req.uri().host() {
             Some(_) => {
-                info!("proxy request: {:?} {:?} {:?} Host: {:?} User-Agent: {:?}", req.method(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+                info!("proxy request: {:?} {:?} {:?} Host: {:?} User-Agent: {:?} from {:?}", req.method(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()),client_socket_addr);
             }
             None => {
-                info!("web request: {:?} {:?} {:?}", req.method(),req.uri(),req.version());
-                let mut resp = Response::new(Body::from(count_stream()));
-                resp.headers_mut().append(http::header::REFRESH, HeaderValue::from_static("2"));
-                return Ok(resp);
+                info!("web request: {:?} {:?} {:?} from {:?}", req.method(),req.uri(),req.version(),client_socket_addr);
+                return Ok(web_func::serve_http_request(&req,client_socket_addr).await)
             }
         }
     }
@@ -204,6 +193,8 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
         client.request(req).await
     }
 }
+
+
 
 fn build_proxy_authenticate_resp() -> Response<Body> {
     let mut resp = Response::new(Body::from("auth need"));
