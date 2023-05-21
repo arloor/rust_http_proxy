@@ -10,6 +10,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use mime_guess::from_path;
 use httpdate::fmt_http_date;
 use std::time::SystemTime;
+use percent_encoding::percent_decode_str;
 
 
 pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr) -> Response<Body> {
@@ -18,11 +19,12 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
         (&Method::GET, "/ip") => return serve_ip(client_socket_addr),
         (&Method::GET, "/nt") => return count_stream(),
         (&Method::GET, path) => {
-            if String::from(path).contains("/../") {
+            let path = percent_decode_str(path).decode_utf8().unwrap();
+            if String::from(path.as_ref()).contains("/../") {
                 return not_found();
             }
             PathBuf::from(
-                if String::from(path).ends_with("/") {
+                if String::from(path.as_ref()).ends_with("/") {
                     format!("{}/{}index.html", web_content_path, path)
                 } else {
                     format!("{}/{}", web_content_path, path)
