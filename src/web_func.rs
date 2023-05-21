@@ -5,8 +5,11 @@ use std::net::SocketAddr;
 use std::ops::Add;
 use std::path::PathBuf;
 use std::process::Command;
-use tokio::fs::File;
+use tokio::fs::{File,metadata};
 use tokio_util::codec::{BytesCodec, FramedRead};
+use mime_guess::from_path;
+use httpdate::fmt_http_date;
+use std::time::SystemTime;
 
 
 pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr) -> Response<Body> {
@@ -27,6 +30,16 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
         }
         _ => return not_found(),
     };
+    let mime_type = from_path(&path).first_or_octet_stream();
+    let metadata = match metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(_) => return not_found(),
+    };
+
+    let last_modified: SystemTime = match metadata.modified() {
+        Ok(time) => time,
+        Err(_) => return not_found(),
+    };
     let file = match File::open(path).await {
         Ok(file) => file,
         Err(_) => return not_found(),
@@ -35,13 +48,15 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
     let stream = FramedRead::new(file, BytesCodec::new());
     let body = Body::wrap_stream(stream);
 
-    Response::new(body)
+    Response::builder()
+        .header("Content-Type", mime_type.as_ref())
+        .header("Last-Modified", fmt_http_date(last_modified))
+        .body(body)
+        .unwrap()
 }
 
 fn serve_ip(client_socket_addr: SocketAddr) -> Response<Body> {
-    let mut resp = Response::new(Body::from(client_socket_addr.ip().to_string()));
-    resp.headers_mut().append(http::header::REFRESH, HeaderValue::from_static("2"));
-    return resp;
+    Response::new(Body::from(client_socket_addr.ip().to_string()))
 }
 
 fn count_stream() -> Response<Body> {
@@ -50,7 +65,9 @@ fn count_stream() -> Response<Body> {
         .arg("netstat -nt|tail -n +3|grep -E  \"ESTABLISHED|CLOSE_WAIT\"|awk -F \"[ :]+\"  -v OFS=\"\" '$5<10000 && $5!=\"22\" && $7>1024 {printf(\"%15s   => %15s:%-5s %s\\n\",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn")
         .output()
         .expect("error call netstat");
-    Response::new(Body::from(String::from_utf8(output.stdout).unwrap().add(&*String::from_utf8(output.stderr).unwrap())))
+    let mut resp = Response::new(Body::from(String::from_utf8(output.stdout).unwrap().add(&*String::from_utf8(output.stderr).unwrap())));
+    resp.headers_mut().append(http::header::REFRESH, HeaderValue::from_static("2"));
+    return resp;
 }
 
 fn not_found() -> Response<Body> {
