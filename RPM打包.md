@@ -108,7 +108,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-h
 source "$HOME/.cargo/env"
 cd /var/
 wget http://musl.libc.org/releases/musl-1.2.3.tar.gz -O musl-1.2.3.tar.gz
-yum install -y gcc
+yum install -y gcc make
 tar -zxvf musl-1.2.3.tar.gz
 cd musl-1.2.3
 ./configure
