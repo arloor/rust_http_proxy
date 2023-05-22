@@ -47,11 +47,9 @@ fn tls_config(key: &String, cert: &String) -> Arc<ServerConfig> {
         .with_single_cert(certs, keys.remove(0))
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
         .unwrap();
-    config.alpn_protocols=vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    info!("{:?}",config);
-    Arc::new(
-        config,
-    )
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    info!("tls config is {:?}",config);
+    Arc::new(config)
 }
 
 pub fn tls_acceptor(raw_key: &String, cert: &String) -> Acceptor {
