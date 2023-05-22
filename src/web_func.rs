@@ -19,7 +19,7 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
     let raw_path = req.uri().path();
     let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
     let path = path.as_ref();
-    info!("web request: {:?} {:?} {:?} from {:?}", req.method(),path,req.version(),client_socket_addr);
+    info!("[WEB] {:>21?} => {:>7?} {:?} {}", client_socket_addr,req.method(),req.version(),path);
 
     let web_content_path: String = env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()); //默认为工作目录下
     let path = match (req.method(), path) {
