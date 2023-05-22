@@ -9,6 +9,7 @@
 //
 // 总结一下，-----BEGIN RSA PRIVATE KEY----- 是特定于 RSA 的 PKCS#1 格式的私钥，而 -----BEGIN PRIVATE KEY----- 是更通用的 PKCS#8 格式的私钥，可用于多种加密算法。尽管两者之间有区别，但在实际使用中，许多加密库和工具都可以处理这两种格式。
 
+use std::env;
 use std::fs::File;
 
 
@@ -54,4 +55,8 @@ fn tls_config(key: &String, cert: &String) -> Arc<ServerConfig> {
 
 pub fn tls_acceptor(raw_key: &String, cert: &String) -> Acceptor {
     tls_acceptor_impl(raw_key, cert)
+}
+
+pub fn is_over_tls() -> bool {
+    "true" == env::var("over_tls").unwrap_or("false".to_string())
 }

@@ -13,6 +13,7 @@ use httpdate::fmt_http_date;
 use std::time::SystemTime;
 use log::info;
 use percent_encoding::percent_decode_str;
+use crate::tls_helper::is_over_tls;
 
 
 pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr) -> Response<Body> {
@@ -59,7 +60,7 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
 
     let content_type = mime_type.as_ref();
     let content_type = if !content_type.to_ascii_lowercase().contains("; charset=utf-8") {
-       format!("{}{}", &content_type, "; charset=utf-8")
+        format!("{}{}", &content_type, "; charset=utf-8")
     } else {
         String::from(content_type)
     };
@@ -85,20 +86,22 @@ fn count_stream() -> Response<Body> {
     return resp;
 }
 
-fn set_cron_restart()->Response<Body>{
+fn set_cron_restart() -> Response<Body> {
+    if !is_over_tls() {
+        return Response::new(Body::from("http模式下无需重启以更新TLS证书"));
+    }
     let output = Command::new("sh")
         .arg("-c")
         .arg("'if ! grep \"systemctl restart rust_http_proxy\" /etc/crontab > /dev/null;\n\
                             then\n\
-                              echo 设置crontab任务进行重启，以加载新tls证书
+                              echo 设置重启更新TLS证书的crontab任务\n\
                               echo \"0 4 * * * root systemctl restart rust_http_proxy\" >> /etc/crontab;\n\
                             else\n\
-                              echo 已存在重启加载tls证书的定时任务，不重复设置！\n\
+                              echo 已存在重启任务，无需重复设置！\n\
                             fi'")
         .output()
-        .expect("error call netstat");
+        .expect("error call");
     let mut resp = Response::new(Body::from(String::from_utf8(output.stdout).unwrap().add(&*String::from_utf8(output.stderr).unwrap())));
-    resp.headers_mut().append(http::header::REFRESH, HeaderValue::from_static("2"));
     resp.headers_mut().append(http::header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
     return resp;
 }
