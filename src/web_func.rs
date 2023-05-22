@@ -24,7 +24,7 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
     let web_content_path: String = env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()); //默认为工作目录下
     let path = match (req.method(), path) {
         (&Method::GET, "/ip") => return serve_ip(client_socket_addr),
-        (&Method::GET, "/net") => return count_stream(),
+        (&Method::GET, "/nt") => return count_stream(),
         (&Method::GET, path) => {
             if String::from(path).contains("/../") {
                 return not_found();
