@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let basic_auth = env::var("basic_auth").unwrap_or("".to_string());
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("true".to_string());
     //new
-    let over_tls = "true" == env::var("over_tls").unwrap_or("false".to_string());
+    let over_tls = tls_helper::is_over_tls();
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
@@ -105,6 +105,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 }
+
+
 
 
 async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
