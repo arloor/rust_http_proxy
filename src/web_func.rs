@@ -25,6 +25,7 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
     let path = match (req.method(), path) {
         (&Method::GET, "/ip") => return serve_ip(client_socket_addr),
         (&Method::GET, "/nt") => return count_stream(),
+        (&Method::GET, "/cron") => return set_cron_restart(),
         (&Method::GET, path) => {
             if String::from(path).contains("/../") {
                 return not_found();
@@ -81,6 +82,24 @@ fn count_stream() -> Response<Body> {
         .expect("error call netstat");
     let mut resp = Response::new(Body::from(String::from_utf8(output.stdout).unwrap().add(&*String::from_utf8(output.stderr).unwrap())));
     resp.headers_mut().append(http::header::REFRESH, HeaderValue::from_static("2"));
+    return resp;
+}
+
+fn set_cron_restart()->Response<Body>{
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg("'if ! grep \"systemctl restart rust_http_proxy\" /etc/crontab > /dev/null;\n\
+                            then\n\
+                              echo 设置crontab任务进行重启，以加载新tls证书
+                              echo \"0 4 * * * root systemctl restart rust_http_proxy\" >> /etc/crontab;\n\
+                            else\n\
+                              echo 已存在重启加载tls证书的定时任务，不重复设置！\n\
+                            fi'")
+        .output()
+        .expect("error call netstat");
+    let mut resp = Response::new(Body::from(String::from_utf8(output.stdout).unwrap().add(&*String::from_utf8(output.stderr).unwrap())));
+    resp.headers_mut().append(http::header::REFRESH, HeaderValue::from_static("2"));
+    resp.headers_mut().append(http::header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
     return resp;
 }
 
