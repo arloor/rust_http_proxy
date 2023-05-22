@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::ops::Add;
 use std::path::PathBuf;
 use std::process::Command;
-use tokio::fs::{File,metadata};
+use tokio::fs::{File, metadata};
 use tokio_util::codec::{BytesCodec, FramedRead};
 use mime_guess::from_path;
 use httpdate::fmt_http_date;
@@ -18,7 +18,7 @@ use percent_encoding::percent_decode_str;
 pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr) -> Response<Body> {
     let raw_path = req.uri().path();
     let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
-    let path=path.as_ref();
+    let path = path.as_ref();
     info!("web request: {:?} {:?} {:?} from {:?}", req.method(),path,req.version(),client_socket_addr);
 
     let web_content_path: String = env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()); //默认为工作目录下
@@ -26,7 +26,6 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
         (&Method::GET, "/ip") => return serve_ip(client_socket_addr),
         (&Method::GET, "/nt") => return count_stream(),
         (&Method::GET, path) => {
-
             if String::from(path).contains("/../") {
                 return not_found();
             }
@@ -57,8 +56,14 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
     let stream = FramedRead::new(file, BytesCodec::new());
     let body = Body::wrap_stream(stream);
 
+    let content_type = mime_type.as_ref();
+    let content_type = if !content_type.to_ascii_lowercase().contains("; charset=utf-8") {
+       format!("{}{}", &content_type, "; charset=utf-8")
+    } else {
+        String::from(content_type)
+    };
     Response::builder()
-        .header("Content-Type", mime_type.as_ref())
+        .header("Content-Type", content_type)
         .header("Last-Modified", fmt_http_date(last_modified))
         .body(body)
         .unwrap()
