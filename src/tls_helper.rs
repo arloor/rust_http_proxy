@@ -89,7 +89,7 @@ pub struct MyTlsAcceptor {
     refresh_time: SystemTime,
 }
 
-const CERT_REFRESH_INTERVAL_SECS: u64 = 24 * 60 * 60; // 一天
+const CERT_REFRESH_INTERVAL_SECS: u64 =  60; // 一天
 
 impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
     type Stream = tokio_rustls::server::TlsStream<C>;
