@@ -121,9 +121,8 @@ pub struct MyTlsAcceptor {
     refresh_time: SystemTime,
 }
 
-const TIMED_REFRESH_INTERVAL_SECS: u64 = 24 * 60 * 60;
-// 一天
-const NEXT_REFRESH_INTERVAL_SECS: u64 = 60; // 一分钟
+const TIMED_REFRESH_INTERVAL_SECS: u64 = 8 * 60 * 60;
+const NEXT_REFRESH_INTERVAL_SECS: u64 = 5 * 60;
 
 impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
     type Stream = tokio_rustls::server::TlsStream<C>;
