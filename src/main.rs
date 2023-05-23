@@ -2,6 +2,7 @@
 
 mod logx;
 
+use std::borrow::Cow;
 use futures_util::stream::StreamExt;
 
 mod tls_helper;
@@ -21,6 +22,7 @@ use hyper::server::conn::{AddrIncoming, AddrStream};
 use log::{debug, info, warn};
 use tls_listener::TlsListener;
 use std::future::ready;
+use percent_encoding::percent_decode_str;
 use rand::Rng;
 
 use tokio::net::TcpStream;
@@ -111,17 +113,17 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
     if Method::CONNECT == req.method() {
         info!("{:>21?} {:7?} {:?} {:?}",client_socket_addr, req.method(),req.uri(),req.version());
     } else {
-        if req.version() == Version::HTTP_2 {
-            return Ok(web_func::serve_http_request(&req, client_socket_addr).await);
+        if req.version() == Version::HTTP_2 || None == req.uri().host() {
+            let raw_path = req.uri().path();
+            let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
+            let path = path.as_ref();
+            info!("{:>21?} {:>7?} {} {:?}", client_socket_addr,req.method(),path,req.version());
+            return Ok(web_func::serve_http_request(&req, client_socket_addr, path).await);
         }
-        match req.uri().host() {
-            Some(_) => {
-                info!("{:>21?} {:7?} {:?} {:?} Host: {:?} User-Agent: {:?}",client_socket_addr, req.method(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
-            }
-            None => {
-                return Ok(web_func::serve_http_request(&req, client_socket_addr).await);
-            }
-        }
+        if let Some(host) = req.uri().host() {
+            let host = host.to_string();
+            info!("{:>21?} {:7?} {:?} {:?} Host: {:?} User-Agent: {:?}",client_socket_addr, req.method(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str(host.as_str()).unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+        };
     }
 
     if basic_auth.len() != 0 { //需要检验鉴权
