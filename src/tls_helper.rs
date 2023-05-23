@@ -62,9 +62,9 @@ fn tls_config(key: &String, cert: &String) -> Option<Arc<ServerConfig>> {
     };
     let key = if let Ok(Some(item)) = rustls_pemfile::read_one(&mut BufReader::new(key_file)) {
         match item {
-            Item::PKCS8Key(private_key) => private_key,
-            Item::ECKey(private_key) => private_key,
-            Item::RSAKey(private_key) => private_key,
+            Item::PKCS8Key(bytes) => PrivateKey(bytes),
+            Item::ECKey(bytes) => PrivateKey(bytes),
+            Item::RSAKey(bytes) => PrivateKey(bytes),
             Item::X509Certificate(_) => {
                 warn!("私钥文件放了个证书 {}",key);
                 return None;
@@ -83,7 +83,7 @@ fn tls_config(key: &String, cert: &String) -> Option<Arc<ServerConfig>> {
     match ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(certs, PrivateKey(key))
+        .with_single_cert(certs, key)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
     {
         Ok(mut config) => {
