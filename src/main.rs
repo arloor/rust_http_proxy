@@ -109,14 +109,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
-        info!("[Proxy] {:>21?} => {:7?} {:?} {:?}",client_socket_addr, req.method(),req.version(),req.uri());
+        info!("{:>21?} {:7?} {:?} {:?}",client_socket_addr, req.method(),req.uri(),req.version());
     } else {
         if req.version() == Version::HTTP_2 {
             return Ok(web_func::serve_http_request(&req, client_socket_addr).await);
         }
         match req.uri().host() {
             Some(_) => {
-                info!("[Proxy] {:>21?} => {:7?} {:?} {:?} Host: {:?} User-Agent: {:?}",client_socket_addr, req.method(),req.version(),req.uri(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+                info!("{:>21?} {:7?} {:?} {:?} Host: {:?} User-Agent: {:?}",client_socket_addr, req.method(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str("None").unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
             }
             None => {
                 return Ok(web_func::serve_http_request(&req, client_socket_addr).await);
