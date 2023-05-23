@@ -1,4 +1,4 @@
-ssh root@hk.arloor.dev "curl https://raw.githubusercontent.com/arloor/rust_http_proxy/master/rpm/genbin.sh -k |zsh"
+ssh root@hk.arloor.dev "curl https://raw.githubusercontent.com/arloor/rust_http_proxy/master/rpm/genbin.sh -k 2>/dev/null |zsh"
 scp root@hk.arloor.dev:/usr/bin/rust_http_proxy ~/Downloads/rust_http_proxy
 scp root@hk.arloor.dev:/root/rpmbuild/RPMS/x86_64/rust_http_proxy-0.1-1.all.x86_64.rpm ~/Downloads/rust_http_proxy-0.1-1.all.x86_64.rpm
 
@@ -13,7 +13,7 @@ for i in arloor.com sg.arloor.dev dc6.arloor.dev dc9.arloor.dev bwg.arloor.dev; 
       ## 启动
       systemctl daemon-reload
       systemctl start rust_http_proxy
-      sleep 1
+      sleep 3
       tail -n  10 /data/var/log/proxy/proxy.log
     "
 done
