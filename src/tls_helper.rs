@@ -105,30 +105,36 @@ impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
         let now = SystemTime::now();
         let second_since_last_refresh = now.duration_since(self.refresh_time).unwrap_or(Duration::from_secs(0)).as_secs();
         let tls_config = if timed_refresh_cert() && second_since_last_refresh >= TIMED_REFRESH_INTERVAL_SECS {
-            match tls_config(&self.key, &self.cert) {
-                Some(tls_config) => {
-                    // 使用unsafe更新不可变对象的字段
-                    unsafe {
-                        let tls_config_ptr: *mut Arc<ServerConfig> = &self.tls_config as *const _ as *mut _;
-                        *tls_config_ptr = tls_config.clone();
-                        let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
-                        *refresh_time_ptr = now;
-                    }
-                    tls_config.clone()
-                }
-                None => {
-                    warn!("error refresh cert, will refresh in {} seconds",NEXT_REFRESH_INTERVAL_SECS);
-                    // 使用unsafe更新不可变对象的字段
-                    unsafe {
-                        let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
-                        *refresh_time_ptr = now - Duration::from_secs(TIMED_REFRESH_INTERVAL_SECS) + Duration::from_secs(NEXT_REFRESH_INTERVAL_SECS);
-                    }
-                    self.tls_config.clone()
-                }
-            }
+            self.refresh_and_return_tls_config(now)
         } else {
             self.tls_config.clone()
         };
         tokio_rustls::TlsAcceptor::accept(&tls_config.clone().into(), conn)
+    }
+}
+
+impl MyTlsAcceptor {
+    fn refresh_and_return_tls_config(&self, now: SystemTime) -> Arc<ServerConfig> {
+        match tls_config(&self.key, &self.cert) {
+            Some(tls_config) => {
+                // 使用unsafe更新不可变对象的字段
+                unsafe {
+                    let tls_config_ptr: *mut Arc<ServerConfig> = &self.tls_config as *const _ as *mut _;
+                    *tls_config_ptr = tls_config.clone();
+                    let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
+                    *refresh_time_ptr = now;
+                }
+                tls_config.clone()
+            }
+            None => {
+                warn!("error refresh cert, will refresh in {} seconds",NEXT_REFRESH_INTERVAL_SECS);
+                // 使用unsafe更新不可变对象的字段
+                unsafe {
+                    let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
+                    *refresh_time_ptr = now - Duration::from_secs(TIMED_REFRESH_INTERVAL_SECS) + Duration::from_secs(NEXT_REFRESH_INTERVAL_SECS);
+                }
+                self.tls_config.clone()
+            }
+        }
     }
 }
