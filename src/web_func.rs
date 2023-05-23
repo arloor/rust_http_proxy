@@ -23,7 +23,7 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
 }
 
 async fn serve_path(web_content_path: String, path: &str) -> Response<Body> {
-    if String::from(path).contains("/../") {
+    if String::from(path).contains("/..") {
         return not_found();
     }
     let path = PathBuf::from(
