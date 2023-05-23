@@ -48,7 +48,7 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 
 ## 安装说明
 
-见[releases v0.1.0](https://github.com/arloor/rust_http_proxy/releases/tag/v0.1.0)
+见[releases v0.2.0](https://github.com/arloor/rust_http_proxy/releases/tag/v0.2.0)
 
 ## 客户端
 
