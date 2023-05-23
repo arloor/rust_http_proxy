@@ -40,17 +40,19 @@ fn tls_acceptor_impl(key: &String, cert: &String) -> Acceptor {
 
 fn tls_config(key: &String, cert: &String) -> Option<Arc<ServerConfig>> {
     use std::io::{self, BufReader};
-    let key_file_result = File::open(key);
-    if key_file_result.is_err() {
+    let key_file = if let Ok(file) = File::open(key) {
+        file
+    } else {
         warn!("打开私钥文件失败 {}",key);
         return None;
-    }
-    let cert_file_result = File::open(cert);
-    if cert_file_result.is_err() {
+    };
+    let cert_file = if let Ok(file) = File::open(cert) {
+        file
+    } else {
         warn!("打开证书文件失败 {}",cert);
         return None;
-    }
-    let certs = match rustls_pemfile::certs(&mut BufReader::new(cert_file_result.unwrap()))
+    };
+    let certs = match rustls_pemfile::certs(&mut BufReader::new(cert_file))
         .map(|mut certs| certs.drain(..).map(Certificate).collect()) {
         Ok(certs) => certs,
         Err(e) => {
@@ -58,7 +60,7 @@ fn tls_config(key: &String, cert: &String) -> Option<Arc<ServerConfig>> {
             return None;
         }
     };
-    let key = if let Ok(Some(item)) = rustls_pemfile::read_one(&mut BufReader::new(key_file_result.unwrap())) {
+    let key = if let Ok(Some(item)) = rustls_pemfile::read_one(&mut BufReader::new(key_file)) {
         match item {
             Item::PKCS8Key(private_key) => private_key,
             Item::ECKey(private_key) => private_key,
@@ -68,26 +70,31 @@ fn tls_config(key: &String, cert: &String) -> Option<Arc<ServerConfig>> {
                 return None;
             }
             _ => {
+                warn!("读取私钥失败 {}",key);
                 return None;
             }
         }
     } else {
-        warn!("非法私钥 {}",key);
+        warn!("读取私钥失败 {}",key);
         return None;
     };
 
 
-    if let Ok(mut config) = ServerConfig::builder()
+    match ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(certs, PrivateKey(key))
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err)) {
-        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-        info!("current rustls config is: {:?}",config);
-        Some(Arc::new(config))
-    } else {
-        warn!("构造Rustls ServerConfig失败");
-        None
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
+    {
+        Ok(mut config) => {
+            config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+            info!("new config is {:?}",config);
+            Some(Arc::new(config))
+        }
+        Err(e) => {
+            warn!("构造Rustls ServerConfig失败 {:?}",e);
+            None
+        }
     }
 }
 
