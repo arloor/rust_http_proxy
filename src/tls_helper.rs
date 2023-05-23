@@ -24,6 +24,11 @@ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
 pub type Acceptor = MyTlsAcceptor;
 
 fn tls_acceptor_impl(key: &String, cert: &String) -> Acceptor {
+    info!("init TlsAcceptor {}",if timed_refresh_cert(){
+        format!("which will refresh every {} hours",TIMED_REFRESH_INTERVAL_SECS/60/60)
+    }else{
+        "".to_string()
+    });
     MyTlsAcceptor {
         tls_config: tls_config(&key, &cert).unwrap(),
         key: key.to_string(),
@@ -89,7 +94,8 @@ pub struct MyTlsAcceptor {
     refresh_time: SystemTime,
 }
 
-const CERT_REFRESH_INTERVAL_SECS: u64 = 24 * 60 * 60; // 一天
+const TIMED_REFRESH_INTERVAL_SECS: u64 = 24 * 60 * 60;// 一天
+const NEXT_REFRESH_INTERVAL_SECS: u64 = 60; // 一分钟
 
 impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
     type Stream = tokio_rustls::server::TlsStream<C>;
@@ -98,7 +104,7 @@ impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
     fn accept(&self, conn: C) -> Self::AcceptFuture {
         let now = SystemTime::now();
         let second_since_last_refresh = now.duration_since(self.refresh_time).unwrap_or(Duration::from_secs(0)).as_secs();
-        let tls_config = if timed_refresh_cert() && second_since_last_refresh >= CERT_REFRESH_INTERVAL_SECS {
+        let tls_config = if timed_refresh_cert() && second_since_last_refresh >= TIMED_REFRESH_INTERVAL_SECS {
             match tls_config(&self.key, &self.cert) {
                 Some(tls_config) => {
                     // 使用unsafe更新不可变对象的字段
@@ -111,11 +117,11 @@ impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
                     tls_config.clone()
                 }
                 None => {
-                    warn!("error refresh cert, will refresh in 1 minute");
+                    warn!("error refresh cert, will refresh in {} seconds",NEXT_REFRESH_INTERVAL_SECS);
                     // 使用unsafe更新不可变对象的字段
                     unsafe {
                         let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
-                        *refresh_time_ptr = now - Duration::from_secs(CERT_REFRESH_INTERVAL_SECS) + Duration::from_secs(60);
+                        *refresh_time_ptr = now - Duration::from_secs(TIMED_REFRESH_INTERVAL_SECS) + Duration::from_secs(NEXT_REFRESH_INTERVAL_SECS);
                     }
                     self.tls_config.clone()
                 }
