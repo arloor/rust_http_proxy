@@ -14,14 +14,22 @@ use std::fs::File;
 
 
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use log::info;
+use tls_listener::AsyncTls;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
 
 
-pub type Acceptor = tokio_rustls::TlsAcceptor;
+pub type Acceptor = MyTlsAcceptor;
 
 fn tls_acceptor_impl(key: &String, cert: &String) -> Acceptor {
-    tls_config(key, cert).into()
+    MyTlsAcceptor {
+        tls_config: tls_config(&key, &cert),
+        key: key.to_string(),
+        cert: cert.to_string(),
+        refresh_time: SystemTime::now(),
+    }
 }
 
 fn tls_config(key: &String, cert: &String) -> Arc<ServerConfig> {
@@ -49,7 +57,7 @@ fn tls_config(key: &String, cert: &String) -> Arc<ServerConfig> {
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
         .unwrap();
     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    info!("tls config is {:?}",config);
+    info!("use TLS config: {:?}",config);
     Arc::new(config)
 }
 
@@ -59,4 +67,45 @@ pub fn tls_acceptor(raw_key: &String, cert: &String) -> Acceptor {
 
 pub fn is_over_tls() -> bool {
     "true" == env::var("over_tls").unwrap_or("false".to_string())
+}
+
+fn timed_refresh_cert() -> bool {
+    "true" == env::var("timed_refresh_cert").unwrap_or("true".to_string())
+}
+
+/// modified from `tokio_rustls::TlsAcceptor`, which is a wrapper around a `rustls::ServerConfig`, providing an async `accept` method.
+/// I provide this struct to read TLS cert and key at every time of accepting.
+/// I need this feature because my TLS cert is out of date every 3 months (a limit from acme.sh) and I don't want to restart my server at that situation.
+#[derive(Clone)]
+pub struct MyTlsAcceptor {
+    tls_config: Arc<ServerConfig>,
+    key: String,
+    cert: String,
+    refresh_time: SystemTime,
+}
+
+const CERT_REFRESH_INTERVAL_SECS: u64 = 24 * 60 * 60; // 一天
+
+impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
+    type Stream = tokio_rustls::server::TlsStream<C>;
+    type Error = std::io::Error;
+    type AcceptFuture = tokio_rustls::Accept<C>;
+    fn accept(&self, conn: C) -> Self::AcceptFuture {
+        let now = SystemTime::now();
+        let second_since_last_refresh = now.duration_since(self.refresh_time).unwrap_or(Duration::from_secs(0)).as_secs();
+        let tls_config = if timed_refresh_cert() && second_since_last_refresh >= CERT_REFRESH_INTERVAL_SECS {
+            let tls_config = tls_config(&self.key, &self.cert);
+            // 使用unsafe更新不可变对象的字段
+            unsafe {
+                let tls_config_ptr: *mut Arc<ServerConfig> = &self.tls_config as *const _ as *mut _;
+                *tls_config_ptr = tls_config.clone();
+                let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
+                *refresh_time_ptr = now;
+            }
+            tls_config.clone()
+        } else {
+            self.tls_config.clone()
+        };
+        tokio_rustls::TlsAcceptor::accept(&tls_config.clone().into(), conn)
+    }
 }
