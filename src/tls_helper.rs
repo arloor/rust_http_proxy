@@ -15,7 +15,7 @@ use std::fs::File;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use log::info;
+use log::{info, warn};
 use tls_listener::AsyncTls;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
@@ -25,14 +25,14 @@ pub type Acceptor = MyTlsAcceptor;
 
 fn tls_acceptor_impl(key: &String, cert: &String) -> Acceptor {
     MyTlsAcceptor {
-        tls_config: tls_config(&key, &cert),
+        tls_config: tls_config(&key, &cert).unwrap(),
         key: key.to_string(),
         cert: cert.to_string(),
         refresh_time: SystemTime::now(),
     }
 }
 
-fn tls_config(key: &String, cert: &String) -> Arc<ServerConfig> {
+fn tls_config(key: &String, cert: &String) -> Option<Arc<ServerConfig>> {
     use std::io::{self, BufReader};
     let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(cert).unwrap()))
         .map(|mut certs| certs.drain(..).map(Certificate).collect()).unwrap();
@@ -49,16 +49,21 @@ fn tls_config(key: &String, cert: &String) -> Arc<ServerConfig> {
         keys = rustls_pemfile::ec_private_keys(&mut BufReader::new(File::open(key).unwrap()))
             .map(|mut keys| keys.drain(..).map(PrivateKey).collect()).unwrap();
     }
+    if keys.len() == 0 {
+        return None;
+    }
 
-    let mut config = ServerConfig::builder()
+    if let Ok(mut config) = ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(certs, keys.remove(0))
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
-        .unwrap();
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    info!("use TLS config: {:?}",config);
-    Arc::new(config)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err)) {
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        info!("current rustls config is: {:?}",config);
+        Some(Arc::new(config))
+    } else {
+        None
+    }
 }
 
 pub fn tls_acceptor(raw_key: &String, cert: &String) -> Acceptor {
@@ -94,15 +99,27 @@ impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
         let now = SystemTime::now();
         let second_since_last_refresh = now.duration_since(self.refresh_time).unwrap_or(Duration::from_secs(0)).as_secs();
         let tls_config = if timed_refresh_cert() && second_since_last_refresh >= CERT_REFRESH_INTERVAL_SECS {
-            let tls_config = tls_config(&self.key, &self.cert);
-            // 使用unsafe更新不可变对象的字段
-            unsafe {
-                let tls_config_ptr: *mut Arc<ServerConfig> = &self.tls_config as *const _ as *mut _;
-                *tls_config_ptr = tls_config.clone();
-                let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
-                *refresh_time_ptr = now;
+            match tls_config(&self.key, &self.cert) {
+                Some(tls_config) => {
+                    // 使用unsafe更新不可变对象的字段
+                    unsafe {
+                        let tls_config_ptr: *mut Arc<ServerConfig> = &self.tls_config as *const _ as *mut _;
+                        *tls_config_ptr = tls_config.clone();
+                        let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
+                        *refresh_time_ptr = now;
+                    }
+                    tls_config.clone()
+                }
+                None => {
+                    warn!("error refresh cert, will refresh in 1 minute");
+                    // 使用unsafe更新不可变对象的字段
+                    unsafe {
+                        let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
+                        *refresh_time_ptr = now - Duration::from_secs(CERT_REFRESH_INTERVAL_SECS) + Duration::from_secs(60);
+                    }
+                    self.tls_config.clone()
+                }
             }
-            tls_config.clone()
         } else {
             self.tls_config.clone()
         };
