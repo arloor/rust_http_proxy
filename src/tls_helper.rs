@@ -16,6 +16,7 @@ use std::fs::File;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use log::{info, warn};
+use rustls_pemfile::Item;
 use tls_listener::AsyncTls;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
@@ -39,34 +40,53 @@ fn tls_acceptor_impl(key: &String, cert: &String) -> Acceptor {
 
 fn tls_config(key: &String, cert: &String) -> Option<Arc<ServerConfig>> {
     use std::io::{self, BufReader};
-    let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(cert).unwrap()))
-        .map(|mut certs| certs.drain(..).map(Certificate).collect()).unwrap();
-    // 读取私钥
-    // 读取 PKCS#1 格式 -----BEGIN RSA PRIVATE KEY-----
-    let mut keys: Vec<PrivateKey> = rustls_pemfile::rsa_private_keys(&mut BufReader::new(File::open(key).unwrap()))
-        .map(|mut keys| keys.drain(..).map(PrivateKey).collect()).unwrap();
-    // 读取 PKCS#8 格式 -----BEGIN PRIVATE KEY-----
-    if keys.len() == 0 {
-        keys = rustls_pemfile::pkcs8_private_keys(&mut BufReader::new(File::open(key).unwrap()))
-            .map(|mut keys| keys.drain(..).map(PrivateKey).collect()).unwrap();
-    }
-    if keys.len() == 0 {
-        keys = rustls_pemfile::ec_private_keys(&mut BufReader::new(File::open(key).unwrap()))
-            .map(|mut keys| keys.drain(..).map(PrivateKey).collect()).unwrap();
-    }
-    if keys.len() == 0 {
+    let key_file_result = File::open(key);
+    if key_file_result.is_err() {
+        warn!("打开私钥文件失败 {}",key);
         return None;
     }
+    let cert_file_result = File::open(cert);
+    if cert_file_result.is_err() {
+        warn!("打开证书文件失败 {}",cert);
+        return None;
+    }
+    let certs = match rustls_pemfile::certs(&mut BufReader::new(cert_file_result.unwrap()))
+        .map(|mut certs| certs.drain(..).map(Certificate).collect()) {
+        Ok(certs) => certs,
+        Err(e) => {
+            warn!("读取证书失败 {} {:?}",cert,e);
+            return None;
+        }
+    };
+    let key = if let Ok(Some(item)) = rustls_pemfile::read_one(&mut BufReader::new(key_file_result.unwrap())) {
+        match item {
+            Item::PKCS8Key(private_key) => private_key,
+            Item::ECKey(private_key) => private_key,
+            Item::RSAKey(private_key) => private_key,
+            Item::X509Certificate(_) => {
+                warn!("私钥文件放了个证书 {}",key);
+                return None;
+            }
+            _ => {
+                return None;
+            }
+        }
+    } else {
+        warn!("非法私钥 {}",key);
+        return None;
+    };
+
 
     if let Ok(mut config) = ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(certs, keys.remove(0))
+        .with_single_cert(certs, PrivateKey(key))
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err)) {
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         info!("current rustls config is: {:?}",config);
         Some(Arc::new(config))
     } else {
+        warn!("构造Rustls ServerConfig失败");
         None
     }
 }
@@ -94,7 +114,8 @@ pub struct MyTlsAcceptor {
     refresh_time: SystemTime,
 }
 
-const TIMED_REFRESH_INTERVAL_SECS: u64 = 24 * 60 * 60;// 一天
+const TIMED_REFRESH_INTERVAL_SECS: u64 = 24 * 60 * 60;
+// 一天
 const NEXT_REFRESH_INTERVAL_SECS: u64 = 60; // 一分钟
 
 impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for MyTlsAcceptor {
