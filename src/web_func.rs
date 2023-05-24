@@ -11,6 +11,8 @@ use httpdate::fmt_http_date;
 use std::time::SystemTime;
 
 
+const SERVER_NAME: &str = "A Rust Web Server";
+
 pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, path: &str) -> Response<Body> {
     let web_content_path: String = env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()); //默认为工作目录下
     return match (req.method(), path) {
@@ -63,7 +65,7 @@ async fn serve_path(web_content_path: String, path: &str, req: &Request<Body>) -
     Response::builder()
         .header(http::header::CONTENT_TYPE, content_type)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
-        .header(http::header::SERVER, "A Rust Web Server")
+        .header(http::header::SERVER, SERVER_NAME)
         .body(body)
         .unwrap()
 }
@@ -71,7 +73,7 @@ async fn serve_path(web_content_path: String, path: &str, req: &Request<Body>) -
 fn serve_ip(client_socket_addr: SocketAddr) -> Response<Body> {
     Response::builder()
         .status(StatusCode::OK)
-        .header(http::header::SERVER, "A Rust Web Server")
+        .header(http::header::SERVER, SERVER_NAME)
         .body(Body::from(client_socket_addr.ip().to_string()))
         .unwrap()
 }
@@ -85,7 +87,7 @@ fn count_stream() -> Response<Body> {
 
     Response::builder()
         .status(StatusCode::OK)
-        .header(http::header::SERVER, "A Rust Web Server")
+        .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::REFRESH, "3")
         .body(Body::from(String::from_utf8(output.stdout).unwrap() + (&*String::from_utf8(output.stderr).unwrap())))
         .unwrap()
@@ -94,7 +96,7 @@ fn count_stream() -> Response<Body> {
 fn not_found() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
-        .header(http::header::SERVER, "A Rust Web Server")
+        .header(http::header::SERVER, SERVER_NAME)
         .body(Body::from("Not Found"))
         .unwrap()
 }
@@ -103,7 +105,7 @@ fn not_modified(last_modified: SystemTime) -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_MODIFIED)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
-        .header(http::header::SERVER, "A Rust Web Server")
+        .header(http::header::SERVER, SERVER_NAME)
         .body(Body::empty())
         .unwrap()
 }
