@@ -43,7 +43,7 @@ async fn serve_path(web_content_path: String, path: &str, req: &Request<Body>) -
     };
     if let Some(request_if_modified_since) = req.headers().get(http::header::IF_MODIFIED_SINCE) {
         if request_if_modified_since == HeaderValue::from_str(fmt_http_date(last_modified).as_str()).unwrap() {
-            return not_modified();
+            return not_modified(last_modified);
         }
     }
     let file = match File::open(path).await {
@@ -99,9 +99,10 @@ fn not_found() -> Response<Body> {
         .unwrap()
 }
 
-fn not_modified() -> Response<Body> {
+fn not_modified(last_modified: SystemTime) -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_MODIFIED)
+        .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, "A Rust Web Server")
         .body(Body::empty())
         .unwrap()
