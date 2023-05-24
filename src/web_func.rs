@@ -19,6 +19,7 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
         (&Method::GET, "/ip") => serve_ip(client_socket_addr),
         (&Method::GET, "/nt") => count_stream(),
         (&Method::GET, path) => serve_path(web_content_path, path, req).await,
+        (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
         _ => not_found(),
     };
 }
