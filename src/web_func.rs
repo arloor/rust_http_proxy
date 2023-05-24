@@ -59,7 +59,7 @@ async fn serve_path(web_content_path: String, path: &str) -> Response<Body> {
     Response::builder()
         .header("Content-Type", content_type)
         .header("Last-Modified", fmt_http_date(last_modified))
-        .header(http::header::SERVER, "WEB Server For ARLOOR")
+        .header(http::header::SERVER, "A Rust Web Server")
         .body(body)
         .unwrap()
 }
