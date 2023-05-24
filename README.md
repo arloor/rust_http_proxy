@@ -8,7 +8,7 @@
 2. 支持Proxy-Authorization鉴权。
 3. 开启Proxy-Authorization鉴权时，结合 `ask_for_auth=false` 配置防止嗅探。
 4. 删除代理相关的header，以保持高匿。
-5. 对于浏览器访问，表现得和nginx相似，可用于网站服务器
+5. 类Nginx的静态资源托管，可以搭建静态网站。
 
 提及的参数详见[高级配置](#高级配置)
 
