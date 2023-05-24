@@ -16,8 +16,8 @@ const SERVER_NAME: &str = "A Rust Web Server";
 pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, path: &str) -> Response<Body> {
     let web_content_path: String = env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()); //默认为工作目录下
     return match (req.method(), path) {
-        (&Method::GET, "/ip") => serve_ip(client_socket_addr),
-        (&Method::GET, "/nt") => count_stream(),
+        (_, "/ip") => serve_ip(client_socket_addr),
+        (_, "/nt") => count_stream(),
         (&Method::GET, path) => serve_path(web_content_path, path, req).await,
         (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
         _ => not_found(),
