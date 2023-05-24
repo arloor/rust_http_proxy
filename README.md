@@ -8,6 +8,7 @@
 2. 支持Proxy-Authorization鉴权。
 3. 开启Proxy-Authorization鉴权时，结合`ask_for_auth=false`配置防止嗅探。
 4. 删除代理相关的header，以保持高匿。
+5. 对于浏览器访问，表现得和nginx相似，可用于网站服务器
 
 提及的参数详见[高级配置](#高级配置)
 
@@ -36,6 +37,8 @@ export cert=cert.pem
 export raw_key=privkey.pem
 # 日志文件路径
 export log_path=proxy.log 
+# 代替nginx的web服务器功能，展示http网站
+export web_content_path=/usr/share/nginx/html
 ```
 
 其中，tls证书(`cert`)和pem格式的私钥(`raw_key`)可以通过openssl命令一键生成：
