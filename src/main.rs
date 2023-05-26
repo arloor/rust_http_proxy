@@ -60,14 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("rust_http_proxy is starting!");
     if over_tls {
         // This uses a filter to handle errors with connecting
-        let acceptor = tls_acceptor(&raw_key, &cert);
+        let acceptor = tls_acceptor(&raw_key, &cert)?;
         let incoming = TlsListener::new(acceptor, AddrIncoming::bind(&addr)?).filter(|conn| {
             match conn {
                 Ok(_) => {
                     ready(true)
                 }
                 Err(err) => {
-                    warn!("Error: {:?}", err);
+                    warn!("tls handshake error: {:?}", err);
                     ready(false)
                 }
             }
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }))
                 }
             }));
-        info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
+        info!("Listening on https://{}", addr);
         server.await?;
         Ok(())
     } else {
@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }))
                 }
             }));
-        info!("Listening on http{}://{}",if over_tls{"s"}else{""}, addr);
+        info!("Listening on http://{}", addr);
         server.await?;
         Ok(())
     }
@@ -127,25 +127,20 @@ async fn proxy(client: HttpClient, mut req: Request<Body>, basic_auth: String, a
     }
 
     if basic_auth.len() != 0 { //需要检验鉴权
-        let auth = req.headers().get(http::header::PROXY_AUTHORIZATION);
-        match auth {
-            None => {
-                return if ask_for_auth {
-                    Ok(build_proxy_authenticate_resp())
-                } else {
-                    Ok(build_500_resp())
-                };
-            }
-            Some(header) => {
-                let x = header.to_str().unwrap();
-                if x != basic_auth {
-                    return if ask_for_auth {
-                        Ok(build_proxy_authenticate_resp())
-                    } else {
-                        Ok(build_500_resp())
-                    };
+        let mut authed: bool = false;
+        if let Some(header) = req.headers().get(http::header::PROXY_AUTHORIZATION) {
+            if let Ok(base64) = header.to_str() {
+                if base64 == basic_auth {
+                    authed = true;
                 }
             }
+        }
+        if !authed {
+            return if ask_for_auth {
+                Ok(build_proxy_authenticate_resp())
+            } else {
+                Ok(build_500_resp())
+            };
         }
     }
 
