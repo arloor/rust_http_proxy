@@ -87,46 +87,44 @@ pub struct TlsAcceptorAdaptor {
     refresh_time: SystemTime,
 }
 
-const TIMED_REFRESH_INTERVAL_SECS: u64 = 8 * 60 * 60;
-const NEXT_REFRESH_INTERVAL_SECS: u64 = 60 * 60;
+const TIMED_REFRESH_INTERVAL_SECS: u64 = 24 * 60 * 60;
+const NEXT_REFRESH_INTERVAL_SECS: u64 = TIMED_REFRESH_INTERVAL_SECS / 2;
 
 impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for TlsAcceptorAdaptor {
     type Stream = tokio_rustls::server::TlsStream<C>;
     type Error = std::io::Error;
     type AcceptFuture = tokio_rustls::Accept<C>;
     fn accept(&self, conn: C) -> Self::AcceptFuture {
-        let now = SystemTime::now();
-        let second_since_last_refresh = now.duration_since(self.refresh_time).unwrap_or(Duration::from_secs(0)).as_secs();
-        let tls_acceptor = if timed_refresh_cert() && second_since_last_refresh >= TIMED_REFRESH_INTERVAL_SECS {
-            self.refresh_and_return_tls_config(now)
-        } else {
-            self.tls_acceptor.clone()
-        };
-        TlsAcceptor::accept(&tls_acceptor, conn)
+        self.refresh_if_need();
+        TlsAcceptor::accept(&self.tls_acceptor, conn)
     }
 }
 
 impl TlsAcceptorAdaptor {
-    fn refresh_and_return_tls_config(&self, now: SystemTime) -> TlsAcceptor {
-        match tls_config(&self.key, &self.cert) {
-            Ok(tls_config) => {
-                // 使用unsafe更新不可变对象的字段
-                unsafe {
-                    let tls_config_ptr: *mut TlsAcceptor = &self.tls_acceptor as *const _ as *mut _;
-                    *tls_config_ptr = tls_config.clone().into();
-                    let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
-                    *refresh_time_ptr = now;
+    fn refresh_if_need(&self) {
+        if timed_refresh_cert() {
+            let now = SystemTime::now();
+            let second_since_last_refresh = now.duration_since(self.refresh_time).unwrap_or(Duration::from_secs(0)).as_secs();
+            if second_since_last_refresh >= TIMED_REFRESH_INTERVAL_SECS {
+                match tls_config(&self.key, &self.cert) {
+                    Ok(tls_config) => {
+                        // 使用unsafe更新不可变对象的字段
+                        unsafe {
+                            let tls_config_ptr: *mut TlsAcceptor = &self.tls_acceptor as *const _ as *mut _;
+                            *tls_config_ptr = tls_config.clone().into();
+                            let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
+                            *refresh_time_ptr = now;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("error refresh cert, error: {}, will refresh in {} seconds",e,NEXT_REFRESH_INTERVAL_SECS);
+                        // 使用unsafe更新不可变对象的字段
+                        unsafe {
+                            let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
+                            *refresh_time_ptr = now - Duration::from_secs(TIMED_REFRESH_INTERVAL_SECS) + Duration::from_secs(NEXT_REFRESH_INTERVAL_SECS);
+                        }
+                    }
                 }
-                tls_config.into()
-            }
-            Err(e) => {
-                warn!("error refresh cert, error: {}, will refresh in {} seconds",e,NEXT_REFRESH_INTERVAL_SECS);
-                // 使用unsafe更新不可变对象的字段
-                unsafe {
-                    let refresh_time_ptr: *mut SystemTime = &self.refresh_time as *const _ as *mut _;
-                    *refresh_time_ptr = now - Duration::from_secs(TIMED_REFRESH_INTERVAL_SECS) + Duration::from_secs(NEXT_REFRESH_INTERVAL_SECS);
-                }
-                self.tls_acceptor.clone()
             }
         }
     }
