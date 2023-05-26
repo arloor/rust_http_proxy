@@ -27,11 +27,11 @@ fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Error> {
             Item::PKCS8Key(bytes) => PrivateKey(bytes),
             Item::ECKey(bytes) => PrivateKey(bytes),
             Item::RSAKey(bytes) => PrivateKey(bytes),
-            Item::X509Certificate(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "cert in private key file!".to_string()).into()),
+            Item::X509Certificate(_) => return Err("cert in private key file".into()),
             _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "error read private key".to_string()).into()),
         }
     } else {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "error read private key".to_string()).into());
+        return Err("can not find any pem in key file".into());
     };
 
 
@@ -88,7 +88,7 @@ pub struct TlsAcceptorAdaptor {
 }
 
 const TIMED_REFRESH_INTERVAL_SECS: u64 = 8 * 60 * 60;
-const NEXT_REFRESH_INTERVAL_SECS: u64 = 5 * 60;
+const NEXT_REFRESH_INTERVAL_SECS: u64 = 60 * 60;
 
 impl<C: AsyncRead + AsyncWrite + Unpin> AsyncTls<C> for TlsAcceptorAdaptor {
     type Stream = tokio_rustls::server::TlsStream<C>;
