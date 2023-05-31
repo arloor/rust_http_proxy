@@ -22,6 +22,7 @@ use hyper::server::conn::{AddrIncoming, AddrStream};
 use log::{debug, info, warn};
 use tls_listener::TlsListener;
 use std::future::ready;
+use std::time::Duration;
 use percent_encoding::percent_decode_str;
 use rand::Rng;
 
@@ -75,6 +76,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let server = Server::builder(hyper::server::accept::from_stream(incoming))
             .http1_title_case_headers(true)
+            .http1_header_read_timeout(Duration::from_secs(30))
+            .http2_keep_alive_interval(Duration::from_secs(15))
+            .http2_keep_alive_timeout(Duration::from_secs(15))
             .serve(make_service_fn(move |conn: &TlsStream<AddrStream>| {
                 let client_socket_addr = conn.get_ref().0.remote_addr();
                 let client = client.clone();
@@ -92,6 +96,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let server = Server::bind(&addr)
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
+            .http1_header_read_timeout(Duration::from_secs(30))
+            .http2_keep_alive_interval(Duration::from_secs(15))
+            .http2_keep_alive_timeout(Duration::from_secs(15))
             .serve(make_service_fn(move |conn: &AddrStream| {
                 let client_socket_addr = conn.remote_addr();
                 let client = client.clone();
