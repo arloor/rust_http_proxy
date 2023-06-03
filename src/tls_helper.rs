@@ -41,8 +41,8 @@ fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Error> {
         .with_single_cert(certs, key)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
     {
-        Ok(mut config) => {
-            config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Ok( config) => {
+            // config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
             info!("new config is {:?}",config);
             Ok(Arc::new(config))
         }
