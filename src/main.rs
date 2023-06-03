@@ -22,8 +22,8 @@ use hyper::server::conn::{AddrIncoming, AddrStream};
 use log::{debug, info, warn};
 use tls_listener::TlsListener;
 use std::future::ready;
-use std::sync::Arc;
 use std::time::Duration;
+use hyper::client::HttpConnector;
 use percent_encoding::percent_decode_str;
 use rand::Rng;
 
@@ -48,17 +48,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
-    let basic_auth:&'static String = Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string())));
+    let basic_auth: &'static String = Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string())));
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("true".to_string());
     //new
     let over_tls = tls_helper::is_over_tls();
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    let client = Arc::new(Client::builder()
+    let client: &'static Client<HttpConnector> = Box::leak(Box::new(Client::builder()
         .http1_title_case_headers(true)
         .http1_preserve_header_case(true)
-        .build_http());
+        .build_http()));
     info!("rust_http_proxy is starting!");
     if over_tls {
         // This uses a filter to handle errors with connecting
@@ -82,10 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .http2_keep_alive_timeout(Duration::from_secs(15))
             .serve(make_service_fn(move |conn: &TlsStream<AddrStream>| {
                 let client_socket_addr = conn.get_ref().0.remote_addr();
-                let client = client.clone();
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client.clone(), req, basic_auth, ask_for_auth, client_socket_addr)
+                        proxy(client, req, basic_auth, ask_for_auth, client_socket_addr)
                     }))
                 }
             }));
@@ -101,10 +100,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .http2_keep_alive_timeout(Duration::from_secs(15))
             .serve(make_service_fn(move |conn: &AddrStream| {
                 let client_socket_addr = conn.remote_addr();
-                let client = client.clone();
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client.clone(), req, basic_auth, ask_for_auth, client_socket_addr)
+                        proxy(client, req, basic_auth, ask_for_auth, client_socket_addr)
                     }))
                 }
             }));
@@ -115,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-async fn proxy(client: Arc<HttpClient>, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
+async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("{:>21?} {:^7} {:?} {:?}",client_socket_addr, req.method().as_str(),req.uri(),req.version());
     } else {
