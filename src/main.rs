@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
-    let basic_auth = Arc::new(env::var("basic_auth").unwrap_or("".to_string()));
+    let basic_auth:&'static String = Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string())));
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("true".to_string());
     //new
     let over_tls = tls_helper::is_over_tls();
@@ -83,10 +83,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .serve(make_service_fn(move |conn: &TlsStream<AddrStream>| {
                 let client_socket_addr = conn.get_ref().0.remote_addr();
                 let client = client.clone();
-                let basic_auth = basic_auth.clone();
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client.clone(), req, basic_auth.clone(), ask_for_auth, client_socket_addr)
+                        proxy(client.clone(), req, basic_auth, ask_for_auth, client_socket_addr)
                     }))
                 }
             }));
@@ -103,10 +102,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .serve(make_service_fn(move |conn: &AddrStream| {
                 let client_socket_addr = conn.remote_addr();
                 let client = client.clone();
-                let basic_auth = basic_auth.clone();
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client.clone(), req, basic_auth.clone(), ask_for_auth, client_socket_addr)
+                        proxy(client.clone(), req, basic_auth, ask_for_auth, client_socket_addr)
                     }))
                 }
             }));
@@ -117,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-async fn proxy(client: Arc<HttpClient>, mut req: Request<Body>, basic_auth: Arc<String>, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
+async fn proxy(client: Arc<HttpClient>, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("{:>21?} {:^7} {:?} {:?}",client_socket_addr, req.method().as_str(),req.uri(),req.version());
     } else {
