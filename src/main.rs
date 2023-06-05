@@ -19,7 +19,7 @@ use hyper::{Body, Client, http, Method, Request, Response, Server, Version};
 use hyper::http::HeaderValue;
 
 use hyper::server::conn::{AddrIncoming, AddrStream};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use tls_listener::TlsListener;
 use std::future::ready;
 use std::time::Duration;
@@ -89,7 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }));
         info!("Listening on https://{}", addr);
-        server.await?;
+        if let Err(e)=server.await{
+            error!("server exit {}",e);
+        }
         Ok(())
     } else {
         let server = Server::bind(&addr)
@@ -107,7 +109,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }));
         info!("Listening on http://{}", addr);
-        server.await?;
+        if let Err(e)=server.await{
+            error!("server exit {}",e);
+        }
         Ok(())
     }
 }
