@@ -651,7 +651,6 @@ dependencies = [
  "rand",
  "rustls",
  "rustls-pemfile",
- "tls-listener",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -880,20 +879,6 @@ dependencies = [
  "libc",
  "wasi 0.10.0+wasi-snapshot-preview1",
  "winapi",
-]
-
-[[package]]
-name = "tls-listener"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81294c017957a1a69794f506723519255879e15a870507faf45dfed288b763dd"
-dependencies = [
- "futures-util",
- "hyper",
- "pin-project-lite",
- "thiserror",
- "tokio",
- "tokio-rustls",
 ]
 
 [[package]]
