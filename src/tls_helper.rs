@@ -37,7 +37,6 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Erro
     {
         Ok(mut config) => {
             config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-            // info!("new config is {:?}",config);
             Ok(Arc::new(config))
         }
         Err(e) => {
