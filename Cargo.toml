@@ -12,7 +12,6 @@ rustls = "0.21"
 tokio-rustls = "0.24"
 rustls-pemfile = "1.0"
 futures-util = "0.3"
-tls-listener  ={ version="0.7",features=["rustls","hyper-h1","hyper-h2"]}
 log = "0.4"
 log4rs = "1.2"
 rand = "0.8"

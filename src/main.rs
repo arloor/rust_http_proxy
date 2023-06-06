@@ -3,10 +3,10 @@
 mod logx;
 
 use std::borrow::Cow;
-use futures_util::stream::StreamExt;
 
 mod tls_helper;
 mod web_func;
+mod acceptor;
 
 use std::convert::Infallible;
 use std::env;
@@ -20,17 +20,14 @@ use hyper::http::HeaderValue;
 
 use hyper::server::conn::{AddrIncoming, AddrStream};
 use log::{debug, error, info, warn};
-use tls_listener::TlsListener;
-use std::future::ready;
 use std::time::Duration;
 use hyper::client::HttpConnector;
 use percent_encoding::percent_decode_str;
 use rand::Rng;
 
 use tokio::net::TcpStream;
-use tokio_rustls::server::TlsStream;
 use crate::logx::init_log;
-use crate::tls_helper::tls_acceptor;
+use crate::tls_helper::{ tls_config};
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
@@ -62,26 +59,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("rust_http_proxy is starting!");
     if over_tls {
         // This uses a filter to handle errors with connecting
-        let acceptor = tls_acceptor(&raw_key, &cert)?;
-        let incoming = TlsListener::new(acceptor, AddrIncoming::bind(&addr)?).filter(|conn| {
-            match conn {
-                Ok(_) => {
-                    ready(true)
-                }
-                Err(err) => {
-                    warn!("tls handshake error: {:?}", err);
-                    ready(false)
-                }
-            }
-        });
-
-        let server = Server::builder(hyper::server::accept::from_stream(incoming))
+        let incoming = AddrIncoming::bind(&addr)?;
+        let tls_config = tls_config(&raw_key, &cert)?;
+        let acceptor = acceptor::TlsAcceptor::new(tls_config, incoming);
+        let server = Server::builder(acceptor)
             .http1_title_case_headers(true)
             .http1_header_read_timeout(Duration::from_secs(30))
             .http2_keep_alive_interval(Duration::from_secs(15))
             .http2_keep_alive_timeout(Duration::from_secs(15))
-            .serve(make_service_fn(move |conn: &TlsStream<AddrStream>| {
-                let client_socket_addr = conn.get_ref().0.remote_addr();
+            .serve(make_service_fn(move |conn:&acceptor::TlsStream| {
+                let client_socket_addr = conn.remote_addr().unwrap_or(SocketAddr::from(([0,0,0,0],0)));
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
                         proxy(client, req, basic_auth, ask_for_auth, client_socket_addr)
@@ -89,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }));
         info!("Listening on https://{}", addr);
-        if let Err(e)=server.await{
+        if let Err(e) = server.await {
             error!("server exit {}",e);
         }
         Ok(())
@@ -109,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }));
         info!("Listening on http://{}", addr);
-        if let Err(e)=server.await{
+        if let Err(e) = server.await {
             error!("server exit {}",e);
         }
         Ok(())
