@@ -1,8 +1,8 @@
 // https://github.com/rustls/hyper-rustls/blob/286e1fa57ff5cac99994fab355f91c3454d6d83d/src/acceptor.rs
 use core::task::{Context, Poll};
 use std::future::Future;
-use std::{env, io};
-use std::io::{Error, ErrorKind};
+use std::io;
+use std::io::{Error};
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -150,7 +150,7 @@ impl TlsAcceptor {
 }
 
 // 每小时更新证书
-const REFRESH_TIME: u64 = 1;
+const REFRESH_TIME: u64 = 60 * 60;
 
 impl Accept for TlsAcceptor {
     type Conn = TlsStream;

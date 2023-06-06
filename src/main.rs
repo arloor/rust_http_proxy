@@ -1,4 +1,4 @@
-// #![deny(warnings)]
+#![deny(warnings)]
 
 mod logx;
 
@@ -27,7 +27,6 @@ use rand::Rng;
 
 use tokio::net::TcpStream;
 use crate::logx::init_log;
-use crate::tls_helper::{ tls_config};
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
