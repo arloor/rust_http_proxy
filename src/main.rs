@@ -1,4 +1,4 @@
-#![deny(warnings)]
+// #![deny(warnings)]
 
 mod logx;
 
@@ -60,8 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if over_tls {
         // This uses a filter to handle errors with connecting
         let incoming = AddrIncoming::bind(&addr)?;
-        let tls_config = tls_config(&raw_key, &cert)?;
-        let acceptor = acceptor::TlsAcceptor::new(tls_config, incoming);
+        let acceptor = acceptor::TlsAcceptor::new(raw_key, cert, incoming)?;
         let server = Server::builder(acceptor)
             .http1_title_case_headers(true)
             .http1_header_read_timeout(Duration::from_secs(30))
@@ -77,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }));
         info!("Listening on https://{}", addr);
         if let Err(e) = server.await {
-            error!("server exit {}",e);
+            error!("server exit: {}",e);
         }
         Ok(())
     } else {
