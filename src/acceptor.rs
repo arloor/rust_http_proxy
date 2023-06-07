@@ -123,13 +123,9 @@ impl TlsAcceptor {
 
 
     pub fn new(key: String, cert: String, incoming: AddrIncoming) -> Result<TlsAcceptor, Box<dyn std::error::Error>> {
-        match tls_config(&key, &cert) {
-            Ok(config) => {
-                let acceptor = TlsAcceptor { key, cert, config, incoming, last_refresh_time: SystemTime::now() };
-                return Ok(acceptor);
-            }
-            Err(e) => return Err(e)
-        }
+        let config = tls_config(&key, &cert)?;
+        let acceptor = TlsAcceptor { key, cert, config, incoming, last_refresh_time: SystemTime::now() };
+        return Ok(acceptor);
     }
 
     fn refresh_if_need(&mut self) {
