@@ -125,6 +125,7 @@ impl TlsAcceptor {
     pub fn new(key: String, cert: String, incoming: AddrIncoming) -> Result<TlsAcceptor, Box<dyn std::error::Error>> {
         let config = tls_config(&key, &cert)?;
         let acceptor = TlsAcceptor { key, cert, config, incoming, last_refresh_time: SystemTime::now() };
+        info!("tls acceptor will refresh every {:?} hour!",REFRESH_TIME/60/60);
         return Ok(acceptor);
     }
 
