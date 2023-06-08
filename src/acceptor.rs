@@ -147,7 +147,7 @@ impl TlsAcceptor {
 }
 
 // 每两小时更新证书
-const REFRESH_TIME: u64 = 2 * 60 * 60;
+const REFRESH_TIME: u64 = 24 * 60 * 60;
 
 impl Accept for TlsAcceptor {
     type Conn = TlsStream;
