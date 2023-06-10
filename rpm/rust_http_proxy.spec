@@ -12,7 +12,7 @@ BuildRequires:  git
 #Requires:
 
 %description
-Rust Http Proxy which is based on hyper and Tls-Listener.
+Rust Http Proxy which is based on hyper、 Rustls and tokio.
 
 %prep
 if [ -d /tmp/rust_http_proxy ]; then

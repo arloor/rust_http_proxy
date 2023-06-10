@@ -42,6 +42,14 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_path = env::var("log_path").unwrap_or("proxy.log".to_string());
     init_log(&log_path);
+    info!("about info:\n\
+    #############################################################\n\
+    # Usage: a http proxy on top of Rust                        #\n\
+    # Website: https://www.arloor.com/                          #\n\
+    # Author: arloor <admin@arloor.com>                         #\n\
+    # Github: https://github.com/arloor/rust_http_proxy         #\n\
+    #############################################################\
+    ");
     let port = env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
@@ -66,15 +74,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .http1_header_read_timeout(Duration::from_secs(30))
             .http2_keep_alive_interval(Duration::from_secs(15))
             .http2_keep_alive_timeout(Duration::from_secs(15))
-            .serve(make_service_fn(move |conn:&acceptor::TlsStream| {
-                let client_socket_addr = conn.remote_addr().unwrap_or(SocketAddr::from(([0,0,0,0],0)));
+            .serve(make_service_fn(move |conn: &acceptor::TlsStream| {
+                let client_socket_addr = conn.remote_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
                         proxy(client, req, basic_auth, ask_for_auth, client_socket_addr)
                     }))
                 }
             }));
-        info!("Listening on https://{}", addr);
+        info!("Listening on https://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
         if let Err(e) = server.await {
             error!("server exit: {}",e);
         }
@@ -94,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }))
                 }
             }));
-        info!("Listening on http://{}", addr);
+        info!("Listening on http://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
         if let Err(e) = server.await {
             error!("server exit {}",e);
         }
@@ -222,4 +230,23 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
     );
 
     Ok(())
+}
+
+
+use std::net::UdpSocket;
+pub fn local_ip() -> Option<String> {
+    let socket = match UdpSocket::bind("0.0.0.0:0") {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+
+    match socket.connect("8.8.8.8:80") {
+        Ok(()) => (),
+        Err(_) => return None,
+    };
+
+    match socket.local_addr() {
+        Ok(addr) => return Some(addr.ip().to_string()),
+        Err(_) => return None,
+    };
 }
