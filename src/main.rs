@@ -42,12 +42,12 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_path = env::var("log_path").unwrap_or("proxy.log".to_string());
     init_log(&log_path);
-    info!("about info:\n\
+    info!("some info about this software :\n\
     #############################################################\n\
-    # Usage: a http proxy on top of Rust                        #\n\
-    # Website: https://www.arloor.com/                          #\n\
-    # Author: arloor <admin@arloor.com>                         #\n\
     # Github: https://github.com/arloor/rust_http_proxy         #\n\
+    # Usage: a http proxy on top of Rust                        #\n\
+    # Author: arloor <admin@arloor.com>                         #\n\
+    # Website: https://www.arloor.com/                          #\n\
     #############################################################\
     ");
     let port = env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444);
