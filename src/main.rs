@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .http1_preserve_header_case(true)
         .build_http()));
     info!("rust_http_proxy is starting!");
-    info!("server web content of {}",web_content_path);
+    info!("serve web content of {}",web_content_path);
     if over_tls {
         // This uses a filter to handle errors with connecting
         let incoming = AddrIncoming::bind(&addr)?;
