@@ -54,9 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
     let basic_auth: &'static String = Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string())));
+    let web_content_path: &'static String = Box::leak(Box::new(env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()))); //默认为工作目录下
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("true".to_string());
-    //new
-    let over_tls = tls_helper::is_over_tls();
+    let over_tls = is_over_tls();
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
@@ -65,6 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .http1_preserve_header_case(true)
         .build_http()));
     info!("rust_http_proxy is starting!");
+    info!("server web content of {}",web_content_path);
     if over_tls {
         // This uses a filter to handle errors with connecting
         let incoming = AddrIncoming::bind(&addr)?;
@@ -78,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let client_socket_addr = conn.remote_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, client_socket_addr)
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, client_socket_addr)
                     }))
                 }
             }));
@@ -98,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let client_socket_addr = conn.remote_addr();
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, client_socket_addr)
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, client_socket_addr)
                     }))
                 }
             }));
@@ -111,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
+async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("{:>21?} {:^7} {:?} {:?}",client_socket_addr, req.method().as_str(),req.uri(),req.version());
     } else {
@@ -120,7 +121,7 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
             let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
             let path = path.as_ref();
             info!("{:>21?} {:^7} {} {:?}", client_socket_addr,req.method().as_str(),path,req.version());
-            return Ok(web_func::serve_http_request(&req, client_socket_addr, path).await);
+            return Ok(web_func::serve_http_request(&req, client_socket_addr, web_content_path, path).await);
         }
         if let Some(host) = req.uri().host() {
             let host = host.to_string();
@@ -234,6 +235,7 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
 
 use std::net::UdpSocket;
+
 pub fn local_ip() -> Option<String> {
     let socket = match UdpSocket::bind("0.0.0.0:0") {
         Ok(s) => s,
@@ -249,4 +251,8 @@ pub fn local_ip() -> Option<String> {
         Ok(addr) => return Some(addr.ip().to_string()),
         Err(_) => return None,
     };
+}
+
+fn is_over_tls() -> bool {
+    "true" == env::var("over_tls").unwrap_or("false".to_string())
 }

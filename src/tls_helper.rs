@@ -1,4 +1,3 @@
-use std::env;
 use std::fs::File;
 use std::sync::Arc;
 use rustls_pemfile::Item;
@@ -43,9 +42,5 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Erro
             Err(e.into())
         }
     }
-}
-
-pub fn is_over_tls() -> bool {
-    "true" == env::var("over_tls").unwrap_or("false".to_string())
 }
 

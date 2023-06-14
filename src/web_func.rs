@@ -1,4 +1,3 @@
-use std::env;
 use hyper::{Body, http, Method, Request, Response, StatusCode};
 use hyper::http::HeaderValue;
 use std::net::SocketAddr;
@@ -13,8 +12,7 @@ use std::time::SystemTime;
 
 const SERVER_NAME: &str = "A Rust Web Server";
 
-pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, path: &str) -> Response<Body> {
-    let web_content_path: String = env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()); //默认为工作目录下
+pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, web_content_path: &String, path: &str) -> Response<Body> {
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         (_, "/nt") => count_stream(),
@@ -24,7 +22,7 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
     };
 }
 
-async fn serve_path(web_content_path: String, path: &str, req: &Request<Body>) -> Response<Body> {
+async fn serve_path(web_content_path: &String, path: &str, req: &Request<Body>) -> Response<Body> {
     if String::from(path).contains("/..") {
         return not_found();
     }
