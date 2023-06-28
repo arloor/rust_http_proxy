@@ -15,7 +15,7 @@ const SERVER_NAME: &str = "A Rust Web Server";
 pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, web_content_path: &String, path: &str) -> Response<Body> {
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
-        (_, "/nt") => count_stream(),
+        (_, "/nt") => if cfg!(target_os="windows") { not_found() } else { count_stream() },
         (&Method::GET, path) => serve_path(web_content_path, path, req).await,
         (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
         _ => not_found(),
