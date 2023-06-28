@@ -27,7 +27,8 @@ fn my_format(
     write!(
         w,
         "{} [{}] {}",
-        now.format("%Y-%m-%d %H:%M:%S%.6f"),
+        // now.format("%Y-%m-%d %H:%M:%S%.6f"),
+        now.format("%Y-%m-%d %H:%M:%S"),
         record.level(),
         // record.file().unwrap_or("<unnamed>"),
         // record.line().unwrap_or(0),
