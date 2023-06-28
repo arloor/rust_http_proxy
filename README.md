@@ -35,8 +35,9 @@ export over_tls=false
 export cert=cert.pem
 # 私钥 pem格式
 export raw_key=privkey.pem
-# 日志文件路径
-export log_path=proxy.log 
+# 日志文件路径，默认为/tmp/proxy.log
+export log_dir=/tmp
+export log_file=proxy.log
 # 代替nginx的web服务器功能，展示http网站
 export web_content_path=/usr/share/nginx/html
 ```

@@ -40,8 +40,9 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let log_path = env::var("log_path").unwrap_or("proxy.log".to_string());
-    init_log(&log_path);
+    let log_dir = env::var("log_dir").unwrap_or("/tmp".to_string());
+    let log_file = env::var("log_file").unwrap_or("proxy.log".to_string());
+    init_log(&log_dir, &log_file);
     info!("some info about this software :\n\
     #############################################################\n\
     # Github: https://github.com/arloor/rust_http_proxy         #\n\
