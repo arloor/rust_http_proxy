@@ -1,4 +1,5 @@
-use flexi_logger::{Duplicate, Criterion, Naming, Cleanup, Logger, FileSpec, opt_format};
+use flexi_logger::{Duplicate, Criterion, Naming, Cleanup, Logger, FileSpec, DeferredNow};
+use log::Record;
 
 pub fn init_log(log_dir: &str, log_file: &String) {
     Logger::try_with_env_or_str("info").unwrap()
@@ -12,8 +13,24 @@ pub fn init_log(log_dir: &str, log_file: &String) {
             Naming::Timestamps,
             Cleanup::KeepLogFiles(3), // 保留最新的3个日志文件
         )
-        .format(opt_format)
+        .format(my_format)
         .create_symlink(format!("{}/{}", log_dir, log_file))
         .start()
         .unwrap();
+}
+
+fn my_format(
+    w: &mut dyn std::io::Write,
+    now: &mut DeferredNow,
+    record: &Record,
+) -> Result<(), std::io::Error> {
+    write!(
+        w,
+        "{} [{}] {}",
+        now.format("%Y-%m-%d %H:%M:%S%.6f"),
+        record.level(),
+        // record.file().unwrap_or("<unnamed>"),
+        // record.line().unwrap_or(0),
+        &record.args()
+    )
 }
