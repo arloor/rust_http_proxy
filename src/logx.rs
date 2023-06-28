@@ -13,6 +13,7 @@ pub fn init_log(log_dir: &str, log_file: &String) {
             Naming::Timestamps,
             Cleanup::KeepLogFiles(3), // 保留最新的3个日志文件
         )
+        .append()
         .format(my_format)
         .create_symlink(format!("{}/{}", log_dir, log_file))
         .start()
