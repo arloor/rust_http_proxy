@@ -9,7 +9,7 @@ mod web_func;
 mod acceptor;
 
 use std::convert::Infallible;
-use std::env;
+use std::{env, io};
 use std::net::SocketAddr;
 
 
@@ -236,19 +236,11 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
 use std::net::UdpSocket;
 
-pub fn local_ip() -> Option<String> {
-    let socket = match UdpSocket::bind("0.0.0.0:0") {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
-
-    match socket.connect("8.8.8.8:80") {
-        Ok(()) => (),
-        Err(_) => return None,
-    };
-
-    match socket.local_addr() {
-        Ok(addr) => return Some(addr.ip().to_string()),
-        Err(_) => return None,
+pub fn local_ip() -> Result<String, io::Error> {
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.connect("8.8.8.8:80")?;
+    return match socket.local_addr() {
+        Ok(addr) => Ok(addr.ip().to_string()),
+        Err(e) => Err(e),
     };
 }
