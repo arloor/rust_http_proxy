@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
-        info!("{:>21?} {:^7} {:?} {:?}",client_socket_addr, req.method().as_str(),req.uri(),req.version());
+        info!("{:>21?} {:^7} {:?}",client_socket_addr, req.method().as_str(),req.uri());
     } else {
         if req.version() == Version::HTTP_2 || None == req.uri().host() {
             let raw_path = req.uri().path();
@@ -180,7 +180,6 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
             let mut response = Response::new(Body::empty());
             // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
             let count = rand::thread_rng().gen_range(1..150);
-            debug!("inject {} SERVER header into response",count);
             for _ in 0..count {
                 response.headers_mut().append(http::header::SERVER, HeaderValue::from_static("rust_http_proxy"));
             }
