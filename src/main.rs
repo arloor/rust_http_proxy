@@ -236,11 +236,8 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
 use std::net::UdpSocket;
 
-pub fn local_ip() -> Result<String, io::Error> {
+pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
-    return match socket.local_addr() {
-        Ok(addr) => Ok(addr.ip().to_string()),
-        Err(e) => Err(e),
-    };
+    return socket.local_addr().map(|local_addr| local_addr.ip().to_string());
 }
