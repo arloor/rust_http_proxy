@@ -1,4 +1,4 @@
-基于 `hyper` 和 `tls-listener` 的http代理。
+基于 `hyper` 和 `rustls` 的http代理。
 
 整体功能完全对标[Java版本HttpProxy](https://github.com/arloor/HttpProxy)。 内存仅为Java版本的十分之一，为20MB以下。
 
