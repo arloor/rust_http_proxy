@@ -115,3 +115,29 @@ Nginx收到的消息：
 ![](traffic_at_nginx.png)
 
 可以看到请求URL和`Proxy-Connection`都被正确处理了。
+
+## docker运行
+
+```shell
+docker run -d --name proxy -p 3128:3128 -v /tmp:/tmp docker.io/arloor/rust_http_proxy
+docker ps -a
+tail -f /tmp/proxy.log
+```
+
+容器内查看日志
+
+```shell
+docker exec  -it proxy /bin/sh
+tail -n 10 /tmp/proxy.log
+
+```
+
+停止运行：
+
+```shell
+docker kill proxy
+docker rm proxy
+docker rmi docker.io/arloor/rust_http_proxy
+```
+
+
