@@ -1,7 +1,7 @@
 use flexi_logger::{Duplicate, Criterion, Naming, Cleanup, Logger, FileSpec, DeferredNow};
 use log::Record;
 
-pub fn init_log(log_dir: &str, log_file: &String) {
+pub fn init_log(log_dir: &str, log_file: &str) {
     Logger::try_with_env_or_str("info").unwrap()
         .log_to_file(FileSpec::default()
             .directory(log_dir)
