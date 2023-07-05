@@ -130,12 +130,19 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
         };
     }
 
+
     if basic_auth.len() != 0 { //需要检验鉴权
         let mut authed: bool = false;
-        if let Some(header) = req.headers().get(http::header::PROXY_AUTHORIZATION) {
+        let header_option = req.headers().get(http::header::PROXY_AUTHORIZATION);
+        if header_option.is_none() {
+            warn!("no PROXY_AUTHORIZATION from {:?}",client_socket_addr)
+        } else {
+            let header = header_option.unwrap();
             if let Ok(base64) = header.to_str() {
                 if base64 == *basic_auth {
                     authed = true;
+                } else {
+                    warn!("wrong PROXY_AUTHORIZATION from {:?}, {:?}",client_socket_addr,base64)
                 }
             }
         }
