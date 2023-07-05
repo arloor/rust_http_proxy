@@ -41,16 +41,6 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut stream = signal(SignalKind::terminate())?;
-
-    // 异步监听TERM信号
-    tokio::spawn(async move {
-        stream.recv().await;
-        println!("TERM signal received, shutting down");
-        exit(0)
-    });
-
-
     let log_dir = env::var("log_dir").unwrap_or("/tmp".to_string());
     let log_file = env::var("log_file").unwrap_or("proxy.log".to_string());
     init_log(&log_dir, &log_file);
@@ -78,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_http()));
     info!("rust_http_proxy is starting!");
     info!("serve web content of {}",web_content_path);
+    let mut stream = signal(SignalKind::terminate())?;
     if over_tls {
         // This uses a filter to handle errors with connecting
         let incoming = AddrIncoming::bind(&addr)?;
@@ -96,7 +87,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }));
         info!("Listening on https://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
-        if let Err(e) = server.await {
+        let graceful = server.with_graceful_shutdown(async move {
+            stream.recv().await;
+            info!("graceful_shutdown");
+            ()
+        });
+        if let Err(e) = graceful.await {
             error!("server exit: {}",e);
         }
         Ok(())
@@ -116,8 +112,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }));
         info!("Listening on http://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
-        if let Err(e) = server.await {
-            error!("server exit {}",e);
+        let graceful = server.with_graceful_shutdown(async move {
+            stream.recv().await;
+            info!("graceful_shutdown");
+            ()
+        });
+        if let Err(e) = graceful.await {
+            error!("server exit: {}",e);
         }
         Ok(())
     }
@@ -254,7 +255,6 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
 
 use std::net::UdpSocket;
-use std::process::exit;
 
 pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
