@@ -125,7 +125,7 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
                 if base64 == *basic_auth {
                     authed = true;
                 } else {
-                    warn!("wrong PROXY_AUTHORIZATION from {:?}, {:?}",client_socket_addr,base64)
+                    warn!("wrong PROXY_AUTHORIZATION from {:?}, wrong:{:?},right:{:?}",client_socket_addr,base64,basic_auth)
                 }
             } else {
                 warn!("解header失败，{:?}",header)
