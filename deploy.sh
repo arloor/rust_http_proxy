@@ -16,6 +16,6 @@ for i in li.arloor.dev ti.arloor.com sg.arloor.dev dc6.arloor.dev dc9.arloor.dev
       systemctl daemon-reload
       systemctl start rust_http_proxy
       sleep 3
-      tail -n  10 /data/var/log/proxy/proxy.log
+      tail -n  10 /tmp/proxy.log
     "
 done
