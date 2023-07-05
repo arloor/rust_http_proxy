@@ -114,6 +114,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
 async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
+    if Method::CONNECT == req.method() {
+        info!("{:>21?} {:^7} {:?}",client_socket_addr, req.method().as_str(),req.uri());
+    } else {
+        if req.version() == Version::HTTP_2 || None == req.uri().host() {
+            let raw_path = req.uri().path();
+            let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
+            let path = path.as_ref();
+            info!("{:>21?} {:^7} {} {:?}", client_socket_addr,req.method().as_str(),path,req.version());
+            return Ok(web_func::serve_http_request(&req, client_socket_addr, web_content_path, path).await);
+        }
+        if let Some(host) = req.uri().host() {
+            let host = host.to_string();
+            info!("{:>21?} {:^7} {:?} {:?} Host: {:?} User-Agent: {:?}",client_socket_addr, req.method().as_str(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str(host.as_str()).unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
+        };
+    }
+
     if basic_auth.len() != 0 { //需要检验鉴权
         let mut authed: bool = false;
         let header_option = req.headers().get(http::header::PROXY_AUTHORIZATION);
@@ -138,22 +154,6 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
                 Ok(build_500_resp())
             };
         }
-    }
-
-    if Method::CONNECT == req.method() {
-        info!("{:>21?} {:^7} {:?}",client_socket_addr, req.method().as_str(),req.uri());
-    } else {
-        if req.version() == Version::HTTP_2 || None == req.uri().host() {
-            let raw_path = req.uri().path();
-            let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
-            let path = path.as_ref();
-            info!("{:>21?} {:^7} {} {:?}", client_socket_addr,req.method().as_str(),path,req.version());
-            return Ok(web_func::serve_http_request(&req, client_socket_addr, web_content_path, path).await);
-        }
-        if let Some(host) = req.uri().host() {
-            let host = host.to_string();
-            info!("{:>21?} {:^7} {:?} {:?} Host: {:?} User-Agent: {:?}",client_socket_addr, req.method().as_str(),req.uri(),req.version(),req.headers().get(http::header::HOST).unwrap_or(&HeaderValue::from_str(host.as_str()).unwrap()),req.headers().get(http::header::USER_AGENT).unwrap_or(&HeaderValue::from_str("None").unwrap()));
-        };
     }
 
     // 删除代理
