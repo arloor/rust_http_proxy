@@ -26,11 +26,11 @@ cargo run --package rust_http_proxy --bin rust_http_proxy
 # 监听的端口
 export port=3128
 # 默认为空，表示不鉴权。格式为 "Basic Base64Encode(username:password)"，注意username和password用英文冒号连接再进行Base64编码（RFC 7617）。例如 Basic dXNlcm5hbWU6cGFzc3dvcmQ=
-export basic_auth=""
+export basic_auth=
 # 主动发起Proxy-Authenticate。在公网下推荐设置为false。
 export ask_for_auth=true
 # 是否使用tls，默认为http
-export over_tls=false     
+export over_tls=false
 # tls证书
 export cert=cert.pem
 # 私钥 pem格式
@@ -40,6 +40,7 @@ export log_dir=/tmp
 export log_file=proxy.log
 # 代替nginx的web服务器功能，展示http网站
 export web_content_path=/usr/share/nginx/html
+
 ```
 
 其中，tls证书(`cert`)和pem格式的私钥(`raw_key`)可以通过openssl命令一键生成：
