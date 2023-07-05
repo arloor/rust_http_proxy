@@ -26,6 +26,7 @@ use percent_encoding::percent_decode_str;
 use rand::Rng;
 
 use tokio::net::TcpStream;
+use tokio::signal::unix::{signal, SignalKind};
 use crate::acceptor::TlsAcceptor;
 use crate::logx::init_log;
 
@@ -40,6 +41,16 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 //    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut stream = signal(SignalKind::terminate())?;
+
+    // 异步监听TERM信号
+    tokio::spawn(async move {
+        stream.recv().await;
+        println!("TERM signal received, shutting down");
+        exit(0)
+    });
+
+
     let log_dir = env::var("log_dir").unwrap_or("/tmp".to_string());
     let log_file = env::var("log_file").unwrap_or("proxy.log".to_string());
     init_log(&log_dir, &log_file);
@@ -243,6 +254,7 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
 
 use std::net::UdpSocket;
+use std::process::exit;
 
 pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
