@@ -127,6 +127,8 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
                 } else {
                     warn!("wrong PROXY_AUTHORIZATION from {:?}, {:?}",client_socket_addr,base64)
                 }
+            } else {
+                warn!("解header失败，{:?}",header)
             }
         }
         if !authed {
