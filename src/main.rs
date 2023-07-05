@@ -90,7 +90,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let graceful = server.with_graceful_shutdown(async move {
             stream.recv().await;
             info!("graceful_shutdown");
-            ()
         });
         if let Err(e) = graceful.await {
             error!("server exit: {}",e);
@@ -115,7 +114,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let graceful = server.with_graceful_shutdown(async move {
             stream.recv().await;
             info!("graceful_shutdown");
-            ()
         });
         if let Err(e) = graceful.await {
             error!("server exit: {}",e);
