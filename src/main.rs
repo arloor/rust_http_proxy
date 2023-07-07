@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Listening on https://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
         let graceful = server.with_graceful_shutdown(async move {
             stream.recv().await;
-            info!("graceful_shutdown");
+            info!("graceful shutdown");
         });
         if let Err(e) = graceful.await {
             error!("server exit: {}",e);
@@ -113,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Listening on http://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
         let graceful = server.with_graceful_shutdown(async move {
             stream.recv().await;
-            info!("graceful_shutdown");
+            info!("graceful shutdown");
         });
         if let Err(e) = graceful.await {
             error!("server exit: {}",e);
