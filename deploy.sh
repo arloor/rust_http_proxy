@@ -15,7 +15,7 @@ for i in li.arloor.dev ti.arloor.com sg.arloor.dev dc6.arloor.dev dc9.arloor.dev
       ## 启动
       systemctl daemon-reload
       systemctl start rust_http_proxy
-      sleep 3
+      sleep 1
       lo
     "
 done
