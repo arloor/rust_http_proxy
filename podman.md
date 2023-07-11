@@ -6,14 +6,13 @@ yum install -y podman docker
 ```shell
 git pull
 cargo install --path . --target x86_64-unknown-linux-musl
-systemctl stop proxy
-podman kill proxy
-podman rmi rust_http_proxy
 podman build -t rust_http_proxy .
 ## 推送到hub.docker.io
 podman login docker.io
-podman tag rust_http_proxy:latest arloor/rust_http_proxy
-docker push arloor/rust_http_proxy
+podman push rust_http_proxy docker.io/arloor/rust_http_proxy
+
+systemctl stop proxy
+# podman rmi rust_http_proxy
 
 podman run -d \
 --rm \
