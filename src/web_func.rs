@@ -22,26 +22,34 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
     };
 }
 
-async fn serve_path(web_content_path: &String, path: &str, req: &Request<Body>) -> Response<Body> {
-    if String::from(path).contains("/..") {
+async fn serve_path(web_content_path: &String, url_path: &str, req: &Request<Body>) -> Response<Body> {
+    if String::from(url_path).contains("/..") {
         return not_found();
     }
-    let path = PathBuf::from(
-        if String::from(path).ends_with("/") {
-            format!("{}{}index.html", web_content_path, path)
+    let mut path = PathBuf::from(
+        if String::from(url_path).ends_with("/") {
+            format!("{}{}index.html", web_content_path, url_path)
         } else {
-            format!("{}{}", web_content_path, path)
+            format!("{}{}", web_content_path, url_path)
         });
-    let mime_type = from_path(&path).first_or_octet_stream();
-    let metadata = match metadata(&path).await {
-        Ok(metadata) => metadata,
+    let meta = match metadata(&path).await {
+        Ok(meta) => if meta.is_file() {
+            meta
+        } else {
+            path = PathBuf::from(format!("{}{}/index.html", web_content_path, url_path));
+            match metadata(&path).await {
+                Ok(m) => m,
+                Err(_) => return not_found(),
+            }
+        },
         Err(_) => return not_found(),
     };
 
-    let last_modified: SystemTime = match metadata.modified() {
+    let last_modified: SystemTime = match meta.modified() {
         Ok(time) => time,
         Err(_) => return not_found(),
     };
+    let mime_type = from_path(&path).first_or_octet_stream();
     if let Some(request_if_modified_since) = req.headers().get(http::header::IF_MODIFIED_SINCE) {
         if request_if_modified_since == HeaderValue::from_str(fmt_http_date(last_modified).as_str()).unwrap() {
             return not_modified(last_modified);
