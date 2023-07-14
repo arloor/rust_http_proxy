@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ");
     let port = env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
-    let raw_key = env::var("raw_key").unwrap_or("privkey.pem".to_string());
+    let raw_key = env::var("raw_key").unwrap_or(env::var("key").unwrap_or("privkey.pem".to_string()));
     let basic_auth: &'static String = Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string())));
     let web_content_path: &'static String = Box::leak(Box::new(env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()))); //默认为工作目录下
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("true".to_string());

@@ -12,7 +12,12 @@
             "args": [],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "${defaultBuildTask}",
-            "env": {"port":"80"}
+            "env": {
+                "port": "80",
+                "cert": "cert.pem",
+                "raw_key":"privkey.pem",
+                "over_tls":"false"
+            }
         }
     ]
 }
