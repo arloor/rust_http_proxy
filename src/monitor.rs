@@ -78,4 +78,4 @@ impl Monitor {
     }
 }
 
-const MAX_NUM: usize = 300;
+const MAX_NUM: usize = 240;
