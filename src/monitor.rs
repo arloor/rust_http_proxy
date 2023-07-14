@@ -62,7 +62,7 @@ impl Monitor {
                                 }
                             }
                         }
-                        if buffer.len() > 60 {
+                        if buffer.len() > 180 {
                             buffer.pop_front();
                         }
                     }
