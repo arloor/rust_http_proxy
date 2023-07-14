@@ -1,9 +1,9 @@
+use chrono::{DateTime, Local};
 use std::collections::VecDeque;
 use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
-use chrono::{DateTime, Local};
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -46,22 +46,26 @@ impl Monitor {
                         if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
                             content = content.replace("\r\n", "\n");
                             let strs = content.split("\n");
+                            let mut new: u64 = 0;
                             for str in strs {
                                 let array: Vec<&str> = str.split_whitespace().collect();
+
                                 if array.len() == 17 {
                                     if array.get(0).unwrap().to_string() != "lo:" {
-                                        let new =
-                                            array.get(9).unwrap().parse::<u64>().unwrap_or(last);
-                                        if last != 0 {
-                                            let system_time = SystemTime::now();
-                                            let datetime: DateTime<Local> = system_time.into();
-                                            buffer.push_back(Point::new(datetime.format("%H:%M:%S").to_string(), new - last));
-                                        }
-                                        last = new;
-                                        break;
+                                        new = new
+                                            + array.get(9).unwrap().parse::<u64>().unwrap_or(last);
                                     }
                                 }
                             }
+                            if last != 0 {
+                                let system_time = SystemTime::now();
+                                let datetime: DateTime<Local> = system_time.into();
+                                buffer.push_back(Point::new(
+                                    datetime.format("%H:%M:%S").to_string(),
+                                    new - last,
+                                ));
+                            }
+                            last = new;
                         }
                         if buffer.len() > 180 {
                             buffer.pop_front();
