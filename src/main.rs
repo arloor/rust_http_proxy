@@ -96,7 +96,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Listening on https://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
         let graceful = server.with_graceful_shutdown(async move {
             stream.recv().await;
-            info!("graceful shutdown");
+            info!("graceful shutdowning");
+            exit(0); // 并不优雅关闭
         });
         if let Err(e) = graceful.await {
             error!("server exit: {}",e);
@@ -120,7 +121,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Listening on http://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
         let graceful = server.with_graceful_shutdown(async move {
             stream.recv().await;
-            info!("graceful shutdown");
+            info!("graceful shutdowning");
+            exit(0); // 并不优雅关闭
         });
         if let Err(e) = graceful.await {
             error!("server exit: {}",e);
@@ -260,6 +262,7 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
 
 use std::net::UdpSocket;
+use std::process::exit;
 use tokio::sync::RwLock;
 
 pub fn local_ip() -> io::Result<String> {
