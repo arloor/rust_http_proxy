@@ -1,0 +1,10 @@
+},
+yAxis: {
+type: "value",
+max: function (value) {
+var k = 1024;
+var c = Math.floor(Math.log(value.max) / Math.log(k));
+interval = Math.pow(k, c);
+return Math.ceil(value.max / interval) * interval;
+},
+interval:

@@ -11,26 +11,17 @@ use mime_guess::from_path;
 use httpdate::fmt_http_date;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
+use crate::monitor::Point;
 
 
 const SERVER_NAME: &str = "A Rust Web Server";
 
-pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, web_content_path: &String, path: &str, buffer: Arc<RwLock<VecDeque<u64>>>) -> Response<Body> {
+pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, web_content_path: &String, path: &str, buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         (_, "/nt") => if cfg!(target_os="windows") { not_found() } else { count_stream() },
         (_, "/speed") => {
-            // not_found()
-            let buffer = buffer.read().await;
-            let x = buffer.as_slices();
-            let mut r = vec![];
-            r.extend_from_slice(x.0);
-            r.extend_from_slice(x.1);
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(http::header::SERVER, SERVER_NAME)
-                .body(Body::from(format!("{:?}",&r)))
-                .unwrap()
+            speed(buffer).await
         }
         (&Method::GET, path) => serve_path(web_content_path, path, req).await,
         (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
@@ -130,5 +121,39 @@ fn not_modified(last_modified: SystemTime) -> Response<Body> {
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, SERVER_NAME)
         .body(Body::empty())
+        .unwrap()
+}
+
+const PART1: &'static str = include_str!("part1.html");
+const PART2: &'static str = include_str!("part2.html");
+const PART3: &'static str = include_str!("part3.html");
+const PART4: &'static str = include_str!("part4.html");
+
+async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
+// not_found()
+    let buffer = buffer.read().await;
+    let x = buffer.as_slices();
+    let mut r = vec![];
+    r.extend_from_slice(x.0);
+    r.extend_from_slice(x.1);
+
+    let mut scales = vec![];
+    let mut series_up = vec![];
+    let mut max_up = 0;
+    for x in r {
+        scales.push(x.time);
+        series_up.push(x.value);
+        if x.value > max_up {
+            max_up = x.value;
+        }
+    }
+    let mut interval = 1024 * 1024;
+    if max_up / interval > 10 {
+        interval = max_up / 10;
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(http::header::SERVER, SERVER_NAME)
+        .body(Body::from(format!("{} {:?} {} {} {}  {:?} {}", PART1, scales, PART2, interval, PART3, series_up, PART4)))
         .unwrap()
 }

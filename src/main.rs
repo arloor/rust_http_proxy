@@ -15,6 +15,7 @@ use std::{env, io};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use monitor::Monitor;
+use monitor::Point;
 
 
 use hyper::service::{make_service_fn, service_fn};
@@ -129,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, client_socket_addr: SocketAddr, buffer: Arc<RwLock<VecDeque<u64>>>) -> Result<Response<Body>, hyper::Error> {
+async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, client_socket_addr: SocketAddr, buffer: Arc<RwLock<VecDeque<Point>>>) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("{:>21?} {:^7} {:?}",client_socket_addr, req.method().as_str(),req.uri());
     } else {

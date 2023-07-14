@@ -1,0 +1,22 @@
+,
+axisLabel: {
+formatter: function (value, index) {
+if (value <= 0) {
+value = '0B';
+} else {
+var k = 1024;
+var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+//这里是取自然对数，也就是log（k）（value），求出以k为底的多少次方是value
+var c = Math.floor(Math.log(value) / Math.log(k));
+value = (value / Math.pow(k, c)) + ' ' + sizes[c];
+}
+//这里的value[0].name就是每次显示的name
+return value;
+}
+},
+},
+series: [{
+itemStyle: {
+color: '#ef0000',
+},
+"data": 

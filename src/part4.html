@@ -1,0 +1,57 @@
+,
+"markLine": {
+"data": [{
+"type": "average",
+"name": "平均值"
+}],
+"label": {
+formatter: function (value) {
+if (value.value <= 0) {
+value = '0B';
+} else {
+var k = 1024;
+var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+//这里是取自然对数，也就是log（k）（value），求出以k为底的多少次方是value
+var c = Math.floor(Math.log(value.value) / Math.log(k));
+value = (value.value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
+}
+//这里的value[0].name就是每次显示的name
+return value;
+}
+}
+},
+"markPoint": {
+"data": [{
+"type": "max",
+"name": "最大值"
+}],
+symbol: "roundRect",
+symbolSize: [70, 30],
+"label": {
+formatter: function (value) {
+if (value.value <= 0) {
+value = '0B';
+} else {
+var k = 1024;
+var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+//这里是取自然对数，也就是log（k）（value），求出以k为底的多少次方是value
+var c = Math.floor(Math.log(value.value) / Math.log(k));
+value = (value.value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
+}
+//这里的value[0].name就是每次显示的name
+return value;
+}
+}
+},
+"name": "上行网速",
+"smooth": true,
+"type": "line"
+}],
+animation: false,
+animationDuration: 5
+};
+// 使用刚指定的配置项和数据显示图表。
+myChart.setOption(option);
+</script>
+</body>
+</html>
