@@ -44,6 +44,7 @@ impl Monitor {
             let to_move = self.buffer.clone();
             tokio::spawn(async move {
                 let start = SystemTime::now();
+                let mut last: u64 = 0;
                 loop {
                     {
                         let mut buffer = to_move.write().await;
@@ -55,7 +56,10 @@ impl Monitor {
                                 let array: Vec<&str> = str.split_whitespace().collect();
                                 if array.len() == 17 {
                                     if array.get(0).unwrap().to_string() != "lo:" {
-                                        buffer.push_back(Point::new(i.to_string(), array.get(9).unwrap().parse::<u64>().unwrap_or(0)))
+                                        let new = array.get(9).unwrap().parse::<u64>().unwrap_or(last);
+                                        buffer.push_back(Point::new(i.to_string(), new - last));
+                                        last = new;
+                                        break;
                                     }
                                 }
                             }
