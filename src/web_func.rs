@@ -1,52 +1,78 @@
-use std::collections::VecDeque;
-use hyper::{Body, http, Method, Request, Response, StatusCode};
+use crate::monitor::Point;
+use httpdate::fmt_http_date;
 use hyper::http::HeaderValue;
+use hyper::{http, Body, Method, Request, Response, StatusCode};
+use log::info;
+use mime_guess::from_path;
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use tokio::fs::{File, metadata};
-use tokio_util::codec::{BytesCodec, FramedRead};
-use mime_guess::from_path;
-use httpdate::fmt_http_date;
 use std::time::SystemTime;
+use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
-use crate::monitor::Point;
-
+use tokio_util::codec::{BytesCodec, FramedRead};
 
 const SERVER_NAME: &str = "A Rust Web Server";
 
-pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, web_content_path: &String, path: &str, buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
+pub async fn serve_http_request(
+    req: &Request<Body>,
+    client_socket_addr: SocketAddr,
+    web_content_path: &String,
+    path: &str,
+    buffer: Arc<RwLock<VecDeque<Point>>>,
+) -> Response<Body> {
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
-        (_, "/nt") => if cfg!(target_os="windows") { not_found() } else { count_stream() },
+        (_, "/nt") => {
+            if cfg!(target_os = "windows") {
+                not_found()
+            } else {
+                count_stream()
+            }
+        }
         (_, "/speed") => speed(buffer).await,
-        (&Method::GET, path) => serve_path(web_content_path, path, req).await,
+        (&Method::GET, path) => {
+            info!(
+                "{:>21?} {:^7} {} {:?}",
+                client_socket_addr,
+                req.method().as_str(),
+                path,
+                req.version()
+            );
+            serve_path(web_content_path, path, req).await
+        }
         (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
         _ => not_found(),
     };
 }
 
-async fn serve_path(web_content_path: &String, url_path: &str, req: &Request<Body>) -> Response<Body> {
+async fn serve_path(
+    web_content_path: &String,
+    url_path: &str,
+    req: &Request<Body>,
+) -> Response<Body> {
     if String::from(url_path).contains("/..") {
         return not_found();
     }
-    let mut path = PathBuf::from(
-        if String::from(url_path).ends_with("/") {
-            format!("{}{}index.html", web_content_path, url_path)
-        } else {
-            format!("{}{}", web_content_path, url_path)
-        });
+    let mut path = PathBuf::from(if String::from(url_path).ends_with("/") {
+        format!("{}{}index.html", web_content_path, url_path)
+    } else {
+        format!("{}{}", web_content_path, url_path)
+    });
     let meta = match metadata(&path).await {
-        Ok(meta) => if meta.is_file() {
-            meta
-        } else {
-            path = PathBuf::from(format!("{}{}/index.html", web_content_path, url_path));
-            match metadata(&path).await {
-                Ok(m) => m,
-                Err(_) => return not_found(),
+        Ok(meta) => {
+            if meta.is_file() {
+                meta
+            } else {
+                path = PathBuf::from(format!("{}{}/index.html", web_content_path, url_path));
+                match metadata(&path).await {
+                    Ok(m) => m,
+                    Err(_) => return not_found(),
+                }
             }
-        },
+        }
         Err(_) => return not_found(),
     };
 
@@ -56,7 +82,9 @@ async fn serve_path(web_content_path: &String, url_path: &str, req: &Request<Bod
     };
     let mime_type = from_path(&path).first_or_octet_stream();
     if let Some(request_if_modified_since) = req.headers().get(http::header::IF_MODIFIED_SINCE) {
-        if request_if_modified_since == HeaderValue::from_str(fmt_http_date(last_modified).as_str()).unwrap() {
+        if request_if_modified_since
+            == HeaderValue::from_str(fmt_http_date(last_modified).as_str()).unwrap()
+        {
             return not_modified(last_modified);
         }
     }
@@ -69,7 +97,10 @@ async fn serve_path(web_content_path: &String, url_path: &str, req: &Request<Bod
     let body = Body::wrap_stream(stream);
 
     let content_type = mime_type.as_ref();
-    let content_type = if !content_type.to_ascii_lowercase().contains("; charset=utf-8") {
+    let content_type = if !content_type
+        .to_ascii_lowercase()
+        .contains("; charset=utf-8")
+    {
         format!("{}{}", &content_type, "; charset=utf-8")
     } else {
         String::from(content_type)
@@ -101,7 +132,10 @@ fn count_stream() -> Response<Body> {
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::REFRESH, "3")
-        .body(Body::from(String::from_utf8(output.stdout).unwrap() + (&*String::from_utf8(output.stderr).unwrap())))
+        .body(Body::from(
+            String::from_utf8(output.stdout).unwrap()
+                + (&*String::from_utf8(output.stderr).unwrap()),
+        ))
         .unwrap()
 }
 
@@ -128,7 +162,7 @@ const PART3: &'static str = include_str!("part3.html");
 const PART4: &'static str = include_str!("part4.html");
 
 async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
-// not_found()
+    // not_found()
     let buffer = buffer.read().await;
     let x = buffer.as_slices();
     let mut r = vec![];
@@ -152,6 +186,9 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(Body::from(format!("{} {:?} {} {} {}  {:?} {}", PART1, scales, PART2, interval, PART3, series_up, PART4)))
+        .body(Body::from(format!(
+            "{} {:?} {} {} {}  {:?} {}",
+            PART1, scales, PART2, interval, PART3, series_up, PART4
+        )))
         .unwrap()
 }

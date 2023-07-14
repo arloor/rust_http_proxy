@@ -140,7 +140,6 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
             let raw_path = req.uri().path();
             let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
             let path = path.as_ref();
-            info!("{:>21?} {:^7} {} {:?}", client_socket_addr,req.method().as_str(),path,req.version());
             return Ok(web_func::serve_http_request(&req, client_socket_addr, web_content_path, path, buffer).await);
         }
         if let Some(host) = req.uri().host() {
