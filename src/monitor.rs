@@ -67,7 +67,7 @@ impl Monitor {
                             }
                             last = new;
                         }
-                        if buffer.len() > 180 {
+                        if buffer.len() > MAX_NUM {
                             buffer.pop_front();
                         }
                     }
@@ -77,3 +77,5 @@ impl Monitor {
         }
     }
 }
+
+const MAX_NUM: usize = 300;
