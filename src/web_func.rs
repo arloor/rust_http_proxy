@@ -33,6 +33,7 @@ pub async fn serve_http_request(
             }
         }
         (_, "/speed") => speed(buffer).await,
+        (_, "/net") => speed(buffer).await,
         (&Method::GET, path) => {
             info!(
                 "{:>21?} {:^7} {} {:?}",
