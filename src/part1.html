@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Rust WEB Server</title>
-    <meta http-equiv="refresh" content="5">
+    <!-- <meta http-equiv="refresh" content="5"> -->
     <script src="https://www.arloor.com/echarts.min.js"></script>
 </head>
 <body style="margin: 0;height:100%;">
@@ -29,17 +29,9 @@
                     var c = Math.floor(Math.log(value[0].value) / Math.log(k));
                     value[0].value = (value[0].value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
                 }
-                if (value[1].value <= 0) {
-                    value[1].value = '0B';
-                } else {
-                    var k = 1024;
-                    var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-                    //这里是取自然对数，也就是log（k）（value[0].value），求出以k为底的多少次方是value[0].value
-                    var c = Math.floor(Math.log(value[1].value) / Math.log(k));
-                    value[1].value = (value[1].value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
-                }
+            
                 //这里的value[0].name就是每次显示的name
-                return value[0].name + "<br/>" + "上行网速: " + value[0].value + "<br/>" + "下行网速: " + value[1].value;
+                return value[0].name + "<br/>" + "上行网速: " + value[0].value ;
             }
         },
         legend: {

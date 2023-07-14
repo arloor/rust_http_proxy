@@ -20,9 +20,7 @@ pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketA
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         (_, "/nt") => if cfg!(target_os="windows") { not_found() } else { count_stream() },
-        (_, "/speed") => {
-            speed(buffer).await
-        }
+        (_, "/speed") => speed(buffer).await,
         (&Method::GET, path) => serve_path(web_content_path, path, req).await,
         (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
         _ => not_found(),
@@ -148,8 +146,8 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
         }
     }
     let mut interval = 1024 * 1024;
-    if max_up / interval > 10 {
-        interval = max_up / 10;
+    while max_up / interval > 10 {
+        interval = interval * 10;
     }
     Response::builder()
         .status(StatusCode::OK)

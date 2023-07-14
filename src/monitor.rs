@@ -54,16 +54,12 @@ impl Monitor {
                             for str in strs {
                                 let array: Vec<&str> = str.split_whitespace().collect();
                                 if array.len() == 17 {
-                                    if array.get(0).unwrap() != &"lo" {
+                                    if array.get(0).unwrap().to_string() != "lo:" {
                                         buffer.push_back(Point::new(i.to_string(), array.get(9).unwrap().parse::<u64>().unwrap_or(0)))
                                     }
                                 }
                             }
                         }
-                        let point = Point::new(
-                            format!("time {}", i.to_string(), ), i,
-                        );
-                        buffer.push_back(point);
                         if buffer.len() > 60 {
                             buffer.pop_front();
                         }
