@@ -7,10 +7,14 @@ use std::borrow::Cow;
 mod tls_helper;
 mod web_func;
 mod acceptor;
+mod monitor;
 
+use std::sync::Arc;
 use std::convert::Infallible;
 use std::{env, io};
+use std::collections::VecDeque;
 use std::net::SocketAddr;
+use monitor::Monitor;
 
 
 use hyper::service::{make_service_fn, service_fn};
@@ -69,6 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("rust_http_proxy is starting!");
     info!("serve web content of {}",web_content_path);
     let mut stream = signal(SignalKind::terminate())?;
+    let holder: &'static Monitor = Box::leak(Box::new(Monitor::new()));
+    holder.start();
     if over_tls {
         // This uses a filter to handle errors with connecting
         let incoming = AddrIncoming::bind(&addr)?;
@@ -82,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let client_socket_addr = conn.remote_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, client_socket_addr)
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, client_socket_addr, holder.get_buffer().clone())
                     }))
                 }
             }));
@@ -106,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let client_socket_addr = conn.remote_addr();
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, client_socket_addr)
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, client_socket_addr, holder.get_buffer().clone())
                     }))
                 }
             }));
@@ -123,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, client_socket_addr: SocketAddr) -> Result<Response<Body>, hyper::Error> {
+async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, client_socket_addr: SocketAddr, buffer: Arc<RwLock<VecDeque<u64>>>) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("{:>21?} {:^7} {:?}",client_socket_addr, req.method().as_str(),req.uri());
     } else {
@@ -132,7 +138,7 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
             let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
             let path = path.as_ref();
             info!("{:>21?} {:^7} {} {:?}", client_socket_addr,req.method().as_str(),path,req.version());
-            return Ok(web_func::serve_http_request(&req, client_socket_addr, web_content_path, path).await);
+            return Ok(web_func::serve_http_request(&req, client_socket_addr, web_content_path, path, buffer).await);
         }
         if let Some(host) = req.uri().host() {
             let host = host.to_string();
@@ -253,6 +259,7 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
 
 use std::net::UdpSocket;
+use tokio::sync::RwLock;
 
 pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;

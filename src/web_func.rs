@@ -1,21 +1,37 @@
+use std::collections::VecDeque;
 use hyper::{Body, http, Method, Request, Response, StatusCode};
 use hyper::http::HeaderValue;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use tokio::fs::{File, metadata};
 use tokio_util::codec::{BytesCodec, FramedRead};
 use mime_guess::from_path;
 use httpdate::fmt_http_date;
 use std::time::SystemTime;
+use tokio::sync::RwLock;
 
 
 const SERVER_NAME: &str = "A Rust Web Server";
 
-pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, web_content_path: &String, path: &str) -> Response<Body> {
+pub async fn serve_http_request(req: &Request<Body>, client_socket_addr: SocketAddr, web_content_path: &String, path: &str, buffer: Arc<RwLock<VecDeque<u64>>>) -> Response<Body> {
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         (_, "/nt") => if cfg!(target_os="windows") { not_found() } else { count_stream() },
+        (_, "/speed") => {
+            // not_found()
+            let buffer = buffer.read().await;
+            let x = buffer.as_slices();
+            let mut r = vec![];
+            r.extend_from_slice(x.0);
+            r.extend_from_slice(x.1);
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::SERVER, SERVER_NAME)
+                .body(Body::from(format!("{:?}",&r)))
+                .unwrap()
+        }
         (&Method::GET, path) => serve_path(web_content_path, path, req).await,
         (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
         _ => not_found(),
