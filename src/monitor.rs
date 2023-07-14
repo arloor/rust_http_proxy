@@ -55,7 +55,7 @@ impl Monitor {
                                         if last != 0 {
                                             let system_time = SystemTime::now();
                                             let datetime: DateTime<Local> = system_time.into();
-                                            buffer.push_back(Point::new(datetime.format("%Y-%m-%d %H:%M:%S").to_string(), new - last));
+                                            buffer.push_back(Point::new(datetime.format("%M:%S").to_string(), new - last));
                                         }
                                         last = new;
                                         break;
