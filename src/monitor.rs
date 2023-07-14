@@ -3,8 +3,7 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
-use chrono::offset::Utc;
-use chrono::DateTime;
+use chrono::{DateTime, Local};
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -55,7 +54,7 @@ impl Monitor {
                                             array.get(9).unwrap().parse::<u64>().unwrap_or(last);
                                         if last != 0 {
                                             let system_time = SystemTime::now();
-                                            let datetime: DateTime<Utc> = system_time.into();
+                                            let datetime: DateTime<Local> = system_time.into();
                                             buffer.push_back(Point::new(datetime.format("%Y-%m-%d %H:%M:%S").to_string(), new - last));
                                         }
                                         last = new;

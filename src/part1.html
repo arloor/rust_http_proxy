@@ -27,7 +27,7 @@
                     var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
                     //这里是取自然对数，也就是log（k）（value[0].value），求出以k为底的多少次方是value[0].value
                     var c = Math.floor(Math.log(value[0].value) / Math.log(k));
-                    value[0].value = (value[0].value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
+                    value[0].value = (value[0].value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c]+'/s';
                 }
             
                 //这里的value[0].name就是每次显示的name
