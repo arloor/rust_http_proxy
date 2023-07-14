@@ -4,8 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Point {
     pub time: String,
     pub value: u64,
@@ -13,13 +12,9 @@ pub struct Point {
 
 impl Point {
     pub fn new(time: String, value: u64) -> Point {
-        Point {
-            time,
-            value,
-        }
+        Point { time, value }
     }
 }
-
 
 pub struct Monitor {
     buffer: Arc<RwLock<VecDeque<Point>>>,
@@ -40,7 +35,7 @@ impl Monitor {
         return self.buffer.clone();
     }
     pub fn start(&self) {
-        if cfg!(target_os="linux") {
+        if cfg!(target_os = "linux") {
             let to_move = self.buffer.clone();
             tokio::spawn(async move {
                 let start = SystemTime::now();
@@ -56,8 +51,11 @@ impl Monitor {
                                 let array: Vec<&str> = str.split_whitespace().collect();
                                 if array.len() == 17 {
                                     if array.get(0).unwrap().to_string() != "lo:" {
-                                        let new = array.get(9).unwrap().parse::<u64>().unwrap_or(last);
-                                        buffer.push_back(Point::new(i.to_string(), new - last));
+                                        let new =
+                                            array.get(9).unwrap().parse::<u64>().unwrap_or(last);
+                                        if last != 0 {
+                                            buffer.push_back(Point::new(i.to_string(), new - last));
+                                        }
                                         last = new;
                                         break;
                                     }
@@ -74,6 +72,3 @@ impl Monitor {
         }
     }
 }
-
-
-
