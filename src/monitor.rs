@@ -3,6 +3,8 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
+use chrono::offset::Utc;
+use chrono::DateTime;
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -38,12 +40,10 @@ impl Monitor {
         if cfg!(target_os = "linux") {
             let to_move = self.buffer.clone();
             tokio::spawn(async move {
-                let start = SystemTime::now();
                 let mut last: u64 = 0;
                 loop {
                     {
                         let mut buffer = to_move.write().await;
-                        let i = SystemTime::now().duration_since(start).unwrap().as_secs();
                         if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
                             content = content.replace("\r\n", "\n");
                             let strs = content.split("\n");
@@ -54,7 +54,9 @@ impl Monitor {
                                         let new =
                                             array.get(9).unwrap().parse::<u64>().unwrap_or(last);
                                         if last != 0 {
-                                            buffer.push_back(Point::new(i.to_string(), new - last));
+                                            let system_time = SystemTime::now();
+                                            let datetime: DateTime<Utc> = system_time.into();
+                                            buffer.push_back(Point::new(datetime.format("%Y-%m-%d %H:%M:%S").to_string(), new - last));
                                         }
                                         last = new;
                                         break;
