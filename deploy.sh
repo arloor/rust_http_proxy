@@ -4,7 +4,7 @@ ssh root@hk.arloor.dev "curl https://raw.githubusercontent.com/arloor/rust_http_
 scp root@hk.arloor.dev:/usr/bin/rust_http_proxy ~/Downloads/rust_http_proxy
 scp root@hk.arloor.dev:/root/rpmbuild/RPMS/x86_64/rust_http_proxy-0.1-1.all.x86_64.rpm ~/Downloads/rust_http_proxy-0.1-1.all.x86_64.rpm
 
-for i in mi.arloor.com ti.arloor.com sg.arloor.dev dc6.arloor.dev dc9.arloor.dev bwg.arloor.dev; do
+for i in bwg.arloor.dev mi.arloor.com ti.arloor.com sg.arloor.dev dc6.arloor.dev dc9.arloor.dev ; do
   ssh root@${i} "
       curl -k https://hk.arloor.dev:443/rust_http_proxy-0.1-1.all.x86_64.rpm -o /tmp/rust_http_proxy-0.1-1.all.x86_64.rpm
       systemctl stop rust_http_proxy

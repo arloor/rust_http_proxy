@@ -182,7 +182,7 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
     }
     let mut interval = 1024 * 1024;
     if max_up / interval > 10 {
-        interval = (max_up/interval/10-1)*interval;
+        interval = (max_up/interval/10+1)*interval;
     }
     Response::builder()
         .status(StatusCode::OK)
