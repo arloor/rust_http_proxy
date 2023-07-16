@@ -42,7 +42,7 @@ impl Monitor {
                 let mut last: u64 = 0;
                 loop {
                     {
-                        let mut buffer = to_move.write().await;
+                       
                         if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
                             content = content.replace("\r\n", "\n");
                             let strs = content.split("\n");
@@ -60,15 +60,16 @@ impl Monitor {
                             if last != 0 {
                                 let system_time = SystemTime::now();
                                 let datetime: DateTime<Local> = system_time.into();
+                                let mut buffer = to_move.write().await;
                                 buffer.push_back(Point::new(
                                     datetime.format("%H:%M:%S").to_string(),
                                     new - last,
                                 ));
+                                if buffer.len() > MAX_NUM {
+                                    buffer.pop_front();
+                                }
                             }
                             last = new;
-                        }
-                        if buffer.len() > MAX_NUM {
-                            buffer.pop_front();
                         }
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await;

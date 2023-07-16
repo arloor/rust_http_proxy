@@ -165,13 +165,7 @@ const PART3: &'static str = include_str!("part3.html");
 const PART4: &'static str = include_str!("part4.html");
 
 async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
-    // not_found()
-    let buffer = buffer.read().await;
-    let x = buffer.as_slices();
-    let mut r = vec![];
-    r.extend_from_slice(x.0);
-    r.extend_from_slice(x.1);
-
+    let r = fetch_all(buffer).await;
     let mut scales = vec![];
     let mut series_up = vec![];
     let mut max_up = 0;
@@ -194,4 +188,13 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
             PART0,local_ip().unwrap_or("0.0.0.0".to_string()),PART1, scales, PART2, interval, PART3, series_up, PART4
         )))
         .unwrap()
+}
+
+async fn fetch_all(buffer: Arc<RwLock<VecDeque<Point>>>) -> Vec<Point> {
+    let buffer = buffer.read().await;
+    let x = buffer.as_slices();
+    let mut r = vec![];
+    r.extend_from_slice(x.0);
+    r.extend_from_slice(x.1);
+    r
 }
