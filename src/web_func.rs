@@ -176,7 +176,11 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
             max_up = x.value;
         }
     }
-    let mut interval = 1024 * 1024;
+    let mut interval = if max_up > 1024 * 1024 {
+        1024 * 1024
+    } else {
+        128 * 1024
+    };
     if max_up / interval > 10 {
         interval = (max_up / interval / 10) * interval;
     }
@@ -185,7 +189,7 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
         .header(http::header::SERVER, SERVER_NAME)
         .body(Body::from(format!(
             "{} {}网速 {} {:?} {} {} {}  {:?} {}",
-            PART0,local_ip().unwrap_or("0.0.0.0".to_string()),PART1, scales, PART2, interval, PART3, series_up, PART4
+            PART0, local_ip().unwrap_or("0.0.0.0".to_string()), PART1, scales, PART2, interval, PART3, series_up, PART4
         )))
         .unwrap()
 }
