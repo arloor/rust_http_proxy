@@ -42,7 +42,7 @@ impl Monitor {
                 let mut last: u64 = 0;
                 loop {
                     {
-                       
+
                         if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
                             content = content.replace("\r\n", "\n");
                             let strs = content.split("\n");
@@ -79,4 +79,4 @@ impl Monitor {
     }
 }
 
-const MAX_NUM: usize = 240;
+const MAX_NUM: usize = 300;
