@@ -13,6 +13,7 @@ use std::time::SystemTime;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::codec::{BytesCodec, FramedRead};
+use crate::local_ip;
 
 const SERVER_NAME: &str = "A Rust Web Server";
 
@@ -157,6 +158,7 @@ fn not_modified(last_modified: SystemTime) -> Response<Body> {
         .unwrap()
 }
 
+const PART0: &'static str = include_str!("part0.html");
 const PART1: &'static str = include_str!("part1.html");
 const PART2: &'static str = include_str!("part2.html");
 const PART3: &'static str = include_str!("part3.html");
@@ -188,8 +190,8 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
         .body(Body::from(format!(
-            "{} {:?} {} {} {}  {:?} {}",
-            PART1, scales, PART2, interval, PART3, series_up, PART4
+            "{} {}网速 {} {:?} {} {} {}  {:?} {}",
+            PART0,local_ip().unwrap_or("0.0.0.0".to_string()),PART1, scales, PART2, interval, PART3, series_up, PART4
         )))
         .unwrap()
 }
