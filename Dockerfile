@@ -5,5 +5,6 @@ FROM alpine:3.18.2
 #    && apk del tzdata
 #RUN mkdir /apps
 COPY target/x86_64-unknown-linux-musl/release/rust_http_proxy /
-COPY /usr/share/rust_http_proxy /
+COPY privkey.pem /
+COPY cert.pem /
 CMD ["/rust_http_proxy"]
