@@ -8,9 +8,9 @@ git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
 cd /var/rust_http_proxy
 git pull
 cargo install --path . --target x86_64-unknown-linux-musl
-podman build  -t rust_http_proxy -f Dockerfile . --tag docker.io/arloor/rust_http_proxy:1.0
-podman login docker.io # 输入账号密码登陆docker hub
-podman push docker.io/arloor/rust_http_proxy:1.0
+podman build  -t rust_http_proxy -f Dockerfile . --tag ccr.ccs.tencentyun.com/arloor/rust_http_proxy:1.0
+podman login ccr.ccs.tencentyun.com # 输入账号密码登陆docker hub
+podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:1.0
 ```
 
 ```bash
@@ -26,7 +26,7 @@ podman run -d \
 -v /usr/share/nginx/html/:/usr/share/nginx/html/ \
 -v /tmp:/tmp \
 --name proxy \
-docker.io/arloor/rust_http_proxy:1.0
+ccr.ccs.tencentyun.com/arloor/rust_http_proxy:1.0
 # 生成systemd文件
 podman generate systemd --new --files --name proxy
 mv container-proxy.service /lib/systemd/system/proxy.service
