@@ -5,6 +5,4 @@ RUN apk add tzdata && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && apk del tzdata
 #RUN mkdir /apps
 COPY target/x86_64-unknown-linux-musl/release/rust_http_proxy /
-COPY privkey.pem /
-COPY cert.pem /
 CMD ["/rust_http_proxy"]
