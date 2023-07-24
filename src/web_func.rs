@@ -145,7 +145,8 @@ fn not_found() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(Body::from("Not Found"))
+        .header(http::header::CONTENT_TYPE,"text/html; charset=utf-8")
+        .body(Body::from("<center><h3>Are you a host?</h3><h3><center><center><h3>Are you a guest?</h3><h3><center></center></h3></center></center></h3></center>"))
         .unwrap()
 }
 
