@@ -1,9 +1,4 @@
 ```shell
-yum install -y podman docker
-```
-
-
-```shell
 git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
 cd /var/rust_http_proxy
 git pull
@@ -12,6 +7,10 @@ podman build  -t rust_http_proxy -f Dockerfile . --tag ccr.ccs.tencentyun.com/ar
 podman login ccr.ccs.tencentyun.com # 输入账号密码登陆docker hub
 podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:1.0
 ```
+
+
+
+
 
 ```bash
 systemctl stop proxy
