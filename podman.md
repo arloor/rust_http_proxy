@@ -1,11 +1,12 @@
 ```shell
+tag=1.3
 git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
 cd /var/rust_http_proxy
 git pull
 cargo install --path . --target x86_64-unknown-linux-musl
-podman build  -t rust_http_proxy -f Dockerfile . --tag ccr.ccs.tencentyun.com/arloor/rust_http_proxy:1.2
+podman build  -t rust_http_proxy -f Dockerfile . --tag ccr.ccs.tencentyun.com/arloor/rust_http_proxy:$tag
 podman login ccr.ccs.tencentyun.com # 输入账号密码登陆docker hub
-podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:1.2
+podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:$tag
 ```
 
 
