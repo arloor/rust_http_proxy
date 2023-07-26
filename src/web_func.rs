@@ -146,7 +146,7 @@ fn not_found() -> Response<Body> {
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::CONTENT_TYPE,"text/html; charset=utf-8")
-        .body(Body::from("<center><h3>Are you a host?</h3><h3><center><center><h3>Are you a guest?</h3><h3><center></center></h3></center></center></h3></center>"))
+        .body(Body::from(H404))
         .unwrap()
 }
 
@@ -164,6 +164,7 @@ const PART1: &'static str = include_str!("part1.html");
 const PART2: &'static str = include_str!("part2.html");
 const PART3: &'static str = include_str!("part3.html");
 const PART4: &'static str = include_str!("part4.html");
+const H404: &'static str = include_str!("404.html");
 
 async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
     let r = fetch_all(buffer).await;
