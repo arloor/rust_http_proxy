@@ -1,5 +1,5 @@
 ```shell
-tag=1.4
+tag=1.5
 git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
 cd /var/rust_http_proxy
 git pull
