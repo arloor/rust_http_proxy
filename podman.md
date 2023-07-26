@@ -5,7 +5,7 @@ cd /var/rust_http_proxy
 git pull
 cargo install --path . --target x86_64-unknown-linux-musl
 podman build  -t rust_http_proxy -f Dockerfile . --tag ccr.ccs.tencentyun.com/arloor/rust_http_proxy:$tag
-podman login ccr.ccs.tencentyun.com -u 1293181335# 输入账号密码登陆docker hub
+podman login ccr.ccs.tencentyun.com -u 1293181335 # 输入账号密码登陆docker hub
 podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:$tag
 ```
 
