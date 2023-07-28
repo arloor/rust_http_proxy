@@ -29,6 +29,6 @@ cd /var/rust_http_proxy && {
   pass=$(cat /root/.ccs_pass)
   commit=$(git rev-parse --short=8 HEAD)
   podman build -t rust_http_proxy -f Dockerfile . --tag ccr.ccs.tencentyun.com/arloor/rust_http_proxy:$commit
-  podman login ccr.ccs.tencentyun.com -u 1293181335 -p "\'${pass}\'" # 输入账号密码登陆docker hub
+  podman login ccr.ccs.tencentyun.com -u 1293181335 -p "${pass}" # 输入账号密码登陆docker hub
   podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:$commit
 }
