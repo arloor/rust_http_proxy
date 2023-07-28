@@ -1,4 +1,4 @@
-ssh root@mi.arloor.com "curl https://raw.githubusercontent.com/arloor/rust_http_proxy/master/rpm/genbin.sh -k 2>/dev/null |zsh"
+ssh root@mi.arloor.com -t "curl https://raw.githubusercontent.com/arloor/rust_http_proxy/master/rpm/genbin.sh -k 2>/dev/null |zsh"
 scp root@mi.arloor.com:/usr/bin/rust_http_proxy ~/Downloads/rust_http_proxy
 scp root@mi.arloor.com:/root/rpmbuild/RPMS/x86_64/rust_http_proxy-0.1-1.all.x86_64.rpm ~/Downloads/rust_http_proxy-0.1-1.all.x86_64.rpm
 
