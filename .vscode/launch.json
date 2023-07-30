@@ -11,7 +11,7 @@
             "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
             "args": [],
             "cwd": "${workspaceFolder}",
-            "preLaunchTask": "${defaultBuildTask}",
+            "preLaunchTask": "rust: cargo build",
             "env": {
                 "port": "80",
                 "cert": "cert.pem",
