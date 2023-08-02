@@ -42,7 +42,6 @@ impl Monitor {
                 let mut last: u64 = 0;
                 loop {
                     {
-
                         if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
                             content = content.replace("\r\n", "\n");
                             let strs = content.split("\n");
@@ -51,10 +50,20 @@ impl Monitor {
                                 let array: Vec<&str> = str.split_whitespace().collect();
 
                                 if array.len() == 17 {
-                                    if array.get(0).unwrap().to_string() != "lo:" {
-                                        new = new
-                                            + array.get(9).unwrap().parse::<u64>().unwrap_or(last);
+                                    if array.get(0).unwrap().to_string() == "lo:" {
+                                        continue;
                                     }
+                                    if array.get(0).unwrap().starts_with("veth") {
+                                        continue;
+                                    }
+                                    if array.get(0).unwrap().starts_with("flannel") {
+                                        continue;
+                                    }
+                                    if array.get(0).unwrap().starts_with("cni0") {
+                                        continue;
+                                    }
+                                    new = new
+                                        + array.get(9).unwrap().parse::<u64>().unwrap_or(last);
                                 }
                             }
                             if last != 0 {
