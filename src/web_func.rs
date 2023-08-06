@@ -159,12 +159,12 @@ fn not_modified(last_modified: SystemTime) -> Response<Body> {
         .unwrap()
 }
 
-const PART0: &'static str = include_str!("part0.html");
-const PART1: &'static str = include_str!("part1.html");
-const PART2: &'static str = include_str!("part2.html");
-const PART3: &'static str = include_str!("part3.html");
-const PART4: &'static str = include_str!("part4.html");
-const H404: &'static str = include_str!("404.html");
+const PART0: &'static str = include_str!("../html/part0.html");
+const PART1: &'static str = include_str!("../html/part1.html");
+const PART2: &'static str = include_str!("../html/part2.html");
+const PART3: &'static str = include_str!("../html/part3.html");
+const PART4: &'static str = include_str!("../html/part4.html");
+const H404: &'static str = include_str!("../html/404.html");
 
 async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
     let r = fetch_all(buffer).await;
