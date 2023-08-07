@@ -28,6 +28,6 @@ jobs:
         password: ${{ env.REGISTRY_PASSWORD }}
         registry: ${{ env.IMAGE_REGISTRY }}
     - name: image
-      run: podman build  -t rust_http_proxy -f Dockerfile . --tag docker.io/arloor/rust_http_proxy:${{ github.sha }}
+      run: podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy
     - name: push
-      run: podman push docker.io/arloor/rust_http_proxy:${{ github.sha }}
+      run: podman push docker.io/arloor/rust_http_proxy:${{ github.sha }} && podman push docker.io/arloor/rust_http_proxy

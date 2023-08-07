@@ -131,20 +131,4 @@ docker ps -a
 tail -f /tmp/proxy.log
 ```
 
-容器内查看日志
-
-```shell
-docker exec  -it proxy /bin/sh
-tail -n 10 /tmp/proxy.log
-
-```
-
-停止运行：
-
-```shell
-docker kill proxy
-docker rm proxy
-docker rmi docker.io/arloor/rust_http_proxy
-```
-
 
