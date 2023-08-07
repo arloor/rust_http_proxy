@@ -8,8 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  REGISTRY_USER: 1293181335
-  IMAGE_REGISTRY: ccr.ccs.tencentyun.com
+  REGISTRY_USER: arloor
+  IMAGE_REGISTRY: docker.io
   REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
 
 jobs:
@@ -21,13 +21,13 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build --release
-    - name: Log in to Quay.io
+    - name: Log in to docker.io
       uses: redhat-actions/podman-login@v1
       with:
         username: ${{ env.REGISTRY_USER }}
         password: ${{ env.REGISTRY_PASSWORD }}
         registry: ${{ env.IMAGE_REGISTRY }}
     - name: image
-      run: podman build  -t rust_http_proxy -f Dockerfile . --tag ccr.ccs.tencentyun.com/arloor/rust_http_proxy:${{ github.sha }}
-    - name: push image
-      run: podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:${{ github.sha }}
+      run: podman build  -t rust_http_proxy -f Dockerfile . --tag docker.io/arloor/rust_http_proxy:${{ github.sha }}
+    - name: push
+      run: podman push docker.io/arloor/rust_http_proxy:${{ github.sha }}
