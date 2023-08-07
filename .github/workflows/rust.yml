@@ -13,21 +13,28 @@ env:
   REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
 
 jobs:
-  build:
+  build-and-push:
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v3
-    - name: Build
+    - name: build
       run: cargo build --release
-    - name: Log in to docker.io
+    - name: image
+      run: podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy
+    - name: login
       uses: redhat-actions/podman-login@v1
       with:
         username: ${{ env.REGISTRY_USER }}
         password: ${{ env.REGISTRY_PASSWORD }}
         registry: ${{ env.IMAGE_REGISTRY }}
-    - name: image
-      run: podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy
     - name: push
-      run: podman push docker.io/arloor/rust_http_proxy:${{ github.sha }} && podman push docker.io/arloor/rust_http_proxy
+      uses: redhat-actions/push-to-registry@v2
+      with:
+        image: rust_http_proxy
+        tags: latest ${{ github.sha }}
+        registry: docker.io/arloor
+
+    - name: url
+      run: echo "Image pushed to ${{ steps.push-to-quay.outputs.registry-paths }}"
