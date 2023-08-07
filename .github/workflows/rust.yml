@@ -20,9 +20,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: build
-      run: cargo build --release
-    - name: image
-      run: podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy:latest
+      run: |
+        cargo build --release
+        podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy:latest
     - name: push
       uses: redhat-actions/push-to-registry@v2
       with:
