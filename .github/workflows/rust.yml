@@ -22,7 +22,7 @@ jobs:
     - name: build
       run: cargo build --release
     - name: image
-      run: podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy
+      run: podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy:latest
 #    - name: login
 #      uses: redhat-actions/podman-login@v1
 #      with:
