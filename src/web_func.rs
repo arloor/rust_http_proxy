@@ -13,7 +13,6 @@ use std::time::SystemTime;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::codec::{BytesCodec, FramedRead};
-use crate::local_ip;
 
 const SERVER_NAME: &str = "A Rust Web Server";
 
@@ -21,6 +20,7 @@ pub async fn serve_http_request(
     req: &Request<Body>,
     client_socket_addr: SocketAddr,
     web_content_path: &String,
+    hostname: &String,
     path: &str,
     buffer: Arc<RwLock<VecDeque<Point>>>,
 ) -> Response<Body> {
@@ -33,8 +33,8 @@ pub async fn serve_http_request(
                 count_stream()
             }
         }
-        (_, "/speed") => speed(buffer).await,
-        (_, "/net") => speed(buffer).await,
+        (_, "/speed") => speed(buffer, hostname).await,
+        (_, "/net") => speed(buffer, hostname).await,
         (&Method::GET, path) => {
             info!(
                 "{:>21?} {:^7} {} {:?}",
@@ -145,7 +145,7 @@ fn not_found() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
-        .header(http::header::CONTENT_TYPE,"text/html; charset=utf-8")
+        .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
         .body(Body::from(H404))
         .unwrap()
 }
@@ -166,7 +166,7 @@ const PART3: &'static str = include_str!("../html/part3.html");
 const PART4: &'static str = include_str!("../html/part4.html");
 const H404: &'static str = include_str!("../html/404.html");
 
-async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
+async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>, hostname: &String) -> Response<Body> {
     let r = fetch_all(buffer).await;
     let mut scales = vec![];
     let mut series_up = vec![];
@@ -191,7 +191,7 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>) -> Response<Body> {
         .header(http::header::SERVER, SERVER_NAME)
         .body(Body::from(format!(
             "{} {}网速 {} {:?} {} {} {}  {:?} {}",
-            PART0, local_ip().unwrap_or("0.0.0.0".to_string()), PART1, scales, PART2, interval, PART3, series_up, PART4
+            PART0, hostname, PART1, scales, PART2, interval, PART3, series_up, PART4
         )))
         .unwrap()
 }

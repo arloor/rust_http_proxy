@@ -64,6 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let web_content_path: &'static String = Box::leak(Box::new(env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()))); //默认为工作目录下
     let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("true".to_string());
     let over_tls = "true" == env::var("over_tls").unwrap_or("false".to_string());
+    let hostname: &'static String = Box::leak(Box::new(env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string()))));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
@@ -89,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let client_socket_addr = conn.remote_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, client_socket_addr, holder.get_buffer().clone())
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, holder.get_buffer().clone())
                     }))
                 }
             }));
@@ -114,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let client_socket_addr = conn.remote_addr();
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, client_socket_addr, holder.get_buffer().clone())
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, holder.get_buffer().clone())
                     }))
                 }
             }));
@@ -132,7 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, client_socket_addr: SocketAddr, buffer: Arc<RwLock<VecDeque<Point>>>) -> Result<Response<Body>, hyper::Error> {
+async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String, ask_for_auth: bool, web_content_path: &String, hostname: &String, client_socket_addr: SocketAddr, buffer: Arc<RwLock<VecDeque<Point>>>) -> Result<Response<Body>, hyper::Error> {
     if Method::CONNECT == req.method() {
         info!("{:>21?} {:^7} {:?}",client_socket_addr, req.method().as_str(),req.uri());
     } else {
@@ -140,7 +141,7 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
             let raw_path = req.uri().path();
             let path = percent_decode_str(raw_path).decode_utf8().unwrap_or(Cow::from(raw_path));
             let path = path.as_ref();
-            return Ok(web_func::serve_http_request(&req, client_socket_addr, web_content_path, path, buffer).await);
+            return Ok(web_func::serve_http_request(&req, client_socket_addr, web_content_path, hostname, path, buffer).await);
         }
         if let Some(host) = req.uri().host() {
             let host = host.to_string();
