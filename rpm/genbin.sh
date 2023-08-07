@@ -22,7 +22,7 @@ yum install -y ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_
 
 ## 启动
 systemctl daemon-reload
-systemctl start rust_http_proxy
+# systemctl start rust_http_proxy
 systemctl status rust_http_proxy --no-page
 
 cd /var/rust_http_proxy && {
