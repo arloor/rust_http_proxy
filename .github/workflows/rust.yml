@@ -35,6 +35,3 @@ jobs:
         image: rust_http_proxy
         tags: latest ${{ github.sha }}
         registry: docker.io/arloor
-
-    - name: url
-      run: echo "Image pushed to ${{ steps.push-to-quay.outputs.registry-paths }}"
