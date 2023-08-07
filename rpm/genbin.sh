@@ -12,6 +12,7 @@ else
 fi
 rpmbuild -bb /var/rust_http_proxy/rpm/rust_http_proxy.spec
 
+
 ## 安装
 version=0.1
 release=1.all
