@@ -49,13 +49,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_dir = env::var("log_dir").unwrap_or("/tmp".to_string());
     let log_file = env::var("log_file").unwrap_or("proxy.log".to_string());
     init_log(&log_dir, &log_file);
-    info!("some info about this software :\n\
-    #############################################################\n\
-    # Github: https://github.com/arloor/rust_http_proxy         #\n\
-    # Usage: a http proxy on top of Rust                        #\n\
-    # Author: arloor <admin@arloor.com>                         #\n\
-    # Website: https://www.arloor.com/                          #\n\
-    #############################################################\
+    info!("A http proxy based on Rust\n\
+    Github: https://github.com/arloor/rust_http_proxy\n\
+    Author: arloor <admin@arloor.com>\
     ");
     let port = env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
@@ -73,6 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .http1_preserve_header_case(true)
         .build_http()));
     info!("rust_http_proxy is starting!");
+    info!("hostname seems to be {}",hostname);
     info!("serve web content of {}",web_content_path);
     let mut stream = signal(SignalKind::terminate())?;
     let holder: &'static Monitor = Box::leak(Box::new(Monitor::new()));

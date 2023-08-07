@@ -14,7 +14,7 @@ use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-const SERVER_NAME: &str = "A Rust Web Server";
+const SERVER_NAME: &str = "arloor's creation";
 
 pub async fn serve_http_request(
     req: &Request<Body>,
