@@ -34,7 +34,7 @@ use tokio::sync::RwLock;
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
-const TRUE = "true";
+const TRUE: &str = "true";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
