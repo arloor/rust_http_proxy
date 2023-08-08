@@ -1,14 +1,12 @@
 #![deny(warnings)]
 
 mod logx;
-
-use std::borrow::Cow;
-
 mod tls_helper;
 mod web_func;
 mod acceptor;
 mod monitor;
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::convert::Infallible;
 use std::{env, io};
@@ -16,43 +14,29 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use monitor::Monitor;
 use monitor::Point;
-
-
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Client, http, Method, Request, Response, Server, Version};
 use hyper::http::HeaderValue;
-
 use hyper::server::conn::{AddrIncoming, AddrStream};
 use log::{debug, error, info, warn};
 use std::time::Duration;
 use hyper::client::HttpConnector;
 use percent_encoding::percent_decode_str;
 use rand::Rng;
-
 use tokio::net::TcpStream;
 use tokio::signal::unix::{signal, SignalKind};
 use crate::acceptor::TlsAcceptor;
 use crate::logx::init_log;
+use std::net::UdpSocket;
+use std::process::exit;
+use tokio::sync::RwLock;
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
-// To try this example:
-// 1. cargo run --example http_proxy
-// 2. config http_proxy in command line
-//    $ export http_proxy=http://127.0.0.1:8100
-//    $ export https_proxy=http://127.0.0.1:8100
-// 3. send requests
-//    $ curl -i https://www.some_domain.com/
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let log_dir = env::var("log_dir").unwrap_or("/tmp".to_string());
-    let log_file = env::var("log_file").unwrap_or("proxy.log".to_string());
-    init_log(&log_dir, &log_file);
-    info!("A http proxy based on Rust\n\
-    Github: https://github.com/arloor/rust_http_proxy\n\
-    Author: arloor <admin@arloor.com>\
-    ");
+    config_log();
     let port = env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444);
     let cert = env::var("cert").unwrap_or("cert.pem".to_string());
     let raw_key = env::var("raw_key").unwrap_or(env::var("key").unwrap_or("privkey.pem".to_string()));
@@ -72,10 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("hostname seems to be {}",hostname);
     info!("serve web content of {}",web_content_path);
     let mut stream = signal(SignalKind::terminate())?;
-    let holder: &'static Monitor = Box::leak(Box::new(Monitor::new()));
-    holder.start();
+    let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
+    monitor.start();
     if over_tls {
-        // This uses a filter to handle errors with connecting
         let incoming = AddrIncoming::bind(&addr)?;
         let acceptor = TlsAcceptor::new(raw_key, cert, incoming)?;
         let server = Server::builder(acceptor)
@@ -87,14 +70,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let client_socket_addr = conn.remote_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, holder.get_buffer().clone())
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, monitor.get_buffer().clone())
                     }))
                 }
             }));
         info!("Listening on https://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
         let graceful = server.with_graceful_shutdown(async move {
             stream.recv().await;
-            info!("graceful shutdowning");
+            info!("rust_http_proxy is shutdowning");
             exit(0); // 并不优雅关闭
         });
         if let Err(e) = graceful.await {
@@ -112,14 +95,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let client_socket_addr = conn.remote_addr();
                 async move {
                     Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, holder.get_buffer().clone())
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, monitor.get_buffer().clone())
                     }))
                 }
             }));
         info!("Listening on http://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
         let graceful = server.with_graceful_shutdown(async move {
             stream.recv().await;
-            info!("graceful shutdowning");
+            info!("rust_http_proxy is shutdowning");
             exit(0); // 并不优雅关闭
         });
         if let Err(e) = graceful.await {
@@ -127,6 +110,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Ok(())
     }
+}
+
+fn config_log() {
+    let log_dir = env::var("log_dir").unwrap_or("/tmp".to_string());
+    let log_file = env::var("log_file").unwrap_or("proxy.log".to_string());
+    init_log(&log_dir, &log_file);
+    info!("log is output to {}/{}",&log_dir,&log_file);
 }
 
 
@@ -256,11 +246,6 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
     Ok(())
 }
-
-
-use std::net::UdpSocket;
-use std::process::exit;
-use tokio::sync::RwLock;
 
 pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
