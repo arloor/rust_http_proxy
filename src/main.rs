@@ -34,6 +34,8 @@ use tokio::sync::RwLock;
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
+const TRUE = "true";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config_log();
@@ -42,8 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raw_key = env::var("raw_key").unwrap_or(env::var("key").unwrap_or("privkey.pem".to_string()));
     let basic_auth: &'static String = Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string())));
     let web_content_path: &'static String = Box::leak(Box::new(env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()))); //默认为工作目录下
-    let ask_for_auth = "true" == env::var("ask_for_auth").unwrap_or("true".to_string());
-    let over_tls = "true" == env::var("over_tls").unwrap_or("false".to_string());
+    let ask_for_auth = TRUE == env::var("ask_for_auth").unwrap_or("true".to_string());
+    let over_tls = TRUE == env::var("over_tls").unwrap_or("false".to_string());
     let hostname: &'static String = Box::leak(Box::new(env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string()))));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
