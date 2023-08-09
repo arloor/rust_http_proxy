@@ -26,3 +26,12 @@ jobs:
         podman login docker.io -u arloor -p ${{ env.REGISTRY_PASSWORD }}
         podman push docker.io/arloor/rust_http_proxy:${{ github.sha }}
         podman push docker.io/arloor/rust_http_proxy:latest
+    - name: install ssh keys
+      run: |
+        install -m 600 -D /dev/null ~/.ssh/id_rsa
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.SSH_HOST }} > ~/.ssh/known_hosts
+    - name: connect and pull
+      run: ssh root@${{ secrets.SSH_HOST }} "kubectl set image ds proxy proxy=docker.io/arloor/rust_http_proxy:${{ github.sha }}"
+    - name: cleanup
+      run: rm -rf ~/.ssh
