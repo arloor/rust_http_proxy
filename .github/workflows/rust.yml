@@ -19,9 +19,20 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+    - name: setup-musl
+      run: |
+        cd /var/
+        wget http://musl.libc.org/releases/musl-1.2.3.tar.gz -O musl-1.2.3.tar.gz
+        tar -zxvf musl-1.2.3.tar.gz
+        cd musl-1.2.3
+        ./configure
+        make -j 4
+        make install
+        ln -fs /usr/local/musl/bin/musl-gcc /usr/local/bin/musl-gcc
+        rustup target add x86_64-unknown-linux-musl
     - name: build-and-push
       run: |
-        cargo build --release
+        cargo install --path . --target x86_64-unknown-linux-musl
         podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy:latest
         podman login docker.io -u arloor -p ${{ env.REGISTRY_PASSWORD }}
         podman push docker.io/arloor/rust_http_proxy:${{ github.sha }}
