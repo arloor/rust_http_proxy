@@ -22,7 +22,7 @@ jobs:
     - name: setup-musl
       run: |
         wget http://musl.libc.org/releases/musl-1.2.3.tar.gz -O musl-1.2.3.tar.gz
-        tar -zxvf musl-1.2.3.tar.gz
+        tar -zxf musl-1.2.3.tar.gz
         cd musl-1.2.3
         ./configure --prefix=$HOME
         make -j 4
