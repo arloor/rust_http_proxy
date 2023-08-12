@@ -72,7 +72,7 @@ impl Monitor {
                                 let mut buffer = to_move.write().await;
                                 buffer.push_back(Point::new(
                                     datetime.format("%H:%M:%S").to_string(),
-                                    (new - last) * 8,
+                                    new - last,
                                 ));
                                 if buffer.len() > MAX_NUM {
                                     buffer.pop_front();

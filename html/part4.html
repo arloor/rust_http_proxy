@@ -7,10 +7,10 @@
 "label": {
 formatter: function (value) {
 if (value.value <= 0) {
-value = '0b/s';
+value = '0B';
 } else {
 var k = 1024;
-var sizes = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s', 'Pb/s', 'Eb/s', 'Zb/s', 'Yb/s'];
+var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
 //这里是取自然对数，也就是log（k）（value），求出以k为底的多少次方是value
 var c = Math.floor(Math.log(value.value) / Math.log(k));
 value = (value.value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
@@ -30,10 +30,10 @@ symbolSize: [70, 30],
 "label": {
 formatter: function (value) {
 if (value.value <= 0) {
-value = '0b/s';
+value = '0B';
 } else {
 var k = 1024;
-var sizes = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s', 'Pb/s', 'Eb/s', 'Zb/s', 'Yb/s'];
+var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
 //这里是取自然对数，也就是log（k）（value），求出以k为底的多少次方是value
 var c = Math.floor(Math.log(value.value) / Math.log(k));
 value = (value.value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];

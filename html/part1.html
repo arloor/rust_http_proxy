@@ -6,7 +6,7 @@
 <div id="main" style="width: 100%;height: 100vh;"></div>
 <script type="text/javascript">
     // 基于准备好的dom，初始化echarts实例
-    var myChart = echarts.init(document.getElementb/syId('main'));
+    var myChart = echarts.init(document.getElementById('main'));
     // 指定图表的配置项和数据
     var option = {
         title: {
@@ -17,10 +17,10 @@
             formatter: function (value) {
                 //这里的value[0].value就是我需要每次显示在图上的数据
                 if (value[0].value <= 0) {
-                    value[0].value = '0b/s';
+                    value[0].value = '0B';
                 } else {
                     var k = 1024;
-                    var sizes = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s', 'Pb/s', 'Eb/s', 'Zb/s', 'Yb/s'];
+                    var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
                     //这里是取自然对数，也就是log（k）（value[0].value），求出以k为底的多少次方是value[0].value
                     var c = Math.floor(Math.log(value[0].value) / Math.log(k));
                     value[0].value = (value[0].value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
