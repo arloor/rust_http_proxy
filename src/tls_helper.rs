@@ -10,8 +10,8 @@ type Error = Box<dyn std::error::Error>;
 
 pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Error> {
     use std::io::{self, BufReader};
-    let key_file = File::open(key).map_err(|_| <&str as Into<Error>>::into("open private key failed"))?;
-    let cert_file = File::open(cert).map_err(|_| <&str as Into<Error>>::into("open cert failed"))?;
+    let key_file = File::open(key)?;
+    let cert_file = File::open(cert)?;
     let certs = rustls_pemfile::certs(&mut BufReader::new(cert_file))
         .map(|mut certs| certs.drain(..).map(Certificate).collect())?;
     let key_option = rustls_pemfile::read_one(&mut BufReader::new(key_file))?;
