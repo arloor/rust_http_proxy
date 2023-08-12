@@ -17,10 +17,10 @@
             formatter: function (value) {
                 //这里的value[0].value就是我需要每次显示在图上的数据
                 if (value[0].value <= 0) {
-                    value[0].value = '0B';
+                    value[0].value = '0b/s';
                 } else {
                     var k = 1024;
-                    var sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+                    var sizes = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s', 'Pb/s', 'Eb/s', 'Zb/s', 'Yb/s'];
                     //这里是取自然对数，也就是log（k）（value[0].value），求出以k为底的多少次方是value[0].value
                     var c = Math.floor(Math.log(value[0].value) / Math.log(k));
                     value[0].value = (value[0].value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
