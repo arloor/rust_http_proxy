@@ -62,6 +62,9 @@ impl Monitor {
                                     if array.get(0).unwrap().starts_with("cni0") {
                                         continue;
                                     }
+                                    if array.get(0).unwrap().starts_with("utun") {
+                                        continue;
+                                    }
                                     new = new
                                         + array.get(9).unwrap().parse::<u64>().unwrap_or(last);
                                 }
