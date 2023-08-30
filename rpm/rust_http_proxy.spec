@@ -15,24 +15,14 @@ BuildRequires:  git
 Rust Http Proxy which is based on hyper、 Rustls and tokio.
 
 %prep
-if [ -d /tmp/rust_http_proxy ]; then
-        cd /tmp/rust_http_proxy;
-          git pull --ff-only || {
-            echo "git pull 失败，重新clone"
-            cd /tmp
-            rm -rf /tmp/rust_http_proxy
-            git clone %{URL} /tmp/rust_http_proxy
-          }
-else
-        git clone %{URL} /tmp/rust_http_proxy
-fi
+echo "preparing"
 
 %build
-cd /tmp/rust_http_proxy
+cd /var/rust_http_proxy
 cargo install --path . --target x86_64-unknown-linux-musl
 
 %install
-cd /tmp/rust_http_proxy
+cd /var/rust_http_proxy
 mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/lib/systemd/system
 mkdir -p %{buildroot}/etc/rust_http_proxy
