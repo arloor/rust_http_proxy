@@ -5,10 +5,11 @@
 相比 `hyper`的[正向代理example](https://github.com/hyperium/hyper/blob/0.14.x/examples/http_proxy.rs)增加了以下特性：
 
 1. proxy over tls特性( `over_tls=true` )：使用tls来对代理流量进行加密以访问国际互联网。
-2. 支持Proxy-Authorization鉴权。
-3. 开启Proxy-Authorization鉴权时，结合 `ask_for_auth=false` 配置防止嗅探。
-4. 删除代理相关的header，以保持高匿。
-5. 类Nginx的静态资源托管，可以搭建静态网站。
+2. 每天定时加载tls证书，acme证书过期重新签发时不需要重启服务。
+3. 支持Proxy-Authorization鉴权。
+4. 开启Proxy-Authorization鉴权时，结合 `ask_for_auth=false` 配置防止嗅探。
+5. 删除代理相关的header，以保持高匿。
+6. 类Nginx的静态资源托管，可以搭建静态网站。
 
 提及的参数详见[高级配置](#高级配置)
 
@@ -87,7 +88,6 @@ chmod +x /usr/bin/rust_http_proxy
 /usr/bin/rust_http_proxy
 ```
 
-
 ## 客户端
 
 可以使用clash作为客户端，见：
@@ -105,7 +105,6 @@ chmod +x /usr/bin/rust_http_proxy
 - 代理服务器收到http header中有Proxy-Authentication请求头，需要去掉
 
 本代理能去除以上特征。下面是使用tcpdump测试的结果，分别展示代理服务器收到的http请求和nginx web服务器收到的http请求已验证去除以上特征。
-
 
 代理服务器收到的消息：
 
