@@ -196,6 +196,7 @@ async fn proxy(client: &HttpClient, mut req: Request<Body>, basic_auth: &String,
             let mut response = Response::new(Body::empty());
             // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
             let count = rand::thread_rng().gen_range(1..150);
+            info!("hijack {} headers",count);
             for _ in 0..count {
                 response.headers_mut().append(http::header::SERVER, HeaderValue::from_static("rust_http_proxy"));
             }
