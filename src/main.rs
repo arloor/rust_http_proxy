@@ -55,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .http1_preserve_header_case(true)
         .build_http()));
     info!("rust_http_proxy is starting!");
+    info!("basic auth is {}",basic_auth);
     info!("hostname seems to be {}",hostname);
     info!("serve web content of {}",web_content_path);
     let mut stream = signal(SignalKind::terminate())?;
