@@ -1,12 +1,15 @@
-use flexi_logger::{Duplicate, Criterion, Naming, Cleanup, Logger, FileSpec, DeferredNow};
+use flexi_logger::{Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, Logger, Naming};
 use log::Record;
 
 pub fn init_log(log_dir: &str, log_file: &str) {
-    Logger::try_with_env_or_str("info").unwrap()
-        .log_to_file(FileSpec::default()
-            .directory(log_dir)
-            .basename(log_file)
-            .suffix(""))
+    Logger::try_with_env_or_str("info")
+        .unwrap()
+        .log_to_file(
+            FileSpec::default()
+                .directory(log_dir)
+                .basename(log_file)
+                .suffix(""),
+        )
         .duplicate_to_stdout(Duplicate::All)
         .rotate(
             Criterion::Size(10_000_000), // 例如, 每 10MB 切割

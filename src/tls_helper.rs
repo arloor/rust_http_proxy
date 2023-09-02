@@ -1,21 +1,21 @@
+use rustls_pemfile::Item;
 use std::fs::File;
 use std::sync::Arc;
-use rustls_pemfile::Item;
 use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
-
-
 
 // wrap error
 type Error = Box<dyn std::error::Error>;
 
 pub fn rust_tls_acceptor(key: &String, cert: &String) -> Result<tokio_rustls::TlsAcceptor, Error> {
-    return Ok(tls_config(key,cert)?.into());
+    return Ok(tls_config(key, cert)?.into());
 }
 
 pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Error> {
     use std::io::{self, BufReader};
-    let key_file = File::open(key).map_err(|_| <&str as Into<Error>>::into("open private key failed"))?;
-    let cert_file = File::open(cert).map_err(|_| <&str as Into<Error>>::into("open cert failed"))?;
+    let key_file =
+        File::open(key).map_err(|_| <&str as Into<Error>>::into("open private key failed"))?;
+    let cert_file =
+        File::open(cert).map_err(|_| <&str as Into<Error>>::into("open cert failed"))?;
     let certs = rustls_pemfile::certs(&mut BufReader::new(cert_file))
         .map(|mut certs| certs.drain(..).map(Certificate).collect())?;
     let key_option = rustls_pemfile::read_one(&mut BufReader::new(key_file))?;
@@ -25,12 +25,17 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Erro
             Item::ECKey(bytes) => PrivateKey(bytes),
             Item::RSAKey(bytes) => PrivateKey(bytes),
             Item::X509Certificate(_) => return Err("cert in private key file".into()),
-            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "error read private key".to_string()).into()),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "error read private key".to_string(),
+                )
+                .into())
+            }
         }
     } else {
         return Err("can not find any pem in key file".into());
     };
-
 
     match ServerConfig::builder()
         .with_safe_defaults()
@@ -42,9 +47,6 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Erro
             config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
             Ok(Arc::new(config))
         }
-        Err(e) => {
-            Err(e.into())
-        }
+        Err(e) => Err(e.into()),
     }
 }
-
