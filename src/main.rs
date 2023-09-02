@@ -13,7 +13,7 @@ use hyper::server::conn::AddrIncoming;
 use hyper::server::conn::Http;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
-use hyper::{http, Body, Client, Method, Request, Response, Version};
+use hyper::{http, Body, Client, Method, Request, Response, Version, Error};
 use log::{debug, info, warn};
 use monitor::Monitor;
 use monitor::Point;
@@ -25,6 +25,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{env, io};
+use std::io::ErrorKind;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -107,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }))
                                     .with_upgrades();
                                 if let Err(err) = connection.await {
-                                    warn!("Application error: {}", err);
+                                     handle_hyper_error(client_socket_addr,err);
                                 }
                             });
                         }
@@ -154,10 +155,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .with_upgrades();
                 if let Err(http_err) = connection.await {
-                    warn!("Error while serving HTTP connection: {}", http_err);
+                    handle_hyper_error(client_socket_addr, http_err);
                 }
             });
         }
+    }
+}
+
+fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Error) {
+    if http_err.is_user() {
+        warn!("{} from {}",http_err,client_socket_addr);
+    } else {
+        debug!("hyper error: {}",http_err);
     }
 }
 
@@ -177,7 +186,7 @@ async fn proxy(
     hostname: &String,
     client_socket_addr: SocketAddr,
     buffer: Arc<RwLock<VecDeque<Point>>>,
-) -> Result<Response<Body>, hyper::Error> {
+) -> Result<Response<Body>, io::Error> {
     if Method::CONNECT == req.method() {
         info!(
             "{:>21?} {:^7} {:?}",
@@ -192,6 +201,9 @@ async fn proxy(
                 .decode_utf8()
                 .unwrap_or(Cow::from(raw_path));
             let path = path.as_ref();
+            if basic_auth.len() != 0 && ask_for_auth { // 存在嗅探风险时，不伪装成http服务
+                return Err(io::Error::new(ErrorKind::PermissionDenied, "reject http GET/POST when ask_for_auth and basic_auth not empty"));
+            }
             return Ok(web_func::serve_http_request(
                 &req,
                 client_socket_addr,
@@ -243,7 +255,7 @@ async fn proxy(
             return if ask_for_auth {
                 Ok(build_proxy_authenticate_resp())
             } else {
-                Ok(build_500_resp())
+                Err(io::Error::new(ErrorKind::PermissionDenied, "close connection because of wrong basic auth"))
             };
         }
     }
@@ -296,7 +308,7 @@ async fn proxy(
             Ok(resp)
         }
     } else {
-        client.request(req).await
+        client.request(req).await.map_err(|e| io::Error::new(ErrorKind::Other, e))
     }
 }
 
@@ -310,7 +322,7 @@ fn build_proxy_authenticate_resp() -> Response<Body> {
     resp
 }
 
-fn build_500_resp() -> Response<Body> {
+fn _build_500_resp() -> Response<Body> {
     let mut resp = Response::new(Body::from("Internal Server Error"));
     *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
     resp
