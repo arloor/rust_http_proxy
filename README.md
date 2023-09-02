@@ -4,7 +4,7 @@
 
 相比 `hyper`的[正向代理example](https://github.com/hyperium/hyper/blob/0.14.x/examples/http_proxy.rs)增加了以下特性：
 
-1. proxy over tls特性( `over_tls=true` )：使用tls来对代理流量进行加密以访问国际互联网。
+1. proxy over tls特性( `over_tls=true` )：使用tls来对代理流量进行加密。
 2. 每天定时加载tls证书，acme证书过期重新签发时不需要重启服务。
 3. 支持Proxy-Authorization鉴权。
 4. 开启Proxy-Authorization鉴权时，结合 `ask_for_auth=false` 配置防止嗅探。
