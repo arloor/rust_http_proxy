@@ -2,7 +2,7 @@ name: Rust
 
 on:
   push:
-    branches: [ "master","feature/low-level" ]
+    branches: [ "master","feature/low-level","feature/low-level-timed" ]
   pull_request:
     branches: [ "master" ]
 
