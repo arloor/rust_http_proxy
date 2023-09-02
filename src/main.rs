@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 type HttpClient = Client<hyper::client::HttpConnector>;
 
 const TRUE: &str = "true";
-const REFRESH_TIME: u64 = 60 * 60;
+const REFRESH_TIME: u64 = 24 * 60 * 60;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
