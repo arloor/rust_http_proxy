@@ -8,6 +8,10 @@ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
 // wrap error
 type Error = Box<dyn std::error::Error>;
 
+pub fn rust_tls_acceptor(key: &String, cert: &String) -> Result<tokio_rustls::TlsAcceptor, Error> {
+    return Ok(tls_config(key,cert)?.into());
+}
+
 pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Error> {
     use std::io::{self, BufReader};
     let key_file = File::open(key).map_err(|_| <&str as Into<Error>>::into("open private key failed"))?;

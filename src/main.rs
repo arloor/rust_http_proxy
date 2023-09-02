@@ -3,34 +3,33 @@
 mod logx;
 mod tls_helper;
 mod web_func;
-mod acceptor;
 mod monitor;
 
 use std::borrow::Cow;
 use std::sync::Arc;
-use std::convert::Infallible;
 use std::{env, io};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use monitor::Monitor;
 use monitor::Point;
-use hyper::service::{make_service_fn, service_fn};
+use crate::tls_helper::rust_tls_acceptor;
+use futures_util::StreamExt;
+
+use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Client, http, Method, Request, Response, Server, Version};
+use hyper::{Body, Client, http, Method, Request, Response, Version};
 use hyper::http::HeaderValue;
-use hyper::server::conn::{AddrIncoming, AddrStream};
-use log::{debug, error, info, warn};
+
+use hyper::server::conn::{AddrIncoming};
+use log::{debug, info, warn};
 use std::time::Duration;
 use hyper::client::HttpConnector;
 use percent_encoding::percent_decode_str;
 use rand::Rng;
 use tokio::net::TcpStream;
-use tokio::signal::unix::{signal, SignalKind};
-use crate::acceptor::TlsAcceptor;
 use crate::logx::init_log;
-use std::net::UdpSocket;
-use std::process::exit;
-use tokio::sync::RwLock;
+use tokio::net::TcpListener;
+use hyper::{server::conn::Http};
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
@@ -58,60 +57,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("basic auth is {}",basic_auth);
     info!("hostname seems to be {}",hostname);
     info!("serve web content of {}",web_content_path);
-    let mut stream = signal(SignalKind::terminate())?;
-    let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
-    monitor.start();
+    let holder: &'static Monitor = Box::leak(Box::new(Monitor::new()));
+    holder.start();
     if over_tls {
-        let incoming = AddrIncoming::bind(&addr)?;
-        let acceptor = TlsAcceptor::new(raw_key, cert, incoming)?;
-        let server = Server::builder(acceptor)
-            .http1_title_case_headers(true)
-            .http1_header_read_timeout(Duration::from_secs(30))
-            .http2_keep_alive_interval(Duration::from_secs(15))
-            .http2_keep_alive_timeout(Duration::from_secs(15))
-            .serve(make_service_fn(move |conn: &acceptor::TlsStream| {
-                let client_socket_addr = conn.remote_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
-                async move {
-                    Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, monitor.get_buffer().clone())
-                    }))
-                }
-            }));
         info!("Listening on https://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
-        let graceful = server.with_graceful_shutdown(async move {
-            stream.recv().await;
-            info!("rust_http_proxy is shutdowning");
-            exit(0); // 并不优雅关闭
-        });
-        if let Err(e) = graceful.await {
-            error!("server exit: {}",e);
-        }
+        let listener = tls_listener::builder(rust_tls_acceptor(&raw_key, &cert)?)
+            .max_handshakes(10)
+            .listen(AddrIncoming::bind(&addr).unwrap());
+        let http = Http::new();
+        listener
+            .for_each(|r| async {
+                match r {
+                    Ok(conn) => {
+                        let mut http = http.clone();
+                        tokio::spawn(async move {
+                            let client_socket_addr = conn.get_ref().0.remote_addr();
+                            let connection = http
+                                .http1_title_case_headers(true)
+                                .http1_header_read_timeout(Duration::from_secs(30))
+                                .http2_keep_alive_interval(Duration::from_secs(15))
+                                .http2_keep_alive_timeout(Duration::from_secs(15))
+                                .serve_connection(conn, service_fn(move |req| {
+                                    proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, holder.get_buffer().clone())
+                                }))
+                                .with_upgrades();
+                            if let Err(err) = connection.await {
+                                warn!("Application error: {}", err);
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        warn!("Error accepting connection: {}", err);
+                    }
+                }
+            })
+            .await;
         Ok(())
     } else {
-        let server = Server::bind(&addr)
-            .http1_preserve_header_case(true)
-            .http1_title_case_headers(true)
-            .http1_header_read_timeout(Duration::from_secs(30))
-            .http2_keep_alive_interval(Duration::from_secs(15))
-            .http2_keep_alive_timeout(Duration::from_secs(15))
-            .serve(make_service_fn(move |conn: &AddrStream| {
-                let client_socket_addr = conn.remote_addr();
-                async move {
-                    Ok::<_, Infallible>(service_fn(move |req| {
-                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, monitor.get_buffer().clone())
-                    }))
-                }
-            }));
         info!("Listening on http://{}:{}",local_ip().unwrap_or("0.0.0.0".to_string()), addr.port());
-        let graceful = server.with_graceful_shutdown(async move {
-            stream.recv().await;
-            info!("rust_http_proxy is shutdowning");
-            exit(0); // 并不优雅关闭
-        });
-        if let Err(e) = graceful.await {
-            error!("server exit: {}",e);
+        let tcp_listener = TcpListener::bind(addr).await?;
+        loop {
+            let (tcp_stream, _) = tcp_listener.accept().await?;
+            let client_socket_addr = tcp_stream.peer_addr()?;
+            tokio::task::spawn(async move {
+                let connection = Http::new()
+                    .http1_only(true)
+                    .http1_keep_alive(true)
+                    .serve_connection(tcp_stream, service_fn(move |req| {
+                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, holder.get_buffer().clone())
+                    }))
+                    .with_upgrades();
+                if let Err(http_err) = connection.await {
+                    warn!("Error while serving HTTP connection: {}", http_err);
+                }
+            });
         }
-        Ok(())
     }
 }
 
@@ -249,6 +249,10 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
     Ok(())
 }
+
+
+use std::net::UdpSocket;
+use tokio::sync::RwLock;
 
 pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
