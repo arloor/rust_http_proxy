@@ -92,7 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 last_refresh_time = now;
                                 if let Ok(new_acceptor)=rust_tls_acceptor(&raw_key, &cert){
                                     info!("Rotating certificate triggered...");
-                                    tx.send(new_acceptor).await.ok();
+                                    tx.try_send(new_acceptor).ok(); // 防止阻塞
+                                    // tx.send(new_acceptor).await.ok();
                                 }
                             }
                             let mut http = http.clone();
