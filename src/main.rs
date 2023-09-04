@@ -68,8 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("basic auth is {}", basic_auth);
     info!("hostname seems to be {}", hostname);
     info!("serve web content of {}", web_content_path);
-    let holder: &'static Monitor = Box::leak(Box::new(Monitor::new()));
-    holder.start();
+    let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
+    monitor.start();
     if over_tls {
         info!(
             "Listening on https://{}:{}",
@@ -105,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .http2_keep_alive_interval(Duration::from_secs(15))
                                     .http2_keep_alive_timeout(Duration::from_secs(15))
                                     .serve_connection(conn, service_fn(move |req| {
-                                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, holder.get_buffer().clone())
+                                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, monitor.get_buffer().clone())
                                     }))
                                     .with_upgrades();
                                 if let Err(err) = connection.await {
@@ -150,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 web_content_path,
                                 hostname,
                                 client_socket_addr,
-                                holder.get_buffer().clone(),
+                                monitor.get_buffer().clone(),
                             )
                         }),
                     )
