@@ -261,11 +261,6 @@ async fn proxy(
         }
     }
 
-    // 删除代理
-    req.headers_mut()
-        .remove(http::header::PROXY_AUTHORIZATION.to_string());
-    req.headers_mut().remove("Proxy-Connection");
-
     if Method::CONNECT == req.method() {
         // Received an HTTP request like:
         // ```
@@ -309,6 +304,10 @@ async fn proxy(
             Ok(resp)
         }
     } else {
+        // 删除代理特有的请求头
+        req.headers_mut()
+            .remove(http::header::PROXY_AUTHORIZATION.to_string());
+        req.headers_mut().remove("Proxy-Connection");
         client.request(req).await.map_err(|e| io::Error::new(ErrorKind::Other, e))
     }
 }
