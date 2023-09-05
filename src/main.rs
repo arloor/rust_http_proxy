@@ -64,10 +64,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .http1_preserve_header_case(true)
             .build_http(),
     ));
-    info!("rust_http_proxy is starting!");
-    info!("basic auth is {}", basic_auth);
     info!("hostname seems to be {}", hostname);
-    info!("serve web content of {}", web_content_path);
+    if basic_auth.len() != 0 && ask_for_auth {
+        warn!("do not serve web content to avoid being detected!");
+    } else {
+        info!("serve web content of \"{}\"", web_content_path);
+    }
+    info!("basic auth is \"{}\"", basic_auth);
+    if basic_auth.contains("\"") || basic_auth.contains("\'"){
+        warn!("basic_auth contains quotation marks, please check if it is a mistake!")
+    }
     let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
     monitor.start();
     if over_tls {
