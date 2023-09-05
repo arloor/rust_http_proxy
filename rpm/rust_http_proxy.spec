@@ -56,7 +56,7 @@ install  -m755 rpm/env %{buildroot}/etc/rust_http_proxy/env
 }
 echo "创建相关命令：/usr/local/bin/mo /usr/local/bin/lo"
 cat > /usr/local/bin/mo <<\EOF
-top -p `ps -ef|grep rust_http_proxy|grep -v grep|head -n 1|awk '{print $2}'`
+top -p `ps -ef|grep rust_http_proxy|grep -v grep|awk '{print $2}'|paste -sd ","`
 EOF
 chmod +x /usr/local/bin/mo
 source /etc/rust_http_proxy/env
