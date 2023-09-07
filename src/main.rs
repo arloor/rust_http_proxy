@@ -71,6 +71,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         warn!("do not serve web content to avoid being detected!");
     } else {
         info!("serve web content of \"{}\"", web_content_path);
+        if refer.len() != 0 {
+            info!("Referer header must contain \"{}\"",refer);
+        }
     }
     info!("basic auth is \"{}\"", basic_auth);
     if basic_auth.contains("\"") || basic_auth.contains("\'") {
@@ -219,7 +222,8 @@ async fn proxy(
                 if let Some(req_refer) = req.headers().get(REFERER) {
                     if let Some(req_refer_value) = req_refer.to_str().ok() {
                         if !req_refer_value.contains(refer) {
-                            return Err(io::Error::new(ErrorKind::PermissionDenied, format!("wrong Referer Header \"{}\"",req_refer_value)));
+                            warn!("wrong Referer Header \"{}\" from {}",req_refer_value,client_socket_addr);
+                            return Ok(_build_500_resp());
                         }
                     }
                 }
