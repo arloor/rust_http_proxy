@@ -29,6 +29,8 @@ use std::io::ErrorKind;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use std::net::UdpSocket;
+use tokio::sync::RwLock;
 
 type HttpClient = Client<hyper::client::HttpConnector>;
 
@@ -72,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         info!("serve web content of \"{}\"", web_content_path);
         if refer.len() != 0 {
-            info!("Referer header must contain \"{}\"",refer);
+            info!("Referer header to images must contain \"{}\"",refer);
         }
     }
     info!("basic auth is \"{}\"", basic_auth);
@@ -218,20 +220,11 @@ async fn proxy(
             if basic_auth.len() != 0 && ask_for_auth { // 存在嗅探风险时，不伪装成http服务
                 return Err(io::Error::new(ErrorKind::PermissionDenied, "reject http GET/POST when ask_for_auth and basic_auth not empty"));
             }
-            if refer != "" {
-                if let Some(req_refer) = req.headers().get(REFERER) {
-                    if let Some(req_refer_value) = req_refer.to_str().ok() {
-                        if !req_refer_value.contains(refer) {
-                            warn!("wrong Referer Header \"{}\" from {}",req_refer_value,client_socket_addr);
-                            return Ok(_build_500_resp());
-                        }
-                    }
-                }
-            }
             return Ok(web_func::serve_http_request(
                 &req,
                 client_socket_addr,
                 web_content_path,
+                refer,
                 hostname,
                 path,
                 buffer,
@@ -373,10 +366,6 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 
     Ok(())
 }
-
-use std::net::UdpSocket;
-use hyper::header::REFERER;
-use tokio::sync::RwLock;
 
 pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;

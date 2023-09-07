@@ -2,7 +2,7 @@ use crate::monitor::Point;
 use httpdate::fmt_http_date;
 use hyper::http::HeaderValue;
 use hyper::{http, Body, Method, Request, Response, StatusCode};
-use log::info;
+use log::{info, warn};
 use mime_guess::from_path;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -10,9 +10,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::SystemTime;
+use hyper::header::REFERER;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::codec::{BytesCodec, FramedRead};
+use crate::_build_500_resp;
 
 const SERVER_NAME: &str = "arloor's creation";
 
@@ -20,10 +22,23 @@ pub async fn serve_http_request(
     req: &Request<Body>,
     client_socket_addr: SocketAddr,
     web_content_path: &String,
+    refer: &String,
     hostname: &String,
     path: &str,
     buffer: Arc<RwLock<VecDeque<Point>>>,
 ) -> Response<Body> {
+    if (path.ends_with("png") || path.ends_with("jpeg") || path.ends_with("jpg"))
+        && refer != ""
+    {
+        if let Some(req_refer) = req.headers().get(REFERER) {
+            if let Some(req_refer_value) = req_refer.to_str().ok() {
+                if !req_refer_value.contains(refer) {
+                    warn!("{} wrong Referer Header \"{}\" from {}",path,req_refer_value,client_socket_addr);
+                    return _build_500_resp();
+                }
+            }
+        }
+    }
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         (_, "/nt") => {
