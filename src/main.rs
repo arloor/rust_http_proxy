@@ -50,6 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let web_content_path: &'static String = Box::leak(Box::new(
         env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()),
     )); //默认为工作目录下
+    let refer: &'static String =
+        Box::leak(Box::new(env::var("refer").unwrap_or("".to_string())));
     let ask_for_auth = TRUE == env::var("ask_for_auth").unwrap_or("true".to_string());
     let over_tls = TRUE == env::var("over_tls").unwrap_or("false".to_string());
     let hostname: &'static String = Box::leak(Box::new(
@@ -71,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("serve web content of \"{}\"", web_content_path);
     }
     info!("basic auth is \"{}\"", basic_auth);
-    if basic_auth.contains("\"") || basic_auth.contains("\'"){
+    if basic_auth.contains("\"") || basic_auth.contains("\'") {
         warn!("basic_auth contains quotation marks, please check if it is a mistake!")
     }
     let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
@@ -111,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .http2_keep_alive_interval(Duration::from_secs(15))
                                     .http2_keep_alive_timeout(Duration::from_secs(15))
                                     .serve_connection(conn, service_fn(move |req| {
-                                        proxy(client, req, basic_auth, ask_for_auth, web_content_path, hostname, client_socket_addr, monitor.get_buffer().clone())
+                                        proxy(client, req, basic_auth, ask_for_auth, web_content_path,refer, hostname, client_socket_addr, monitor.get_buffer().clone())
                                     }))
                                     .with_upgrades();
                                 if let Err(err) = connection.await {
@@ -154,6 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 basic_auth,
                                 ask_for_auth,
                                 web_content_path,
+                                refer,
                                 hostname,
                                 client_socket_addr,
                                 monitor.get_buffer().clone(),
@@ -171,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Error) {
     if http_err.is_user() {
-        warn!("{} from {}",http_err,client_socket_addr);
+        warn!("{}: {}",client_socket_addr,http_err);
     } else {
         debug!("hyper error: {}",http_err);
     }
@@ -190,6 +193,7 @@ async fn proxy(
     basic_auth: &String,
     ask_for_auth: bool,
     web_content_path: &String,
+    refer: &String,
     hostname: &String,
     client_socket_addr: SocketAddr,
     buffer: Arc<RwLock<VecDeque<Point>>>,
@@ -210,6 +214,15 @@ async fn proxy(
             let path = path.as_ref();
             if basic_auth.len() != 0 && ask_for_auth { // 存在嗅探风险时，不伪装成http服务
                 return Err(io::Error::new(ErrorKind::PermissionDenied, "reject http GET/POST when ask_for_auth and basic_auth not empty"));
+            }
+            if refer != "" {
+                if let Some(req_refer) = req.headers().get(REFERER) {
+                    if let Some(req_refer_value) = req_refer.to_str().ok() {
+                        if !req_refer_value.contains(refer) {
+                            return Err(io::Error::new(ErrorKind::PermissionDenied, format!("wrong Referer Header \"{}\"",req_refer_value)));
+                        }
+                    }
+                }
             }
             return Ok(web_func::serve_http_request(
                 &req,
@@ -358,6 +371,7 @@ async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
 }
 
 use std::net::UdpSocket;
+use hyper::header::REFERER;
 use tokio::sync::RwLock;
 
 pub fn local_ip() -> io::Result<String> {
