@@ -29,7 +29,7 @@ pub async fn serve_http_request(
 ) -> Response<Body> {
     if (path.ends_with("png") || path.ends_with("jpeg") || path.ends_with("jpg"))
         && refer != ""
-    {
+    { // 拒绝图片盗链
         if let Some(req_refer) = req.headers().get(REFERER) {
             if let Some(req_refer_value) = req_refer.to_str().ok() {
                 if !req_refer_value.contains(refer) {
