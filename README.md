@@ -43,6 +43,8 @@ export log_dir=/tmp
 export log_file=proxy.log
 # 代替nginx的web服务器功能，展示http网站
 export web_content_path=/usr/share/nginx/html
+# png/jpeg/jpg等图片资源的防盗链配置，要求Request的Referer header要么为空，要么包含下面的值
+export refer=
 
 ```
 
