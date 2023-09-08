@@ -10,6 +10,14 @@
 - tasks.json 配置默认build任务
 - launch.json 配置调试任务
 
-### 调试
+### 快捷键
 
-- F5 开始调试和resume
+| 快捷键 | 作用 |
+| --- | --- |
+| F9 | 创建断点 |
+| F5 | 开始调试和resume |
+| F10 | 单步调试 |
+| F11 | Step in |
+| shift + F11 | Step out |
+| F12 | 查看定义和使用 |
+
