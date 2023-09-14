@@ -25,3 +25,5 @@ yum install -y ~/rpmbuild/RPMS/x86_64/rust_http_proxy-${version}-${release}.x86_
 systemctl daemon-reload
 systemctl start rust_http_proxy
 systemctl status rust_http_proxy --no-page
+
+python update_release.py
