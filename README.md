@@ -65,7 +65,7 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 ```shell
 version=0.1
 release=1.all
-wget https://github.com/arloor/rust_http_proxy/releases/download/v0.6.0/rust_http_proxy-"${version}"-"${release}".x86_64.rpm -O rust_http_proxy-"${version}"-"${release}".x86_64.rpm
+wget https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy-"${version}"-"${release}".x86_64.rpm -O rust_http_proxy-"${version}"-"${release}".x86_64.rpm
 systemctl stop rust_http_proxy
 yum remove -y rust_http_proxy
 # rpm -ivh在安装新版本时会报错文件冲突，原因是他没有进行更新或降级的能力，而yum install可以处理可执行文件的更新或降级
@@ -86,7 +86,7 @@ yum remove -y rust_http_proxy
 ### linux 64位可执行文件
 
 ```shell
-wget https://github.com/arloor/rust_http_proxy/releases/download/v0.6.0/rust_http_proxy -O /tmp/rust_http_proxy.bin
+wget https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy -O /tmp/rust_http_proxy.bin
 mv  /tmp/rust_http_proxy.bin /usr/bin/rust_http_proxy #避免text file is busy的问题
 chmod +x /usr/bin/rust_http_proxy
 /usr/bin/rust_http_proxy
