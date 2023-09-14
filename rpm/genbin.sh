@@ -26,4 +26,4 @@ systemctl daemon-reload
 systemctl start rust_http_proxy
 systemctl status rust_http_proxy --no-page
 
-python update_release.py
+python /var/rust_http_proxy/update_release.py
