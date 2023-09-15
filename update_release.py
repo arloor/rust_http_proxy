@@ -49,7 +49,6 @@ for name in toUploads:
   "https://uploads.github.com/repos/arloor/rust_http_proxy/releases/' + str(releaseId) + '/assets?name=' + name + '" \
   --data-binary "@' + toUploads[name] + '"', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     err = pipe.stderr.read().decode()
-    out = pipe.stdout.read().decode()
-    print("uploading ", name, out)
+    print("uploading ", name)
     if len(err) != 0:
         print(err)
