@@ -32,7 +32,7 @@ impl Monitor {
     //     lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
     //   ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
 
-    pub fn get_buffer(&self) -> Arc<RwLock<VecDeque<Point>>> {
+    pub fn get_data(&self) -> Arc<RwLock<VecDeque<Point>>> {
         return self.buffer.clone();
     }
     pub fn start(&self) {
