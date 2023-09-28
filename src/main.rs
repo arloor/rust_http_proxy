@@ -115,8 +115,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let connection = http
                                     .http1_title_case_headers(true)
                                     .http1_header_read_timeout(Duration::from_secs(30))
-                                    .http2_keep_alive_interval(Duration::from_secs(15))
-                                    .http2_keep_alive_timeout(Duration::from_secs(15))
+                                    // .http2_keep_alive_interval(Duration::from_secs(15))
+                                    // .http2_keep_alive_timeout(Duration::from_secs(15))
                                     .serve_connection(conn, service_fn(move |req| {
                                         proxy(client, req, basic_auth, ask_for_auth, web_content_path,refer, hostname, client_socket_addr, monitor.get_data().clone())
                                     }))
