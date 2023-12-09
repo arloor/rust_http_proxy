@@ -60,8 +60,8 @@ top -p `ps -ef|grep rust_http_proxy|grep -v grep|awk '{print $2}'|paste -sd ","`
 EOF
 chmod +x /usr/local/bin/mo
 source /etc/rust_http_proxy/env
-echo "tail -f -n 50 ${log_dir:-/tmp}/${log_file:-proxy.log}" > /usr/local/bin/lo
-chmod +x /usr/local/bin/lo
+echo "tail -f -n 50 ${log_dir:-/tmp}/${log_file:-proxy.log}" > /usr/local/bin/loss
+chmod +x /usr/local/bin/loss
 
 systemctl daemon-reload
 
