@@ -37,59 +37,43 @@ type HttpClient = Client<hyper::client::HttpConnector>;
 const TRUE: &str = "true";
 const REFRESH_TIME: u64 = 24 * 60 * 60;
 
+pub struct StaticConfig {
+    log_dir: &'static String,
+    log_file: &'static String,
+    port: u16,
+    cert: &'static String,
+    raw_key: &'static String,
+    basic_auth: &'static String,
+    web_content_path: &'static String,
+    refer: &'static String,
+    ask_for_auth: bool,
+    over_tls: bool,
+    hostname: &'static String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    config_log();
-    let port = env::var("port")
-        .unwrap_or("3128".to_string())
-        .parse::<u16>()
-        .unwrap_or(444);
-    let cert = env::var("cert").unwrap_or("cert.pem".to_string());
-    let raw_key =
-        env::var("raw_key").unwrap_or(env::var("key").unwrap_or("privkey.pem".to_string()));
-    let basic_auth: &'static String =
-        Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string())));
-    let web_content_path: &'static String = Box::leak(Box::new(
-        env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()),
-    )); //默认为工作目录下
-    let refer: &'static String =
-        Box::leak(Box::new(env::var("refer").unwrap_or("".to_string())));
-    let ask_for_auth = TRUE == env::var("ask_for_auth").unwrap_or("true".to_string());
-    let over_tls = TRUE == env::var("over_tls").unwrap_or("false".to_string());
-    let hostname: &'static String = Box::leak(Box::new(
-        env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string())),
-    ));
+    let config = load_config_from_env();
+    let config: &'static StaticConfig = Box::leak(Box::new(config));
+    init_log(config.log_dir, config.log_file);
+    info(config);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let client: &'static Client<HttpConnector> = Box::leak(Box::new(
         Client::builder()
             .http1_title_case_headers(true)
             .http1_preserve_header_case(true)
             .build_http(),
     ));
-    info!("hostname seems to be {}", hostname);
-    if basic_auth.len() != 0 && ask_for_auth {
-        warn!("do not serve web content to avoid being detected!");
-    } else {
-        info!("serve web content of \"{}\"", web_content_path);
-        if refer.len() != 0 {
-            info!("Referer header to images must contain \"{}\"",refer);
-        }
-    }
-    info!("basic auth is \"{}\"", basic_auth);
-    if basic_auth.contains("\"") || basic_auth.contains("\'") {
-        warn!("basic_auth contains quotation marks, please check if it is a mistake!")
-    }
     let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
     monitor.start();
-    if over_tls {
+    if config.over_tls {
         info!(
             "Listening on https://{}:{}",
             local_ip().unwrap_or("0.0.0.0".to_string()),
             addr.port()
         );
-        let mut listener = tls_listener::builder(rust_tls_acceptor(&raw_key, &cert)?)
+        let mut listener = tls_listener::builder(rust_tls_acceptor(&config.raw_key, &config.cert)?)
             .max_handshakes(10)
             .listen(AddrIncoming::bind(&addr).unwrap());
         let (tx, mut rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
@@ -103,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let now = SystemTime::now();
                             if now.duration_since(last_refresh_time).unwrap_or(Duration::from_secs(0)) > Duration::from_secs(REFRESH_TIME) {
                                 last_refresh_time = now;
-                                if let Ok(new_acceptor)=rust_tls_acceptor(&raw_key, &cert){
+                                if let Ok(new_acceptor)=rust_tls_acceptor(&config.raw_key, &config.cert){
                                     info!("Rotating certificate triggered...");
                                     tx.try_send(new_acceptor).ok(); // 防止阻塞
                                     // tx.send(new_acceptor).await.ok();
@@ -118,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     // .http2_keep_alive_interval(Duration::from_secs(15))
                                     // .http2_keep_alive_timeout(Duration::from_secs(15))
                                     .serve_connection(conn, service_fn(move |req| {
-                                        proxy(client, req, basic_auth, ask_for_auth, web_content_path,refer, hostname, client_socket_addr, monitor.get_data().clone())
+                                        proxy(client, req, config, client_socket_addr, monitor.get_data().clone())
                                     }))
                                     .with_upgrades();
                                 if let Err(err) = connection.await {
@@ -158,11 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             proxy(
                                 client,
                                 req,
-                                basic_auth,
-                                ask_for_auth,
-                                web_content_path,
-                                refer,
-                                hostname,
+                                config,
                                 client_socket_addr,
                                 monitor.get_data().clone(),
                             )
@@ -177,6 +157,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+fn info(config: &StaticConfig) {
+    info!("log is output to {}/{}", config.log_dir, config.log_file);
+    info!("hostname seems to be {}", config.hostname);
+    if config.basic_auth.len() != 0 && config.ask_for_auth {
+        warn!("do not serve web content to avoid being detected!");
+    } else {
+        info!("serve web content of \"{}\"", config.web_content_path);
+        if config.refer.len() != 0 {
+            info!("Referer header to images must contain \"{}\"",config.refer);
+        }
+    }
+    info!("basic auth is \"{}\"", config.basic_auth);
+    if config.basic_auth.contains("\"") || config.basic_auth.contains("\'") {
+        warn!("basic_auth contains quotation marks, please check if it is a mistake!")
+    }
+}
+
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Error) {
     if http_err.is_user() {
         warn!("{}: {}",client_socket_addr,http_err);
@@ -185,24 +182,31 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Error) {
     }
 }
 
-fn config_log() {
-    let log_dir = env::var("log_dir").unwrap_or("/tmp".to_string());
-    let log_file = env::var("log_file").unwrap_or("proxy.log".to_string());
-    init_log(&log_dir, &log_file);
-    info!("log is output to {}/{}", &log_dir, &log_file);
+fn load_config_from_env() -> StaticConfig {
+    return StaticConfig {
+        log_dir: Box::leak(Box::new(env::var("log_dir").unwrap_or("/tmp".to_string()))),
+        log_file: Box::leak(Box::new(env::var("log_file").unwrap_or("proxy.log".to_string()))),
+        port: env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444),
+        cert: Box::leak(Box::new(env::var("cert").unwrap_or("cert.pem".to_string()))),
+        raw_key: Box::leak(Box::new(env::var("raw_key").unwrap_or(env::var("key").unwrap_or("privkey.pem".to_string())))),
+        basic_auth: Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string()))),
+        web_content_path: Box::leak(Box::new(env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()))),
+        refer: Box::leak(Box::new(env::var("refer").unwrap_or("".to_string()))),
+        ask_for_auth: TRUE == env::var("ask_for_auth").unwrap_or("true".to_string()),
+        over_tls: TRUE == env::var("over_tls").unwrap_or("false".to_string()),
+        hostname: Box::leak(Box::new(env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string())))),
+    };
 }
 
 async fn proxy(
     client: &HttpClient,
     mut req: Request<Body>,
-    basic_auth: &String,
-    ask_for_auth: bool,
-    web_content_path: &String,
-    refer: &String,
-    hostname: &String,
+    config:&'static StaticConfig,
     client_socket_addr: SocketAddr,
     buffer: Arc<RwLock<VecDeque<Point>>>,
 ) -> Result<Response<Body>, io::Error> {
+    let basic_auth = config.basic_auth;
+    let ask_for_auth = config.ask_for_auth;
     if Method::CONNECT == req.method() {
         info!(
             "{:>21?} {:^7} {:?}",
@@ -223,9 +227,7 @@ async fn proxy(
             return Ok(web_func::serve_http_request(
                 &req,
                 client_socket_addr,
-                web_content_path,
-                refer,
-                hostname,
+                config,
                 path,
                 buffer,
             )

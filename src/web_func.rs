@@ -14,19 +14,20 @@ use hyper::header::REFERER;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::codec::{BytesCodec, FramedRead};
-use crate::_build_500_resp;
+use crate::{_build_500_resp, StaticConfig};
 
 const SERVER_NAME: &str = "arloor's creation";
 
 pub async fn serve_http_request(
     req: &Request<Body>,
     client_socket_addr: SocketAddr,
-    web_content_path: &String,
-    refer: &String,
-    hostname: &String,
+    config:&'static StaticConfig,
     path: &str,
     buffer: Arc<RwLock<VecDeque<Point>>>,
 ) -> Response<Body> {
+    let hostname = config.hostname;
+    let web_content_path = config.web_content_path;
+    let refer = config.refer;
     if (path.ends_with("png") || path.ends_with("jpeg") || path.ends_with("jpg"))
         && refer != ""
     { // 拒绝图片盗链
