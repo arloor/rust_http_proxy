@@ -5,6 +5,7 @@ mod monitor;
 mod tls_helper;
 mod web_func;
 
+use hyper_util::server::conn::auto;
 use hyper::client::conn::http1::Builder;
 use crate::logx::init_log;
 use crate::tls_helper::rust_tls_acceptor;
@@ -12,7 +13,7 @@ use hyper::http::HeaderValue;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
-use hyper::{http, Method, Request, Response, Version, Error};
+use hyper::{http, Method, Request, Response, Version};
 use log::{debug, info, warn};
 use hyper_util::rt::tokio::TokioIo;
 use monitor::Monitor;
@@ -32,7 +33,7 @@ use tokio::sync::mpsc;
 use std::net::UdpSocket;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty, Full};
-use hyper::body::{ Bytes};
+use hyper::body::{Bytes};
 use tls_listener::TlsListener;
 use tokio::sync::RwLock;
 
@@ -89,12 +90,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             tokio::spawn(async move {
-                                let connection = http1::Builder::new()
-                                //server::conn::http2::Builder::new(hyper_util::rt::tokio::TokioExecutor::new()) // http2 but no with_upgrades support
-                                    .serve_connection(io, service_fn(move |req| {
+                                let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());// http2 but no with_upgrades support
+                                let connection =
+                                    binding.serve_connection(io, service_fn(move |req| {
                                         proxy(req, config, client_socket_addr, monitor.get_data().clone())
-                                    }))
-                                    .with_upgrades();
+                                    }));
                                 if let Err(err) = connection.await {
                                      handle_hyper_error(client_socket_addr,err);
                                 }
@@ -138,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .with_upgrades();
                 if let Err(http_err) = connection.await {
-                    handle_hyper_error(client_socket_addr, http_err);
+                    handle_hyper_error(client_socket_addr, Box::new(http_err));
                 }
             });
         }
@@ -162,12 +162,12 @@ fn info(config: &StaticConfig) {
     }
 }
 
-fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Error) {
-    if http_err.is_user() {
-        warn!("{}: {}",client_socket_addr,http_err);
-    } else {
-        warn!("hyper error: {}",http_err);
-    }
+fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
+    // if http_err.is_user() {
+    warn!("hyper error: {}: {}",client_socket_addr,http_err);
+    // } else {
+    //     warn!("hyper error: {}",http_err);
+    // }
 }
 
 fn load_config_from_env() -> StaticConfig {
@@ -196,10 +196,10 @@ async fn proxy(
     let ask_for_auth = config.ask_for_auth;
     if Method::CONNECT == req.method() {
         info!(
-            "{:>21?} {:^7} {:?}",
+            "{:>21?} {:^7} {:?} {:?}",
             client_socket_addr,
             req.method().as_str(),
-            req.uri()
+            req.uri(),req.version()
         );
     } else {
         if req.version() == Version::HTTP_2 || None == req.uri().host() {
@@ -332,11 +332,11 @@ async fn proxy(
 
                 if let Ok(resp) = sender.send_request(req).await {
                     return Ok(
-                        resp.map(|b| b.map_err(|e| match e { e => io::Error::new(ErrorKind::InvalidData,e), })
+                        resp.map(|b| b.map_err(|e| match e { e => io::Error::new(ErrorKind::InvalidData, e), })
                             .boxed()
                         )
                     );
-                }else {
+                } else {
                     return Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"));
                 }
             }
