@@ -13,7 +13,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
 use hyper::{http, Method, Request, Response, Version, Error};
-use log::{ info, warn};
+use log::{debug, info, warn};
 use hyper_util::rt::tokio::TokioIo;
 use monitor::Monitor;
 use monitor::Point;
@@ -378,7 +378,7 @@ async fn tunnel(upgraded: Upgraded, addr: String) -> std::io::Result<()> {
         tokio::io::copy_bidirectional(&mut upgraded, &mut server).await?;
 
     // Print message when done
-    println!(
+    debug!(
         "client wrote {} bytes and received {} bytes",
         from_client, from_server
     );
