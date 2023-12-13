@@ -745,7 +745,6 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "rand",
- "rustls",
  "rustls-pemfile",
  "tls-listener",
  "tokio",

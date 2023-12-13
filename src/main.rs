@@ -13,7 +13,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
 use hyper::{http, Method, Request, Response, Version, Error};
-use log::{debug, info, warn};
+use log::{ info, warn};
 use hyper_util::rt::tokio::TokioIo;
 use monitor::Monitor;
 use monitor::Point;
@@ -165,7 +165,7 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Error) {
     if http_err.is_user() {
         warn!("{}: {}",client_socket_addr,http_err);
     } else {
-        debug!("hyper error: {}",http_err);
+        warn!("hyper error: {}",http_err);
     }
 }
 
