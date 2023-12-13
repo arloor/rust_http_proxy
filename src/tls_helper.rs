@@ -44,7 +44,7 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Erro
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
     {
         Ok(mut config) => {
-            config.alpn_protocols = vec![/*b"h2".to_vec(),*/ b"http/1.1".to_vec()];
+            config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
             Ok(Arc::new(config))
         }
         Err(e) => Err(e.into()),
