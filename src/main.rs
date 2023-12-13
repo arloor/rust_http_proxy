@@ -90,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             tokio::spawn(async move {
                                 let connection = http1::Builder::new()
+                                //server::conn::http2::Builder::new(hyper_util::rt::tokio::TokioExecutor::new()) // http2 but no with_upgrades support
                                     .serve_connection(io, service_fn(move |req| {
                                         proxy(req, config, client_socket_addr, monitor.get_data().clone())
                                     }))
