@@ -6,11 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hyper = { version = "0.14", features = ["full"] }
+hyper = { version = "1", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
+http-body-util = "0.1"
+hyper-util = { version = "0.1.1", features = ["tokio"] }
 rustls = "0.21"
 tokio-rustls = "0.24"
-rustls-pemfile = "1.0"
+rustls-pemfile = "1"
 futures-util = "0.3"
 log = "0.4"
 flexi_logger = "0.25"
@@ -20,4 +22,5 @@ mime_guess = "2.0"
 httpdate = "1.0"
 percent-encoding = "2.2"
 chrono = "0.4.26"
-tls-listener  ={ version="0.7",features=["rustls","hyper-h1","hyper-h2"]}
+tls-listener  ={ version="0.9",features=["rustls"]}
+pin-project-lite = "0.2.13"
