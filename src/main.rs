@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tokio::spawn(async move {
                                 let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());// http2 but no with_upgrades support
                                 let connection =
-                                    binding.serve_connection(io, service_fn(move |req| {
+                                    binding.serve_connection_with_upgrades(io, service_fn(move |req| {
                                         proxy(req, config, client_socket_addr, monitor.get_data().clone())
                                     }));
                                 if let Err(err) = connection.await {
