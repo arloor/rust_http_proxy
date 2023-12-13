@@ -5,16 +5,17 @@ mod monitor;
 mod tls_helper;
 mod web_func;
 
+use hyper_util::server::conn::auto;
+use hyper::client::conn::http1::Builder;
 use crate::logx::init_log;
 use crate::tls_helper::rust_tls_acceptor;
-use hyper::client::HttpConnector;
 use hyper::http::HeaderValue;
-use hyper::server::conn::AddrIncoming;
-use hyper::server::conn::Http;
+use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
-use hyper::{http, Body, Client, Method, Request, Response, Version, Error};
+use hyper::{http, Method, Request, Response, Version};
 use log::{debug, info, warn};
+use hyper_util::rt::tokio::TokioIo;
 use monitor::Monitor;
 use monitor::Point;
 use percent_encoding::percent_decode_str;
@@ -25,14 +26,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{env, io};
-use std::io::ErrorKind;
+use std::io::{ErrorKind};
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use std::net::UdpSocket;
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Empty, Full};
+use hyper::body::{Bytes};
+use tls_listener::TlsListener;
 use tokio::sync::RwLock;
 
-type HttpClient = Client<hyper::client::HttpConnector>;
 
 const TRUE: &str = "true";
 const REFRESH_TIME: u64 = 24 * 60 * 60;
@@ -59,12 +63,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info(config);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    let client: &'static Client<HttpConnector> = Box::leak(Box::new(
-        Client::builder()
-            .http1_title_case_headers(true)
-            .http1_preserve_header_case(true)
-            .build_http(),
-    ));
     let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
     monitor.start();
     if config.over_tls {
@@ -73,17 +71,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             local_ip().unwrap_or("0.0.0.0".to_string()),
             addr.port()
         );
-        let mut listener = tls_listener::builder(rust_tls_acceptor(&config.raw_key, &config.cert)?)
-            .max_handshakes(10)
-            .listen(AddrIncoming::bind(&addr).unwrap());
+        let mut listener = TlsListener::new(rust_tls_acceptor(&config.raw_key, &config.cert)?, TcpListener::bind(addr).await?);
         let (tx, mut rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
-        let http = Http::new();
         let mut last_refresh_time = SystemTime::now();
         loop {
             tokio::select! {
                 conn = listener.accept() => {
-                    match conn.expect("Tls listener stream should be infinite") {
-                        Ok(conn) => {
+                    match conn {
+                        Ok((conn,client_socket_addr)) => {
+                            let io = TokioIo::new(conn);
                             let now = SystemTime::now();
                             if now.duration_since(last_refresh_time).unwrap_or(Duration::from_secs(0)) > Duration::from_secs(REFRESH_TIME) {
                                 last_refresh_time = now;
@@ -93,18 +89,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     // tx.send(new_acceptor).await.ok();
                                 }
                             }
-                            let mut http = http.clone();
                             tokio::spawn(async move {
-                                let client_socket_addr = conn.get_ref().0.remote_addr();
-                                let connection = http
-                                    .http1_title_case_headers(true)
-                                    .http1_header_read_timeout(Duration::from_secs(30))
-                                    // .http2_keep_alive_interval(Duration::from_secs(15))
-                                    // .http2_keep_alive_timeout(Duration::from_secs(15))
-                                    .serve_connection(conn, service_fn(move |req| {
-                                        proxy(client, req, config, client_socket_addr, monitor.get_data().clone())
-                                    }))
-                                    .with_upgrades();
+                                let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());// http2 but no with_upgrades support
+                                let connection =
+                                    binding.serve_connection_with_upgrades(io, service_fn(move |req| {
+                                        proxy(req, config, client_socket_addr, monitor.get_data().clone())
+                                    }));
                                 if let Err(err) = connection.await {
                                      handle_hyper_error(client_socket_addr,err);
                                 }
@@ -132,15 +122,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             let (tcp_stream, _) = tcp_listener.accept().await?;
             let client_socket_addr = tcp_stream.peer_addr()?;
+            let io = TokioIo::new(tcp_stream);
             tokio::task::spawn(async move {
-                let connection = Http::new()
-                    .http1_only(true)
-                    .http1_keep_alive(true)
+                let connection = http1::Builder::new()
                     .serve_connection(
-                        tcp_stream,
+                        io,
                         service_fn(move |req| {
                             proxy(
-                                client,
                                 req,
                                 config,
                                 client_socket_addr,
@@ -150,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .with_upgrades();
                 if let Err(http_err) = connection.await {
-                    handle_hyper_error(client_socket_addr, http_err);
+                    handle_hyper_error(client_socket_addr, Box::new(http_err));
                 }
             });
         }
@@ -174,12 +162,12 @@ fn info(config: &StaticConfig) {
     }
 }
 
-fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Error) {
-    if http_err.is_user() {
-        warn!("{}: {}",client_socket_addr,http_err);
-    } else {
-        debug!("hyper error: {}",http_err);
-    }
+fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
+    // if http_err.is_user() {
+    warn!("hyper error: {}: {}",client_socket_addr,http_err);
+    // } else {
+    //     warn!("hyper error: {}",http_err);
+    // }
 }
 
 fn load_config_from_env() -> StaticConfig {
@@ -199,20 +187,19 @@ fn load_config_from_env() -> StaticConfig {
 }
 
 async fn proxy(
-    client: &HttpClient,
-    mut req: Request<Body>,
-    config:&'static StaticConfig,
+    mut req: Request<hyper::body::Incoming>,
+    config: &'static StaticConfig,
     client_socket_addr: SocketAddr,
     buffer: Arc<RwLock<VecDeque<Point>>>,
-) -> Result<Response<Body>, io::Error> {
+) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
     let basic_auth = config.basic_auth;
     let ask_for_auth = config.ask_for_auth;
     if Method::CONNECT == req.method() {
         info!(
-            "{:>21?} {:^7} {:?}",
+            "{:>21?} {:^7} {:?} {:?}",
             client_socket_addr,
             req.method().as_str(),
-            req.uri()
+            req.uri(),req.version()
         );
     } else {
         if req.version() == Version::HTTP_2 || None == req.uri().host() {
@@ -304,7 +291,7 @@ async fn proxy(
                     Err(e) => warn!("upgrade error: {}", e),
                 }
             });
-            let mut response = Response::new(Body::empty());
+            let mut response = Response::new(empty());
             // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
             let count = rand::thread_rng().gen_range(1..150);
             for _ in 0..count {
@@ -316,7 +303,7 @@ async fn proxy(
             Ok(response)
         } else {
             warn!("CONNECT host is not socket addr: {:?}", req.uri());
-            let mut resp = Response::new(Body::from("CONNECT must be to a socket address"));
+            let mut resp = Response::new(full("CONNECT must be to a socket address"));
             *resp.status_mut() = http::StatusCode::BAD_REQUEST;
 
             Ok(resp)
@@ -326,12 +313,42 @@ async fn proxy(
         req.headers_mut()
             .remove(http::header::PROXY_AUTHORIZATION.to_string());
         req.headers_mut().remove("Proxy-Connection");
-        client.request(req).await.map_err(|e| io::Error::new(ErrorKind::Other, e))
+        let host = req.uri().host().expect("uri has no host");
+        let port = req.uri().port_u16().unwrap_or(80);
+
+        let stream = TcpStream::connect((host, port)).await.unwrap();
+        let io = TokioIo::new(stream);
+        match Builder::new()
+            .preserve_header_case(true)
+            .title_case_headers(true)
+            .handshake(io)
+            .await {
+            Ok((mut sender, conn)) => {
+                tokio::task::spawn(async move {
+                    if let Err(err) = conn.await {
+                        println!("Connection failed: {:?}", err);
+                    }
+                });
+
+                if let Ok(resp) = sender.send_request(req).await {
+                    return Ok(
+                        resp.map(|b| b.map_err(|e| match e { e => io::Error::new(ErrorKind::InvalidData, e), })
+                            .boxed()
+                        )
+                    );
+                } else {
+                    return Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"));
+                }
+            }
+            Err(e) => {
+                return Err(io::Error::new(ErrorKind::ConnectionAborted, e));
+            }
+        }
     }
 }
 
-fn build_proxy_authenticate_resp() -> Response<Body> {
-    let mut resp = Response::new(Body::from("auth need"));
+fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
+    let mut resp = Response::new(full("auth need"));
     resp.headers_mut().append(
         http::header::PROXY_AUTHENTICATE,
         HeaderValue::from_static("Basic realm=\"are you kidding me\""),
@@ -340,8 +357,8 @@ fn build_proxy_authenticate_resp() -> Response<Body> {
     resp
 }
 
-fn _build_500_resp() -> Response<Body> {
-    let mut resp = Response::new(Body::from("Internal Server Error"));
+fn _build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
+    let mut resp = Response::new(full("Internal Server Error"));
     *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
     resp
 }
@@ -352,9 +369,10 @@ fn host_addr(uri: &http::Uri) -> Option<String> {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(mut upgraded: Upgraded, addr: String) -> std::io::Result<()> {
+async fn tunnel(upgraded: Upgraded, addr: String) -> std::io::Result<()> {
     // Connect to remote server
     let mut server = TcpStream::connect(addr).await?;
+    let mut upgraded = TokioIo::new(upgraded);
 
     // Proxying data
     let (from_client, from_server) =
@@ -375,4 +393,16 @@ pub fn local_ip() -> io::Result<String> {
     return socket
         .local_addr()
         .map(|local_addr| local_addr.ip().to_string());
+}
+
+fn empty() -> BoxBody<Bytes, std::io::Error> {
+    Empty::<Bytes>::new()
+        .map_err(|never| match never {})
+        .boxed()
+}
+
+fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, std::io::Error> {
+    Full::new(chunk.into())
+        .map_err(|never| match never {})
+        .boxed()
 }

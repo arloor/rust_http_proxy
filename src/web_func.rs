@@ -1,7 +1,7 @@
 use crate::monitor::Point;
 use httpdate::fmt_http_date;
 use hyper::http::HeaderValue;
-use hyper::{http, Body, Method, Request, Response, StatusCode};
+use hyper::{http, Method, Request, Response, StatusCode};
 use log::{info, warn};
 use mime_guess::from_path;
 use std::collections::VecDeque;
@@ -10,21 +10,25 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::SystemTime;
+use futures_util::TryStreamExt;
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, StreamBody};
+use hyper::body::{Body, Bytes, Frame};
 use hyper::header::REFERER;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
-use tokio_util::codec::{BytesCodec, FramedRead};
-use crate::{_build_500_resp, StaticConfig};
+use tokio_util::io::ReaderStream;
+use crate::{_build_500_resp, empty, full, StaticConfig};
 
 const SERVER_NAME: &str = "arloor's creation";
 
 pub async fn serve_http_request(
-    req: &Request<Body>,
+    req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
     config:&'static StaticConfig,
     path: &str,
     buffer: Arc<RwLock<VecDeque<Point>>>,
-) -> Response<Body> {
+) -> Response<BoxBody<Bytes,std::io::Error>> {
     let hostname = config.hostname;
     let web_content_path = config.web_content_path;
     let refer = config.refer;
@@ -69,8 +73,8 @@ pub async fn serve_http_request(
 async fn serve_path(
     web_content_path: &String,
     url_path: &str,
-    req: &Request<Body>,
-) -> Response<Body> {
+    req: &Request<impl Body>,
+) -> Response<BoxBody<Bytes,std::io::Error>> {
     if String::from(url_path).contains("/..") {
         return not_found();
     }
@@ -111,8 +115,12 @@ async fn serve_path(
         Err(_) => return not_found(),
     };
 
-    let stream = FramedRead::new(file, BytesCodec::new());
-    let body = Body::wrap_stream(stream);
+    // Wrap to a tokio_util::io::ReaderStream
+    let reader_stream = ReaderStream::new(file);
+
+    // Convert to http_body_util::BoxBody
+    let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+    let boxed_body = stream_body.boxed();
 
     let content_type = mime_type.as_ref();
     let content_type = if !content_type
@@ -127,19 +135,19 @@ async fn serve_path(
         .header(http::header::CONTENT_TYPE, content_type)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, SERVER_NAME)
-        .body(body)
+        .body(boxed_body)
         .unwrap()
 }
 
-fn serve_ip(client_socket_addr: SocketAddr) -> Response<Body> {
+fn serve_ip(client_socket_addr: SocketAddr) -> Response<BoxBody<Bytes,std::io::Error>> {
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(Body::from(client_socket_addr.ip().to_string()))
+        .body(full(client_socket_addr.ip().to_string()))
         .unwrap()
 }
 
-fn count_stream() -> Response<Body> {
+fn count_stream() -> Response<BoxBody<Bytes,std::io::Error>> {
     let output = Command::new("sh")
         .arg("-c")
         .arg("netstat -nt|tail -n +3|grep -E  \"ESTABLISHED|CLOSE_WAIT\"|awk -F \"[ :]+\"  -v OFS=\"\" '$5<10000 && $5!=\"22\" && $7>1024 {printf(\"%15s   => %15s:%-5s %s\\n\",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn")
@@ -150,28 +158,28 @@ fn count_stream() -> Response<Body> {
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::REFRESH, "3")
-        .body(Body::from(
+        .body(full(
             String::from_utf8(output.stdout).unwrap()
                 + (&*String::from_utf8(output.stderr).unwrap()),
         ))
         .unwrap()
 }
 
-fn not_found() -> Response<Body> {
+fn not_found() -> Response<BoxBody<Bytes,std::io::Error>> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(H404))
+        .body(full(H404))
         .unwrap()
 }
 
-fn not_modified(last_modified: SystemTime) -> Response<Body> {
+fn not_modified(last_modified: SystemTime) -> Response<BoxBody<Bytes,std::io::Error>> {
     Response::builder()
         .status(StatusCode::NOT_MODIFIED)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, SERVER_NAME)
-        .body(Body::empty())
+        .body(empty())
         .unwrap()
 }
 
@@ -182,7 +190,7 @@ const PART3: &'static str = include_str!("../html/part3.html");
 const PART4: &'static str = include_str!("../html/part4.html");
 const H404: &'static str = include_str!("../html/404.html");
 
-async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>, hostname: &String) -> Response<Body> {
+async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>, hostname: &String) -> Response<BoxBody<Bytes,std::io::Error>> {
     let r = fetch_all(buffer).await;
     let mut scales = vec![];
     let mut series_up = vec![];
@@ -205,7 +213,7 @@ async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>, hostname: &String) -> Respo
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(Body::from(format!(
+        .body(full(format!(
             "{} {}网速 {} {:?} {} {} {}  {:?} {}",
             PART0, hostname, PART1, scales, PART2, interval, PART3, series_up, PART4
         )))
