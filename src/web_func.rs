@@ -32,16 +32,13 @@ pub async fn serve_http_request(
     let hostname = config.hostname;
     let web_content_path = config.web_content_path;
     let refer = config.refer;
+    let referer_header = req.headers().get(REFERER).map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with("png") || path.ends_with("jpeg") || path.ends_with("jpg"))
-        && refer != ""
+        && refer != "" && referer_header!= ""
     { // 拒绝图片盗链
-        if let Some(req_refer) = req.headers().get(REFERER) {
-            if let Some(req_refer_value) = req_refer.to_str().ok() {
-                if !req_refer_value.contains(refer) {
-                    warn!("{} wrong Referer Header \"{}\" from {}",path,req_refer_value,client_socket_addr);
-                    return _build_500_resp();
-                }
-            }
+        if !referer_header.contains(refer) {
+            warn!("{} wrong Referer Header \"{}\" from {}",path,referer_header,client_socket_addr);
+            return _build_500_resp();
         }
     }
     return match (req.method(), path) {
@@ -57,11 +54,16 @@ pub async fn serve_http_request(
         (_, "/net") => speed(buffer, hostname).await,
         (&Method::GET, path) => {
             info!(
-                "{:>21?} {:^7} {} {:?}",
+                "{:>21?} {:^7} {} {:?} {}",
                 client_socket_addr,
                 req.method().as_str(),
                 path,
-                req.version()
+                req.version(),
+                if referer_header!=""{
+                    format!("\"Referer: {}\"",referer_header)
+                }else{
+                    "".to_string()
+                }
             );
             serve_path(web_content_path, path, req).await
         }
