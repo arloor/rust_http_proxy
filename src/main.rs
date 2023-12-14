@@ -26,6 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{env, io};
+use std::error::Error as stdError;
 use std::io::{ErrorKind};
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
@@ -165,12 +166,12 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::err
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         if http_err.is_user() {
             warn!("hyper user error: {:?} [client:{}]",
-                http_err,
+                http_err.source(),
                 client_socket_addr
             );
         } else {
             warn!("hyper system error: {:?} [client:{}]",
-                http_err,
+                http_err.source(),
                 client_socket_addr
             )
         }
