@@ -54,16 +54,16 @@ pub async fn serve_http_request(
         (_, "/net") => speed(buffer, hostname).await,
         (&Method::GET, path) => {
             info!(
-                "{:>21?} {:^7} {} {:?} {}",
+                "{:>21?} {:^7} {} {:?}",
                 client_socket_addr,
                 req.method().as_str(),
                 path,
                 req.version(),
-                if referer_header!=""{
-                    format!("\"Referer: {}\"",referer_header)
-                }else{
-                    "".to_string()
-                }
+                // if referer_header!=""{
+                //     format!("\"Referer: {}\"",referer_header)
+                // }else{
+                //     "".to_string()
+                // }
             );
             serve_path(web_content_path, path, req).await
         }
