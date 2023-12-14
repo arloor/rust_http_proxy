@@ -25,16 +25,16 @@ const SERVER_NAME: &str = "arloor's creation";
 pub async fn serve_http_request(
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
-    config:&'static StaticConfig,
+    config: &'static StaticConfig,
     path: &str,
     buffer: Arc<RwLock<VecDeque<Point>>>,
-) -> Response<BoxBody<Bytes,std::io::Error>> {
+) -> Response<BoxBody<Bytes, std::io::Error>> {
     let hostname = config.hostname;
     let web_content_path = config.web_content_path;
     let refer = config.refer;
     let referer_header = req.headers().get(REFERER).map_or("", |h| h.to_str().unwrap_or(""));
-    if (path.ends_with("png") || path.ends_with("jpeg") || path.ends_with("jpg"))
-        && refer != "" && referer_header!= ""
+    if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
+        && refer != "" && referer_header != ""
     { // 拒绝图片盗链
         if !referer_header.contains(refer) {
             warn!("{} wrong Referer Header \"{}\" from {}",path,referer_header,client_socket_addr);
@@ -54,16 +54,18 @@ pub async fn serve_http_request(
         (_, "/net") => speed(buffer, hostname).await,
         (&Method::GET, path) => {
             info!(
-                "{:>21?} {:^7} {} {:?}",
+                "{:>21?} {:^7} {} {:?} {}",
                 client_socket_addr,
                 req.method().as_str(),
                 path,
                 req.version(),
-                // if referer_header!=""{
-                //     format!("\"Referer: {}\"",referer_header)
-                // }else{
-                //     "".to_string()
-                // }
+                if (path.ends_with("/")||path.ends_with(".html")||path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
+                    &&referer_header!=""
+                {
+                    format!("\"Referer: {}\"",referer_header)
+                }else{
+                    "".to_string()
+                }
             );
             serve_path(web_content_path, path, req).await
         }
@@ -76,7 +78,7 @@ async fn serve_path(
     web_content_path: &String,
     url_path: &str,
     req: &Request<impl Body>,
-) -> Response<BoxBody<Bytes,std::io::Error>> {
+) -> Response<BoxBody<Bytes, std::io::Error>> {
     if String::from(url_path).contains("/..") {
         return not_found();
     }
@@ -141,7 +143,7 @@ async fn serve_path(
         .unwrap()
 }
 
-fn serve_ip(client_socket_addr: SocketAddr) -> Response<BoxBody<Bytes,std::io::Error>> {
+fn serve_ip(client_socket_addr: SocketAddr) -> Response<BoxBody<Bytes, std::io::Error>> {
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
@@ -149,7 +151,7 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Response<BoxBody<Bytes,std::io::E
         .unwrap()
 }
 
-fn count_stream() -> Response<BoxBody<Bytes,std::io::Error>> {
+fn count_stream() -> Response<BoxBody<Bytes, std::io::Error>> {
     let output = Command::new("sh")
         .arg("-c")
         .arg("netstat -nt|tail -n +3|grep -E  \"ESTABLISHED|CLOSE_WAIT\"|awk -F \"[ :]+\"  -v OFS=\"\" '$5<10000 && $5!=\"22\" && $7>1024 {printf(\"%15s   => %15s:%-5s %s\\n\",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn")
@@ -167,7 +169,7 @@ fn count_stream() -> Response<BoxBody<Bytes,std::io::Error>> {
         .unwrap()
 }
 
-fn not_found() -> Response<BoxBody<Bytes,std::io::Error>> {
+fn not_found() -> Response<BoxBody<Bytes, std::io::Error>> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
@@ -176,7 +178,7 @@ fn not_found() -> Response<BoxBody<Bytes,std::io::Error>> {
         .unwrap()
 }
 
-fn not_modified(last_modified: SystemTime) -> Response<BoxBody<Bytes,std::io::Error>> {
+fn not_modified(last_modified: SystemTime) -> Response<BoxBody<Bytes, std::io::Error>> {
     Response::builder()
         .status(StatusCode::NOT_MODIFIED)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
@@ -192,7 +194,7 @@ const PART3: &'static str = include_str!("../html/part3.html");
 const PART4: &'static str = include_str!("../html/part4.html");
 const H404: &'static str = include_str!("../html/404.html");
 
-async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>, hostname: &String) -> Response<BoxBody<Bytes,std::io::Error>> {
+async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>, hostname: &String) -> Response<BoxBody<Bytes, std::io::Error>> {
     let r = fetch_all(buffer).await;
     let mut scales = vec![];
     let mut series_up = vec![];
