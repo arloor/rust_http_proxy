@@ -59,7 +59,7 @@ pub async fn serve_http_request(
                 req.method().as_str(),
                 path,
                 req.version(),
-                if (path.ends_with("/")||path.ends_with(".html")||path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
+                if (path.ends_with("/")||path.ends_with(".html"))
                     &&referer_header!=""
                 {
                     format!("\"Referer: {}\"",referer_header)
