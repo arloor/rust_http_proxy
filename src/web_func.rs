@@ -61,6 +61,7 @@ pub async fn serve_http_request(
                 req.version(),
                 if (path.ends_with("/")||path.ends_with(".html"))
                     &&referer_header!=""
+                    &&!referer_header.contains(refer) //来自外链的点击，记录Referer
                 {
                     format!("\"Referer: {}\"",referer_header)
                 }else{
