@@ -162,13 +162,16 @@ fn info(config: &StaticConfig) {
 }
 
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
-    if let Some(http_err)=http_err.downcast_ref::<Error>(){
-        if http_err.is_user() {
-            warn!("hyper error: {}: {}",client_socket_addr,http_err);
-        } else {
-            warn!("serve connection error: {}",http_err);
-        }
-    }else {
+    if let Some(http_err) = http_err.downcast_ref::<Error>() {
+        warn!("hyper {} error: {}: {}",
+            match http_err.is_user(){
+
+                false=>"system",
+            },
+            client_socket_addr,
+            http_err
+        );
+    } else {
         warn!("other error: {}",http_err);
     }
 }
