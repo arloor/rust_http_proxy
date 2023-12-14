@@ -174,7 +174,7 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::err
                 client_socket_addr
             );
         } else {
-            warn!("[hyper system error]: {:?} [client:{}]",
+            debug!("[hyper system error]: {:?} [client:{}]",
                 cause,
                 client_socket_addr
             )
