@@ -164,20 +164,24 @@ fn info(config: &StaticConfig) {
 
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
+        let cause = match http_err.source() {
+            None => { http_err }
+            Some(e) => { e } // 解析cause
+        };
         if http_err.is_user() {
-            warn!("hyper user error: {:?} [client:{}]",
-                http_err.source(),
+            warn!("[hyper user error]: {:?} [client:{}]",
+                cause,
                 client_socket_addr
             );
         } else {
-            warn!("hyper system error: {:?} [client:{}]",
-                http_err.source(),
+            warn!("[hyper system error]: {:?} [client:{}]",
+                cause,
                 client_socket_addr
             )
         }
     } else {
         warn!(
-            "hyper other error: {} [client:{}]",
+            "[hyper other error]: {} [client:{}]",
             http_err,
             client_socket_addr
         );
@@ -275,7 +279,7 @@ async fn proxy(
             return if ask_for_auth {
                 Ok(build_proxy_authenticate_resp())
             } else {
-                Err(io::Error::new(ErrorKind::PermissionDenied, "close connection because of wrong basic auth"))
+                Err(io::Error::new(ErrorKind::PermissionDenied, "wrong basic auth, closing socket..."))
             };
         }
     }
