@@ -13,7 +13,7 @@ use hyper::http::HeaderValue;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
-use hyper::{http, Method, Request, Response, Version};
+use hyper::{Error, http, Method, Request, Response, Version};
 use log::{debug, info, warn};
 use hyper_util::rt::tokio::TokioIo;
 use monitor::Monitor;
@@ -162,11 +162,15 @@ fn info(config: &StaticConfig) {
 }
 
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
-    // if http_err.is_user() {
-    warn!("hyper error: {}: {}",client_socket_addr,http_err);
-    // } else {
-    //     warn!("hyper error: {}",http_err);
-    // }
+    if let Some(http_err)=http_err.downcast_ref::<Error>(){
+        if http_err.is_user() {
+            warn!("hyper error: {}: {}",client_socket_addr,http_err);
+        } else {
+            warn!("serve connection error: {}",http_err);
+        }
+    }else {
+        warn!("other error: {}",http_err);
+    }
 }
 
 fn load_config_from_env() -> StaticConfig {
