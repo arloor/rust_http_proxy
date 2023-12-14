@@ -54,9 +54,9 @@ install  -m755 rpm/env %{buildroot}/etc/rust_http_proxy/env
   echo "创建自签发ssl证书...."
   openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_proxy/privkey.pem -out /usr/share/rust_http_proxy/cert.pem -days 3650 -subj "/C=cn/ST=hl/L=sd/O=op/OU=as/CN=example.com"
 }
-echo "创建相关命令：/usr/local/bin/mo /usr/local/bin/lo"
+echo "创建相关命令：/usr/local/bin/mo /usr/local/bin/loss"
 cat > /usr/local/bin/mo <<\EOF
-top -p `ps -ef|grep rust_http_proxy|grep -v grep|awk '{print $2}'|paste -sd ","`
+top -c -p `ps -ef|grep rust_http_proxy|grep -v grep|awk '{print $2}'|paste -sd ","`
 EOF
 chmod +x /usr/local/bin/mo
 source /etc/rust_http_proxy/env
