@@ -66,11 +66,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
     monitor.start();
     if config.over_tls {
-        info!(
-            "Listening on https://{}:{}",
-            local_ip().unwrap_or("0.0.0.0".to_string()),
-            addr.port()
-        );
         let mut listener = TlsListener::new(rust_tls_acceptor(&config.raw_key, &config.cert)?, TcpListener::bind(addr).await?);
         let (tx, mut rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
         let mut last_refresh_time = SystemTime::now();
@@ -113,11 +108,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     } else {
-        info!(
-            "Listening on http://{}:{}",
-            local_ip().unwrap_or("0.0.0.0".to_string()),
-            addr.port()
-        );
         let tcp_listener = TcpListener::bind(addr).await?;
         loop {
             let (tcp_stream, _) = tcp_listener.accept().await?;
@@ -160,6 +150,15 @@ fn info(config: &StaticConfig) {
     if config.basic_auth.contains("\"") || config.basic_auth.contains("\'") {
         warn!("basic_auth contains quotation marks, please check if it is a mistake!")
     }
+    info!(
+            "Listening on http{}://{}:{}",
+            match config.over_tls{
+                true=>"s",
+                false=>"",
+            },
+            local_ip().unwrap_or("0.0.0.0".to_string()),
+            config.port
+        );
 }
 
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
