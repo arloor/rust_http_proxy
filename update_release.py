@@ -8,6 +8,8 @@ token = os.getenv('GH_TOKEN')
 if token is None:
     print("github token is null, cannot update github release")
     exit()
+else:
+    print(f"Github token is {token}")
 
 # 可以变更为其他版本
 releaseVersion = 'v1.0.0'
