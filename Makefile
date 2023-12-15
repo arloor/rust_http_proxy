@@ -1,4 +1,4 @@
-all: install update
+all: update
 
 update: build
 	bash deploy/update_github.sh
