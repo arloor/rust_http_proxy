@@ -14,10 +14,10 @@
             "preLaunchTask": "rust: cargo build",
             "env": {
                 "port": "8888",
-                "cert": "/root/.acme.sh/arloor.dev/fullchain.cer",
-                "raw_key":"/root/.acme.sh/arloor.dev/arloor.dev.key",
-                "over_tls":"true",
-                // "web_content_path":"/repo"
+                // "cert": "/root/.acme.sh/arloor.dev/fullchain.cer",
+                // "raw_key":"/root/.acme.sh/arloor.dev/arloor.dev.key",
+                // "over_tls":"true",
+                "web_content_path":"./"
             }
         }
     ]
