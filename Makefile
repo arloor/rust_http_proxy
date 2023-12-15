@@ -1,4 +1,4 @@
-all: prepare rustup build install
+all: prepare install
 
 update: build
 	bash deploy/update_github.sh
@@ -10,7 +10,7 @@ install: build
 build:
 	bash deploy/build.sh
 
-prepare:
+prepare: rustup
 	bash deploy/rpm_prepare.sh
 
 rustup:
