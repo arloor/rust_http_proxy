@@ -110,7 +110,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tcp_listener = TcpListener::bind(addr).await?;
         loop {
             let (tcp_stream, client_socket_addr) = tcp_listener.accept().await?;
-            // let client_socket_addr = tcp_stream.peer_addr()?;
             let io = TokioIo::new(tcp_stream);
             tokio::task::spawn(async move {
                 let connection = http1::Builder::new()
