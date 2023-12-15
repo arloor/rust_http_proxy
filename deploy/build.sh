@@ -1,6 +1,6 @@
 if [ -d /var/rust_http_proxy ]; then
         cd /var/rust_http_proxy;
-          git pull --ff-only || {
+          git pull --rebase || {
             echo "git pull 失败，重新clone"
             cd /var
             rm -rf /var/rust_http_proxy
