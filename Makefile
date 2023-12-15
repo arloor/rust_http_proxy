@@ -10,8 +10,8 @@ install: build
 build:
 	bash deploy/build.sh
 
-# 第一次执行需要 make prepare&&make all
-prepare: rustup
+# 第一次执行需要 make pre&&make all
+pre: rustup
 	bash deploy/rpm_prepare.sh
 
 rustup:
