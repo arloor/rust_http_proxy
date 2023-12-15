@@ -10,6 +10,8 @@ install: build
 	. /etc/profile.d/github.sh && python /var/rust_http_proxy/update_release.py
 
 build:
+	if [ -d /var/rust_http_proxy]; then rm -rf /var/rust_http_proxy;fi
+	git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
 	rpmbuild -bb ./rpm/rust_http_proxy.spec
 
 prepare:
