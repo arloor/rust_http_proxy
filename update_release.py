@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#! /usr/bin/python3
 
 import json
 import subprocess
@@ -9,27 +9,37 @@ if token is None:
     print("github token is null, cannot update github release")
     exit()
 
+# 可以变更为其他版本
+releaseVersion = 'v1.0.0'
+
 # 获取assetId
 pipe = subprocess.Popen(f'curl -sSLf \
   -H "Accept: application/vnd.github+json" \
   -H "Authorization: Bearer {token}" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
-  https://api.github.com/repos/arloor/rust_http_proxy/releases/tags/v1.0.0', shell=True, stdout=subprocess.PIPE,
+  https://api.github.com/repos/arloor/rust_http_proxy/releases/tags/{releaseVersion}', shell=True,
+                        stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE)
 res = pipe.stdout.read().decode()
-# print(res)
 rjson = json.loads(res)
-releaseId = str(rjson['id'])
-assets = rjson['assets']
+releaseId = str(rjson.get('id'))
+assets = rjson.get('assets')
+if len(assets) != 0:
+    assets = list(map(lambda x: {'id': x.get('id'), 'name': x.get('name')}, assets))
+    print(
+        f"current release meta: releaseId:{releaseId}, assets:{json.dumps(assets)}")
 
 # 删除旧的assets
 for asset in assets:
+    assetId = asset.get("id")
+    assetName = asset.get("name")
+    print(f"deleting asset: {assetName}({assetId})")
     pipe = subprocess.Popen(f'curl -sSLf \
   -X DELETE \
   -H "Accept: application/vnd.github+json" \
   -H "Authorization: Bearer {token}" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
-  https://api.github.com/repos/arloor/rust_http_proxy/releases/assets/' + str(asset['id']), shell=True,
+  https://api.github.com/repos/arloor/rust_http_proxy/releases/assets/{assetId}', shell=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     err = pipe.stderr.read().decode()
     if len(err) != 0:
@@ -47,7 +57,7 @@ for name in toUploads:
   -H "X-GitHub-Api-Version: 2022-11-28" \
   -H "Content-Type: application/octet-stream" \
   "https://uploads.github.com/repos/arloor/rust_http_proxy/releases/{releaseId}/assets?name={name}" \
-  --data-binary "@{toUploads[name]}"', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+  --data-binary "@{toUploads.get(name)}"', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     err = pipe.stderr.read().decode()
     print("uploading ", name)
     if len(err) != 0:
