@@ -53,6 +53,7 @@ toUploads = {
     'rust_http_proxy-0.1-1.all.x86_64.rpm': '/root/rpmbuild/RPMS/x86_64/rust_http_proxy-0.1-1.all.x86_64.rpm'
 }
 for name in toUploads:
+    print(f"uploading {name}")
     pipe = subprocess.Popen(f'curl -sSLf \
   -X POST \
   -H "Accept: application/vnd.github+json" \
@@ -62,6 +63,7 @@ for name in toUploads:
   "https://uploads.github.com/repos/arloor/rust_http_proxy/releases/{releaseId}/assets?name={name}" \
   --data-binary "@{toUploads.get(name)}"', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     err = pipe.stderr.read().decode()
-    print("uploading ", name)
     if len(err) != 0:
         print(err)
+    else:
+        print(f"{name} uploaded.")
