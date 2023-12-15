@@ -60,9 +60,7 @@ pub struct StaticConfig {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config_from_env();
     let config: &'static StaticConfig = Box::leak(Box::new(config));
-    init_log(config.log_dir, config.log_file);
     info(config);
-
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
     monitor.start();
@@ -189,7 +187,7 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::err
 }
 
 fn load_config_from_env() -> StaticConfig {
-    return StaticConfig {
+    let config = StaticConfig {
         log_dir: Box::leak(Box::new(env::var("log_dir").unwrap_or("/tmp".to_string()))),
         log_file: Box::leak(Box::new(env::var("log_file").unwrap_or("proxy.log".to_string()))),
         port: env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444),
@@ -202,6 +200,8 @@ fn load_config_from_env() -> StaticConfig {
         over_tls: TRUE == env::var("over_tls").unwrap_or("false".to_string()),
         hostname: Box::leak(Box::new(env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string())))),
     };
+    init_log(config.log_dir, config.log_file);
+    return config;
 }
 
 async fn proxy(
