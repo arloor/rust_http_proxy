@@ -155,7 +155,7 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Response<BoxBody<Bytes, std::io::
 fn count_stream() -> Response<BoxBody<Bytes, std::io::Error>> {
     let output = Command::new("sh")
         .arg("-c")
-        .arg("netstat -nt|tail -n +3|grep -E  \"ESTABLISHED|CLOSE_WAIT\"|awk -F \"[ :]+\"  -v OFS=\"\" '$5<10000 && $5!=\"22\" && $7>1024 {printf(\"%15s   => %15s:%-5s %s\\n\",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn")
+        .arg("netstat -ntp|tail -n +3|grep -E  \"ESTABLISHED|CLOSE_WAIT\"|awk -F \"[ :]+\"  -v OFS=\"\" '$5<10000 && $5!=\"22\" && $7>1024 {printf(\"%15s   => %15s:%-5s %s\\n\",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn")
         .output()
         .expect("error call netstat");
 
