@@ -9,4 +9,5 @@ if [ -d /var/rust_http_proxy ]; then
 else
         git clone https://github.com/arloor/rust_http_proxy /var/rust_http_proxy
 fi
+source ~/.cargo/env
 rpmbuild -bb /var/rust_http_proxy/rpm/rust_http_proxy.spec
