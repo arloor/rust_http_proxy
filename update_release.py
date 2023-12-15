@@ -11,6 +11,7 @@ if token is None:
 
 # 可以变更为其他版本
 releaseVersion = 'v1.0.0'
+print(f"update assets of release:{releaseVersion}")
 
 # 获取assetId
 pipe = subprocess.Popen(f'curl -sSLf \
