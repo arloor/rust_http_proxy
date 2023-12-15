@@ -66,4 +66,4 @@ for name in toUploads:
     if len(err) != 0:
         print(err)
     else:
-        print(f"{name} uploaded.")
+        print(f"uploaded {name}")
