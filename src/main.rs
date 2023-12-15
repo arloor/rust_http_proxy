@@ -27,14 +27,14 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{env, io};
 use std::error::Error as stdError;
-use std::io::{ErrorKind};
+use std::io::ErrorKind;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use std::net::UdpSocket;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty, Full};
-use hyper::body::{Bytes};
+use hyper::body::Bytes;
 use tls_listener::TlsListener;
 use tokio::sync::RwLock;
 
