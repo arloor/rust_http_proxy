@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut last_refresh_time = SystemTime::now();
         loop {
             tokio::select! {
-                _=terminate_signal.recv()=>{
+                _ = terminate_signal.recv()=>{
                     info!("rust_http_proxy is shutdowning");
                     std::process::exit(0); // 并不优雅关闭
                 },
@@ -117,31 +117,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tcp_listener = TcpListener::bind(addr).await?;
         loop {
             tokio::select! {
-                _=terminate_signal.recv()=>{
+                _ = terminate_signal.recv()=>{
                     info!("rust_http_proxy is shutdowning");
                     std::process::exit(0); // 并不优雅关闭
                 },
-                conn=tcp_listener.accept()=>{
+                conn = tcp_listener.accept()=>{
                     if let Ok((tcp_stream, client_socket_addr)) =conn{
-                                    let io = TokioIo::new(tcp_stream);
-            tokio::task::spawn(async move {
-                let connection = http1::Builder::new()
-                    .serve_connection(
-                        io,
-                        service_fn(move |req| {
-                            proxy(
-                                req,
-                                config,
-                                client_socket_addr,
-                                monitor.get_data().clone(),
-                            )
-                        }),
-                    )
-                    .with_upgrades();
-                if let Err(http_err) = connection.await {
-                    handle_hyper_error(client_socket_addr, Box::new(http_err));
-                }
-            });
+                        let io = TokioIo::new(tcp_stream);
+                        tokio::task::spawn(async move {
+                            let connection = http1::Builder::new()
+                                .serve_connection(
+                                    io,
+                                    service_fn(move |req| {
+                                        proxy(
+                                            req,
+                                            config,
+                                            client_socket_addr,
+                                            monitor.get_data().clone(),
+                                        )
+                                    }),
+                                )
+                                .with_upgrades();
+                            if let Err(http_err) = connection.await {
+                                handle_hyper_error(client_socket_addr, Box::new(http_err));
+                            }
+                        });
                     }
                 }
             }
