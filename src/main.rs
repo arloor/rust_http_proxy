@@ -36,6 +36,7 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Bytes;
 use tls_listener::TlsListener;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::RwLock;
 
 
@@ -64,12 +65,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
     monitor.start();
+    let mut terminate_signal = signal(SignalKind::terminate())?;
     if config.over_tls {
         let mut listener = TlsListener::new(rust_tls_acceptor(&config.raw_key, &config.cert)?, TcpListener::bind(addr).await?);
         let (tx, mut rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
+
         let mut last_refresh_time = SystemTime::now();
         loop {
             tokio::select! {
+                _=terminate_signal.recv()=>{
+                    info!("rust_http_proxy is shutdowning");
+                    std::process::exit(0); // 并不优雅关闭
+                },
                 conn = listener.accept() => {
                     match conn {
                         Ok((conn,client_socket_addr)) => {
@@ -109,8 +116,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         let tcp_listener = TcpListener::bind(addr).await?;
         loop {
-            let (tcp_stream, client_socket_addr) = tcp_listener.accept().await?;
-            let io = TokioIo::new(tcp_stream);
+            tokio::select! {
+                _=terminate_signal.recv()=>{
+                    info!("rust_http_proxy is shutdowning");
+                    std::process::exit(0); // 并不优雅关闭
+                },
+                conn=tcp_listener.accept()=>{
+                    if let Ok((tcp_stream, client_socket_addr)) =conn{
+                                    let io = TokioIo::new(tcp_stream);
             tokio::task::spawn(async move {
                 let connection = http1::Builder::new()
                     .serve_connection(
@@ -129,6 +142,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     handle_hyper_error(client_socket_addr, Box::new(http_err));
                 }
             });
+                    }
+                }
+            }
         }
     }
 }
