@@ -72,7 +72,8 @@ struct ReqLabels {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct AccessLabel {
-    remote: String,
+    client: String,
+    target: String,
 }
 
 #[tokio::main]
@@ -354,10 +355,7 @@ async fn proxy(
         }
     }
     access.get_or_create(
-        &AccessLabel { remote: client_socket_addr.ip().to_string() }
-    ).inc();
-    access.get_or_create(
-        &AccessLabel { remote: "all".to_string() }
+        &AccessLabel { client: "all".to_string(),target:"all".to_string() }
     ).inc();
 
     if Method::CONNECT == req.method() {
@@ -375,6 +373,9 @@ async fn proxy(
         // connection be upgraded, so we can't return a response inside
         // `on_upgrade` future.
         if let Some(addr) = host_addr(req.uri()) {
+            access.get_or_create(
+                &AccessLabel { client: client_socket_addr.ip().to_string(),target:addr.clone() }
+            ).inc();
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
                     Ok(upgraded) => {
@@ -409,6 +410,9 @@ async fn proxy(
         req.headers_mut().remove("Proxy-Connection");
         let host = req.uri().host().expect("uri has no host");
         let port = req.uri().port_u16().unwrap_or(80);
+        access.get_or_create(
+            &AccessLabel { client: client_socket_addr.ip().to_string(),target:format!("{}:{}",host,port) }
+        ).inc();
 
         let stream = TcpStream::connect((host, port)).await.unwrap();
         let io = TokioIo::new(stream);
