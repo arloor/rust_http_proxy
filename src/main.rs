@@ -373,13 +373,11 @@ async fn proxy(
         // connection be upgraded, so we can't return a response inside
         // `on_upgrade` future.
         if let Some(addr) = host_addr(req.uri()) {
-            access.get_or_create(
-                &AccessLabel { client: client_socket_addr.ip().to_string(),target:addr.clone() }
-            ).inc();
+            let access=access.clone();
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
                     Ok(upgraded) => {
-                        if let Err(e) = tunnel(upgraded, addr).await {
+                        if let Err(e) = tunnel(upgraded, addr,client_socket_addr,access).await {
                             warn!("server io error: {}", e);
                         };
                     }
@@ -410,11 +408,10 @@ async fn proxy(
         req.headers_mut().remove("Proxy-Connection");
         let host = req.uri().host().expect("uri has no host");
         let port = req.uri().port_u16().unwrap_or(80);
+        let stream = TcpStream::connect((host, port)).await?;
         access.get_or_create(
             &AccessLabel { client: client_socket_addr.ip().to_string(),target:format!("{}:{}",host,port) }
         ).inc();
-
-        let stream = TcpStream::connect((host, port)).await.unwrap();
         let io = TokioIo::new(stream);
         match Builder::new()
             .preserve_header_case(true)
@@ -467,9 +464,12 @@ fn host_addr(uri: &http::Uri) -> Option<String> {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(upgraded: Upgraded, addr: String) -> std::io::Result<()> {
+async fn tunnel(upgraded: Upgraded, addr: String, client_socket_addr: SocketAddr, access: Family<AccessLabel, Counter, fn() -> Counter>) -> std::io::Result<()> {
     // Connect to remote server
-    let mut server = TcpStream::connect(addr).await?;
+    let mut server = TcpStream::connect(addr.clone()).await?;
+    access.get_or_create(
+        &AccessLabel { client: client_socket_addr.ip().to_string(),target:addr.clone() }
+    ).inc();
     let mut upgraded = TokioIo::new(upgraded);
 
     // Proxying data
