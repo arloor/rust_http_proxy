@@ -120,6 +120,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             access.get_or_create(
                                 &AccessLabel { remote: client_socket_addr.ip().to_string() }
                             ).inc();
+                            access.get_or_create(
+                                &AccessLabel { remote: "all".to_string() }
+                            ).inc();
                             let io = TokioIo::new(conn);
                             let now = SystemTime::now();
                             if now.duration_since(last_refresh_time).unwrap_or(Duration::from_secs(0)) > Duration::from_secs(REFRESH_TIME) {
@@ -167,6 +170,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Ok((tcp_stream, client_socket_addr)) =conn{
                         access.get_or_create(
                             &AccessLabel { remote: client_socket_addr.ip().to_string() }
+                        ).inc();
+                        access.get_or_create(
+                                &AccessLabel { remote: "all".to_string() }
                         ).inc();
                         let io = TokioIo::new(tcp_stream);
                         let http_requests=http_requests.clone();
