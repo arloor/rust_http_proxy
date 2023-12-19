@@ -5,6 +5,11 @@ mod monitor;
 mod tls_helper;
 mod web_func;
 
+
+use prometheus_client::encoding::EncodeLabelSet;
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::metrics::family::Family;
+use prometheus_client::registry::Registry;
 use hyper_util::server::conn::auto;
 use hyper::client::conn::http1::Builder;
 use crate::logx::init_log;
@@ -57,8 +62,40 @@ pub struct StaticConfig {
     hostname: &'static String,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ReqLabels {
+    // Use your own enum types to represent label values.
+    referer: String,
+    // Or just a plain string.
+    path: String,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct AccessLabel {
+    remote: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = <Registry>::default();
+    let registry = Arc::new(RwLock::new(registry));
+    let http_requests = Family::<ReqLabels, Counter>::default();
+    registry.write().await.register(
+        // With the metric name.
+        "req_from_out",
+        // And the metric help text.
+        "Number of HTTP requests received",
+        http_requests.clone(),
+    );
+    let access = Family::<AccessLabel, Counter>::default();
+    registry.write().await.register(
+        // With the metric name.
+        "proxy_access",
+        // And the metric help text.
+        "num proxy_access",
+        access.clone(),
+    );
+
     let config = load_config_from_env();
     let config: &'static StaticConfig = Box::leak(Box::new(config));
     info(config);
@@ -80,6 +117,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 conn = listener.accept() => {
                     match conn {
                         Ok((conn,client_socket_addr)) => {
+                            access.get_or_create(
+                                &AccessLabel { remote: client_socket_addr.ip().to_string() }
+                            ).inc();
                             let io = TokioIo::new(conn);
                             let now = SystemTime::now();
                             if now.duration_since(last_refresh_time).unwrap_or(Duration::from_secs(0)) > Duration::from_secs(REFRESH_TIME) {
@@ -90,11 +130,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     // tx.send(new_acceptor).await.ok();
                                 }
                             }
+                            let http_requests=http_requests.clone();
+                            let registry=registry.clone();
                             tokio::spawn(async move {
                                 let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());// http2 but no with_upgrades support
                                 let connection =
                                     binding.serve_connection_with_upgrades(io, service_fn(move |req| {
-                                        proxy(req, config, client_socket_addr, monitor.get_data().clone())
+                                        proxy(req, config, client_socket_addr, monitor.get_data().clone(),http_requests.clone(),registry.clone())
                                     }));
                                 if let Err(err) = connection.await {
                                      handle_hyper_error(client_socket_addr,err);
@@ -123,7 +165,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 conn = tcp_listener.accept()=>{
                     if let Ok((tcp_stream, client_socket_addr)) =conn{
+                        access.get_or_create(
+                            &AccessLabel { remote: client_socket_addr.ip().to_string() }
+                        ).inc();
                         let io = TokioIo::new(tcp_stream);
+                        let http_requests=http_requests.clone();
+                        let registry=registry.clone();
                         tokio::task::spawn(async move {
                             let connection = http1::Builder::new()
                                 .serve_connection(
@@ -134,6 +181,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             config,
                                             client_socket_addr,
                                             monitor.get_data().clone(),
+                                        http_requests.clone(),
+                                        registry.clone()
                                         )
                                     }),
                                 )
@@ -224,6 +273,8 @@ async fn proxy(
     config: &'static StaticConfig,
     client_socket_addr: SocketAddr,
     buffer: Arc<RwLock<VecDeque<Point>>>,
+    http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
+    registry: Arc<RwLock<Registry>>,
 ) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
     let basic_auth = config.basic_auth;
     let ask_for_auth = config.ask_for_auth;
@@ -250,6 +301,8 @@ async fn proxy(
                 config,
                 path,
                 buffer,
+                http_requests,
+                registry,
             )
                 .await);
         }

@@ -6,6 +6,7 @@ use log::{info, warn};
 use mime_guess::from_path;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -15,10 +16,14 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, StreamBody};
 use hyper::body::{Body, Bytes, Frame};
 use hyper::header::REFERER;
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::metrics::family::Family;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
-use crate::{_build_500_resp, empty, full, StaticConfig};
+use crate::{_build_500_resp, empty, full, ReqLabels, StaticConfig};
+use prometheus_client::encoding::text::encode;
+use prometheus_client::registry::Registry;
 
 const SERVER_NAME: &str = "arloor's creation";
 
@@ -28,6 +33,8 @@ pub async fn serve_http_request(
     config: &'static StaticConfig,
     path: &str,
     buffer: Arc<RwLock<VecDeque<Point>>>,
+    http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
+    registry:Arc<RwLock<Registry>>
 ) -> Response<BoxBody<Bytes, std::io::Error>> {
     let hostname = config.hostname;
     let web_content_path = config.web_content_path;
@@ -52,6 +59,7 @@ pub async fn serve_http_request(
         }
         (_, "/speed") => speed(buffer, hostname).await,
         (_, "/net") => speed(buffer, hostname).await,
+        (_, "/metrics") => metrics(registry.clone()).await,
         (&Method::GET, path) => {
             info!(
                 "{:>21?} {:^7} {} {:?} {}",
@@ -63,6 +71,9 @@ pub async fn serve_http_request(
                     &&referer_header!=""
                     &&!referer_header.contains(refer) //来自外链的点击，记录Referer
                 {
+                    http_requests.get_or_create(
+                        &ReqLabels { referer: referer_header.to_string(), path: path.to_string() }
+                    ).inc();
                     format!("\"Referer: {}\"",referer_header)
                 }else{
                     "".to_string()
@@ -73,6 +84,17 @@ pub async fn serve_http_request(
         (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
         _ => not_found(),
     };
+}
+
+async fn metrics( registry:Arc<RwLock<Registry>>) -> Response<BoxBody<Bytes, std::io::Error>>{
+    let mut buffer = String::new();
+    encode(&mut buffer, registry.read().await.deref()).unwrap();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(http::header::SERVER, SERVER_NAME)
+        .body(full(buffer))
+        .unwrap()
+
 }
 
 async fn serve_path(
