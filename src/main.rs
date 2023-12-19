@@ -117,12 +117,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 conn = listener.accept() => {
                     match conn {
                         Ok((conn,client_socket_addr)) => {
-                            access.get_or_create(
-                                &AccessLabel { remote: client_socket_addr.ip().to_string() }
-                            ).inc();
-                            access.get_or_create(
-                                &AccessLabel { remote: "all".to_string() }
-                            ).inc();
                             let io = TokioIo::new(conn);
                             let now = SystemTime::now();
                             if now.duration_since(last_refresh_time).unwrap_or(Duration::from_secs(0)) > Duration::from_secs(REFRESH_TIME) {
@@ -134,12 +128,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             let http_requests=http_requests.clone();
+                            let access=access.clone();
                             let registry=registry.clone();
                             tokio::spawn(async move {
                                 let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());// http2 but no with_upgrades support
                                 let connection =
                                     binding.serve_connection_with_upgrades(io, service_fn(move |req| {
-                                        proxy(req, config, client_socket_addr, monitor.get_data().clone(),http_requests.clone(),registry.clone())
+                                        proxy(req, config, client_socket_addr, monitor.get_data().clone(),
+                                        registry.clone(),
+                                        http_requests.clone(),
+                                        access.clone(),
+                                    )
                                     }));
                                 if let Err(err) = connection.await {
                                      handle_hyper_error(client_socket_addr,err);
@@ -168,14 +167,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 conn = tcp_listener.accept()=>{
                     if let Ok((tcp_stream, client_socket_addr)) =conn{
-                        access.get_or_create(
-                            &AccessLabel { remote: client_socket_addr.ip().to_string() }
-                        ).inc();
-                        access.get_or_create(
-                                &AccessLabel { remote: "all".to_string() }
-                        ).inc();
                         let io = TokioIo::new(tcp_stream);
                         let http_requests=http_requests.clone();
+                        let access=access.clone();
                         let registry=registry.clone();
                         tokio::task::spawn(async move {
                             let connection = http1::Builder::new()
@@ -187,8 +181,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             config,
                                             client_socket_addr,
                                             monitor.get_data().clone(),
+                                        registry.clone(),
                                         http_requests.clone(),
-                                        registry.clone()
+                                        access.clone(),
                                         )
                                     }),
                                 )
@@ -279,8 +274,9 @@ async fn proxy(
     config: &'static StaticConfig,
     client_socket_addr: SocketAddr,
     buffer: Arc<RwLock<VecDeque<Point>>>,
-    http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
     registry: Arc<RwLock<Registry>>,
+    http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
+    access: Family<AccessLabel, Counter, fn() -> Counter>,
 ) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
     let basic_auth = config.basic_auth;
     let ask_for_auth = config.ask_for_auth;
@@ -357,6 +353,12 @@ async fn proxy(
             };
         }
     }
+    access.get_or_create(
+        &AccessLabel { remote: client_socket_addr.ip().to_string() }
+    ).inc();
+    access.get_or_create(
+        &AccessLabel { remote: "all".to_string() }
+    ).inc();
 
     if Method::CONNECT == req.method() {
         // Received an HTTP request like:
