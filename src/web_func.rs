@@ -74,6 +74,9 @@ pub async fn serve_http_request(
                     http_requests.get_or_create(
                         &ReqLabels { referer: referer_header.to_string(), path: path.to_string() }
                     ).inc();
+                    http_requests.get_or_create(
+                        &ReqLabels { referer: "all".to_string(), path: "all".to_string() }
+                    ).inc();
                     format!("\"Referer: {}\"",referer_header)
                 }else{
                     "".to_string()
