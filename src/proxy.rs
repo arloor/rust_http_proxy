@@ -13,34 +13,19 @@ use prometheus_client::{
 use rand::Rng;
 use tokio::{sync::RwLock, net::TcpStream};
 use hyper::client::conn::http1::Builder;
-
-use crate::{StaticConfig, monitor::Monitor, web_func, build_proxy_authenticate_resp, empty, full};
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub struct ReqLabels {
-    // Use your own enum types to represent label values.
-    pub referer: String,
-    // Or just a plain string.
-    pub path: String,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub struct AccessLabel {
-    pub client: String,
-    pub target: String,
-}
+use crate::{StaticConfig, net_monitor::NetMonitor, web_func, build_proxy_authenticate_resp, empty, full};
 
 #[derive(Clone)]
 pub struct Proxy {
     registry: Arc<RwLock<Registry>>,
     http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
     access: Family<AccessLabel, Counter, fn() -> Counter>,
-    monitor: Monitor,
+    net_monitor: NetMonitor,
 }
 
 impl Proxy {
     pub async fn new() -> Proxy {
-        let monitor:  Monitor = Monitor::new();
+        let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
         let registry = <Registry>::default();
         let registry = Arc::new(RwLock::new(registry));
@@ -64,7 +49,7 @@ impl Proxy {
             registry: registry.clone(),
             http_requests,
             access,
-            monitor,
+            net_monitor: monitor,
         }
     }
     pub async fn proxy(
@@ -72,7 +57,7 @@ impl Proxy {
         mut req: Request<hyper::body::Incoming>,
         config: &'static StaticConfig,
         client_socket_addr: SocketAddr,
-    ) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let basic_auth = config.basic_auth;
         let ask_for_auth = config.ask_for_auth;
         if Method::CONNECT == req.method() {
@@ -92,17 +77,18 @@ impl Proxy {
                 if basic_auth.len() != 0 && ask_for_auth { // 存在嗅探风险时，不伪装成http服务
                     return Err(io::Error::new(ErrorKind::PermissionDenied, "reject http GET/POST when ask_for_auth and basic_auth not empty"));
                 }
-                return Ok(web_func::serve_http_request(
-                            &req,
-                            client_socket_addr,
-                            config,
-                            path,
-                            self.monitor.get_data().clone(),
-                            self.http_requests.clone(),
-                            self.registry.clone(),
-                            ).await
-                        );
-                }
+                return Ok(
+                    web_func::serve_http_request(
+                        &req,
+                        client_socket_addr,
+                        config,
+                        path,
+                        self.net_monitor.clone(),
+                        self.http_requests.clone(),
+                        self.registry.clone(),
+                    ).await
+                );
+            }
             if let Some(host) = req.uri().host() {
                 let host = host.to_string();
                 info!(
@@ -265,4 +251,19 @@ async fn tunnel(upgraded: Upgraded, addr: String, access: Family<AccessLabel, Co
 
 fn host_addr(uri: &http::Uri) -> Option<String> {
     uri.authority().and_then(|auth| Some(auth.to_string()))
+}
+
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct ReqLabels {
+    // Use your own enum types to represent label values.
+    pub referer: String,
+    // Or just a plain string.
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct AccessLabel {
+    pub client: String,
+    pub target: String,
 }

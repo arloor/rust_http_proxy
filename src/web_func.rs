@@ -1,4 +1,4 @@
-use crate::monitor::Point;
+use crate::net_monitor::{NetMonitor, Point};
 use httpdate::fmt_http_date;
 use hyper::http::HeaderValue;
 use hyper::{http, Method, Request, Response, StatusCode};
@@ -28,14 +28,14 @@ use prometheus_client::registry::Registry;
 
 const SERVER_NAME: &str = "arloor's creation";
 
-pub async  fn serve_http_request(
+pub async fn serve_http_request(
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
     config: &'static StaticConfig,
     path: &str,
-    buffer: Arc<RwLock<VecDeque<Point>>>,
+    net_monitor: NetMonitor,
     http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
-    registry:Arc<RwLock<Registry>>
+    registry: Arc<RwLock<Registry>>,
 ) -> Response<BoxBody<Bytes, std::io::Error>> {
     let hostname = config.hostname;
     let web_content_path = config.web_content_path;
@@ -58,8 +58,8 @@ pub async  fn serve_http_request(
                 count_stream()
             }
         }
-        (_, "/speed") => speed(buffer, hostname).await,
-        (_, "/net") => speed(buffer, hostname).await,
+        (_, "/speed") => speed(net_monitor, hostname).await,
+        (_, "/net") => speed(net_monitor, hostname).await,
         (_, "/metrics") => metrics(registry.clone()).await,
         (&Method::GET, path) => {
             info!(
@@ -90,7 +90,7 @@ pub async  fn serve_http_request(
     };
 }
 
-async fn metrics( registry:Arc<RwLock<Registry>>) -> Response<BoxBody<Bytes, std::io::Error>>{
+async fn metrics(registry: Arc<RwLock<Registry>>) -> Response<BoxBody<Bytes, std::io::Error>> {
     let mut buffer = String::new();
     encode(&mut buffer, registry.read().await.deref()).unwrap();
     Response::builder()
@@ -98,7 +98,6 @@ async fn metrics( registry:Arc<RwLock<Registry>>) -> Response<BoxBody<Bytes, std
         .header(http::header::SERVER, SERVER_NAME)
         .body(full(buffer))
         .unwrap()
-
 }
 
 async fn serve_path(
@@ -221,8 +220,8 @@ const PART3: &'static str = include_str!("../html/part3.html");
 const PART4: &'static str = include_str!("../html/part4.html");
 const H404: &'static str = include_str!("../html/404.html");
 
-async fn speed(buffer: Arc<RwLock<VecDeque<Point>>>, hostname: &String) -> Response<BoxBody<Bytes, std::io::Error>> {
-    let r = fetch_all(buffer).await;
+async fn speed(net_monitor: NetMonitor, hostname: &String) -> Response<BoxBody<Bytes, std::io::Error>> {
+    let r = fetch_all(net_monitor.get_data()).await;
     let mut scales = vec![];
     let mut series_up = vec![];
     let mut max_up = 0;

@@ -1,7 +1,7 @@
 #![deny(warnings)]
 
-mod logx;
-mod monitor;
+mod log_x;
+mod net_monitor;
 mod tls_helper;
 mod web_func;
 mod proxy;
@@ -9,7 +9,7 @@ mod proxy;
 
 use hyper_util::server::conn::auto;
 use proxy::Proxy;
-use crate::logx::init_log;
+use crate::log_x::init_log;
 use crate::tls_helper::rust_tls_acceptor;
 use hyper::http::HeaderValue;
 use hyper::server::conn::http1;

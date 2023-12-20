@@ -18,13 +18,13 @@ impl Point {
 }
 
 #[derive(Debug, Clone)]
-pub struct Monitor {
+pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<Point>>>,
 }
 
-impl Monitor {
-    pub fn new() -> Monitor {
-        Monitor {
+impl NetMonitor {
+    pub fn new() -> NetMonitor {
+        NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<Point>::new())),
         }
     }
