@@ -24,9 +24,9 @@ use tokio::{net::TcpStream, sync::RwLock};
 
 #[derive(Clone)]
 pub struct Proxy {
-    registry: Arc<RwLock<Registry>>,
-    http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
-    access: Family<AccessLabel, Counter, fn() -> Counter>,
+    prom_registry: Arc<RwLock<Registry>>,
+    http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
+    access_counter: Family<AccessLabel, Counter, fn() -> Counter>,
     net_monitor: NetMonitor,
 }
 
@@ -53,9 +53,9 @@ impl Proxy {
             access.clone(),
         );
         Proxy {
-            registry: registry.clone(),
-            http_requests,
-            access,
+            prom_registry: registry.clone(),
+            http_req_counter: http_requests,
+            access_counter: access,
             net_monitor: monitor,
         }
     }
@@ -95,8 +95,8 @@ impl Proxy {
                     config,
                     path,
                     self.net_monitor.clone(),
-                    self.http_requests.clone(),
-                    self.registry.clone(),
+                    self.http_req_counter.clone(),
+                    self.prom_registry.clone(),
                 )
                 .await);
             }
@@ -163,7 +163,7 @@ impl Proxy {
             // connection be upgraded, so we can't return a response inside
             // `on_upgrade` future.
             if let Some(addr) = host_addr(req.uri()) {
-                let access = self.access.clone();
+                let access = self.access_counter.clone();
                 tokio::task::spawn(async move {
                     match hyper::upgrade::on(req).await {
                         Ok(upgraded) => {
@@ -203,13 +203,13 @@ impl Proxy {
             let host = req.uri().host().expect("uri has no host");
             let port = req.uri().port_u16().unwrap_or(80);
             let stream = TcpStream::connect((host, port)).await?;
-            self.access
+            self.access_counter
                 .get_or_create(&AccessLabel {
                     client: "all".to_string(),
                     target: "all".to_string(),
                 })
                 .inc();
-            self.access
+            self.access_counter
                 .get_or_create(&AccessLabel {
                     client: client_socket_addr.ip().to_string(),
                     target: format!("{}:{}", host, port),

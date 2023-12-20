@@ -36,8 +36,8 @@ pub async fn serve_http_request(
     config: &'static StaticConfig,
     path: &str,
     net_monitor: NetMonitor,
-    http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
-    registry: Arc<RwLock<Registry>>,
+    http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
+    prom_registry: Arc<RwLock<Registry>>,
 ) -> Response<BoxBody<Bytes, std::io::Error>> {
     let hostname = config.hostname;
     let web_content_path = config.web_content_path;
@@ -70,7 +70,7 @@ pub async fn serve_http_request(
         }
         (_, "/speed") => speed(net_monitor, hostname).await,
         (_, "/net") => speed(net_monitor, hostname).await,
-        (_, "/metrics") => metrics(registry.clone()).await,
+        (_, "/metrics") => metrics(prom_registry.clone()).await,
         (&Method::GET, path) => {
             info!(
                 "{:>21?} {:^7} {} {:?} {}",
@@ -83,13 +83,13 @@ pub async fn serve_http_request(
                     && !referer_header.contains(refer)
                 //来自外链的点击，记录Referer
                 {
-                    http_requests
+                    http_req_counter
                         .get_or_create(&ReqLabels {
                             referer: referer_header.to_string(),
                             path: path.to_string(),
                         })
                         .inc();
-                    http_requests
+                    http_req_counter
                         .get_or_create(&ReqLabels {
                             referer: "all".to_string(),
                             path: "all".to_string(),
