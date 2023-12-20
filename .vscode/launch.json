@@ -17,6 +17,7 @@
                 // "cert": "/root/.acme.sh/arloor.dev/fullchain.cer",
                 // "raw_key":"/root/.acme.sh/arloor.dev/arloor.dev.key",
                 // "over_tls":"true",
+                "refer":"arloor",
                 "web_content_path":"./"
             }
         }
