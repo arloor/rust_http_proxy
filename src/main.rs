@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
-                                let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());// http2 but no with_upgrades support
+                                let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
                                 let connection =
                                     binding.serve_connection_with_upgrades(io, service_fn(move |req| {
                                         proxy(
