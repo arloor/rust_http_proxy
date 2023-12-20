@@ -216,7 +216,7 @@ impl Proxy {
                 })
                 .inc();
             let io = TokioIo::new(stream);
-            match Builder::new()
+            return match Builder::new()
                 .preserve_header_case(true)
                 .title_case_headers(true)
                 .handshake(io)
@@ -230,20 +230,18 @@ impl Proxy {
                     });
 
                     if let Ok(resp) = sender.send_request(req).await {
-                        return Ok(resp.map(|b| {
+                        Ok(resp.map(|b| {
                             b.map_err(|e| match e {
                                 e => io::Error::new(ErrorKind::InvalidData, e),
                             })
                             .boxed()
-                        }));
+                        }))
                     } else {
-                        return Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"));
+                        Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
                     }
                 }
-                Err(e) => {
-                    return Err(io::Error::new(ErrorKind::ConnectionAborted, e));
-                }
-            }
+                Err(e) => Err(io::Error::new(ErrorKind::ConnectionAborted, e)),
+            };
         }
     }
 }
@@ -255,7 +253,7 @@ async fn tunnel(
     addr: String,
     access: Family<AccessLabel, Counter, fn() -> Counter>,
     access_label: AccessLabel,
-) -> std::io::Result<()> {
+) -> io::Result<()> {
     // Connect to remote server
     let mut server = TcpStream::connect(addr.clone()).await?;
     access
@@ -298,7 +296,7 @@ pub struct AccessLabel {
     pub target: String,
 }
 
-fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
+fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, io::Error>> {
     let mut resp = Response::new(full_body("auth need"));
     resp.headers_mut().append(
         http::header::PROXY_AUTHENTICATE,
@@ -308,13 +306,13 @@ fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     resp
 }
 
-pub fn empty_body() -> BoxBody<Bytes, std::io::Error> {
+pub fn empty_body() -> BoxBody<Bytes, io::Error> {
     Empty::<Bytes>::new()
         .map_err(|never| match never {})
         .boxed()
 }
 
-pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, std::io::Error> {
+pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed()
