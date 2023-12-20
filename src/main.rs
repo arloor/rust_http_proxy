@@ -354,10 +354,6 @@ async fn proxy(
             };
         }
     }
-    access.get_or_create(
-        &AccessLabel { client: "all".to_string(),target:"all".to_string() }
-    ).inc();
-
     if Method::CONNECT == req.method() {
         // Received an HTTP request like:
         // ```
@@ -409,6 +405,9 @@ async fn proxy(
         let host = req.uri().host().expect("uri has no host");
         let port = req.uri().port_u16().unwrap_or(80);
         let stream = TcpStream::connect((host, port)).await?;
+        access.get_or_create(
+            &AccessLabel { client: "all".to_string(),target:"all".to_string() }
+        ).inc();
         access.get_or_create(
             &AccessLabel { client: client_socket_addr.ip().to_string(),target:format!("{}:{}",host,port) }
         ).inc();
@@ -468,6 +467,9 @@ fn host_addr(uri: &http::Uri) -> Option<String> {
 async fn tunnel(upgraded: Upgraded, addr: String, client_socket_addr: SocketAddr, access: Family<AccessLabel, Counter, fn() -> Counter>) -> std::io::Result<()> {
     // Connect to remote server
     let mut server = TcpStream::connect(addr.clone()).await?;
+    access.get_or_create(
+        &AccessLabel { client: "all".to_string(),target:"all".to_string() }
+    ).inc();
     access.get_or_create(
         &AccessLabel { client: client_socket_addr.ip().to_string(),target:addr.clone() }
     ).inc();
