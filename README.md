@@ -79,7 +79,7 @@ yum install -y rust_http_proxy-"${version}"-"${release}".x86_64.rpm
 ## 启动
 systemctl daemon-reload
 systemctl start rust_http_proxy 
-systemctl status rust_http_proxy --no-page
+journalctl -exfu rust_http_proxy
 ```
 
 **卸载：**
