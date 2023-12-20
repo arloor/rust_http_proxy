@@ -1,4 +1,4 @@
-use std::{sync::Arc, net::SocketAddr, collections::VecDeque, io::{self, ErrorKind}, borrow::Cow};
+use std::{sync::Arc, net::SocketAddr, io::{self, ErrorKind}, borrow::Cow};
 
 use http_body_util::{combinators::BoxBody, BodyExt};
 use hyper::{upgrade::Upgraded, Request, http, Response, body::Bytes, Method, Version, header::HeaderValue};
@@ -14,7 +14,7 @@ use rand::Rng;
 use tokio::{sync::RwLock, net::TcpStream};
 use hyper::client::conn::http1::Builder;
 
-use crate::{StaticConfig, monitor::Point, web_func, build_proxy_authenticate_resp, empty, full};
+use crate::{StaticConfig, monitor::Monitor, web_func, build_proxy_authenticate_resp, empty, full};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct ReqLabels {
@@ -35,10 +35,13 @@ pub struct Proxy {
     registry: Arc<RwLock<Registry>>,
     http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
     access: Family<AccessLabel, Counter, fn() -> Counter>,
+    monitor: Monitor,
 }
 
 impl Proxy {
     pub async fn new() -> Proxy {
+        let monitor:  Monitor = Monitor::new();
+        monitor.start();
         let registry = <Registry>::default();
         let registry = Arc::new(RwLock::new(registry));
         let http_requests = Family::<ReqLabels, Counter>::default();
@@ -61,6 +64,7 @@ impl Proxy {
             registry: registry.clone(),
             http_requests,
             access,
+            monitor,
         }
     }
     pub async fn proxy(
@@ -68,7 +72,6 @@ impl Proxy {
         mut req: Request<hyper::body::Incoming>,
         config: &'static StaticConfig,
         client_socket_addr: SocketAddr,
-        buffer: Arc<RwLock<VecDeque<Point>>>,
     ) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
         let basic_auth = config.basic_auth;
         let ask_for_auth = config.ask_for_auth;
@@ -94,7 +97,7 @@ impl Proxy {
                             client_socket_addr,
                             config,
                             path,
-                            buffer,
+                            self.monitor.get_data().clone(),
                             self.http_requests.clone(),
                             self.registry.clone(),
                             ).await

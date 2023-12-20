@@ -17,11 +17,7 @@ use hyper::service::service_fn;
 use hyper::{Error, http, Request, Response};
 use log::{debug, info, warn};
 use hyper_util::rt::tokio::TokioIo;
-use monitor::Monitor;
-use monitor::Point;
-use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{env, io};
 use std::error::Error as stdError;
@@ -33,7 +29,6 @@ use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Bytes;
 use tls_listener::TlsListener;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::RwLock;
 
 
 const TRUE: &str = "true";
@@ -61,8 +56,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info(config);
     let proxy_handler = Proxy::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    let monitor: &'static Monitor = Box::leak(Box::new(Monitor::new()));
-    monitor.start();
     let mut terminate_signal = signal(SignalKind::terminate())?;
     if config.over_tls {
         let mut listener = TlsListener::new(rust_tls_acceptor(&config.raw_key, &config.cert)?, TcpListener::bind(addr).await?);
@@ -97,7 +90,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             req,
                                             config,
                                             client_socket_addr,
-                                            monitor.get_data().clone(),
                                             proxy_handler.clone()
                                         )
                                     }));
@@ -139,7 +131,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             req,
                                             config,
                                             client_socket_addr,
-                                            monitor.get_data().clone(),
                                             proxy_handler.clone()
                                         )
                                     }),
@@ -159,10 +150,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn proxy(req: Request<hyper::body::Incoming>,
                config: &'static StaticConfig,
                client_socket_addr: SocketAddr,
-               buffer: Arc<RwLock<VecDeque<Point>>>,
                proxy_handler: Proxy,
 ) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
-    proxy_handler.proxy(req, config, client_socket_addr, buffer).await
+    proxy_handler.proxy(req, config, client_socket_addr).await
 }
 
 fn info(config: &StaticConfig) {

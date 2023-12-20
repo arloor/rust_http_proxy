@@ -17,6 +17,7 @@ impl Point {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Monitor {
     buffer: Arc<RwLock<VecDeque<Point>>>,
 }
