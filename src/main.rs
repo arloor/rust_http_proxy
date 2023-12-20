@@ -151,7 +151,7 @@ async fn proxy(req: Request<hyper::body::Incoming>,
                config: &'static StaticConfig,
                client_socket_addr: SocketAddr,
                proxy_handler: Proxy,
-) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
+) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler.proxy(req, config, client_socket_addr).await
 }
 
