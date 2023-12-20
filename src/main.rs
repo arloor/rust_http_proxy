@@ -11,10 +11,9 @@ use hyper_util::server::conn::auto;
 use proxy::Proxy;
 use crate::log_x::init_log;
 use crate::tls_helper::rust_tls_acceptor;
-use hyper::http::HeaderValue;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Error, http, Request, Response};
+use hyper::{Error, Request, Response};
 use log::{debug, info, warn};
 use hyper_util::rt::tokio::TokioIo;
 use std::net::SocketAddr;
@@ -226,21 +225,7 @@ fn load_config_from_env() -> StaticConfig {
 }
 
 
-fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
-    let mut resp = Response::new(full("auth need"));
-    resp.headers_mut().append(
-        http::header::PROXY_AUTHENTICATE,
-        HeaderValue::from_static("Basic realm=\"are you kidding me\""),
-    );
-    *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
-    resp
-}
 
-fn _build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
-    let mut resp = Response::new(full("Internal Server Error"));
-    *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
-    resp
-}
 
 
 pub fn local_ip() -> io::Result<String> {

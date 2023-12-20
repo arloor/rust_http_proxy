@@ -13,7 +13,7 @@ use prometheus_client::{
 use rand::Rng;
 use tokio::{sync::RwLock, net::TcpStream};
 use hyper::client::conn::http1::Builder;
-use crate::{StaticConfig, net_monitor::NetMonitor, web_func, build_proxy_authenticate_resp, empty, full};
+use crate::{StaticConfig, net_monitor::NetMonitor, web_func, empty, full};
 
 #[derive(Clone)]
 pub struct Proxy {
@@ -266,4 +266,14 @@ pub struct ReqLabels {
 pub struct AccessLabel {
     pub client: String,
     pub target: String,
+}
+
+fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
+    let mut resp = Response::new(full("auth need"));
+    resp.headers_mut().append(
+        http::header::PROXY_AUTHENTICATE,
+        HeaderValue::from_static("Basic realm=\"are you kidding me\""),
+    );
+    *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+    resp
 }

@@ -21,7 +21,7 @@ use prometheus_client::metrics::family::Family;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
-use crate::{_build_500_resp, empty, full, StaticConfig};
+use crate::{empty, full, StaticConfig};
 use crate::proxy::ReqLabels;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::registry::Registry;
@@ -46,7 +46,7 @@ pub async fn serve_http_request(
     { // 拒绝图片盗链
         if !referer_header.contains(refer) {
             warn!("{} wrong Referer Header \"{}\" from {}",path,referer_header,client_socket_addr);
-            return _build_500_resp();
+            return build_500_resp();
         }
     }
     return match (req.method(), path) {
@@ -257,4 +257,11 @@ async fn fetch_all(buffer: Arc<RwLock<VecDeque<Point>>>) -> Vec<Point> {
     r.extend_from_slice(x.0);
     r.extend_from_slice(x.1);
     r
+}
+
+
+fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
+    let mut resp = Response::new(full("Internal Server Error"));
+    *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+    resp
 }
