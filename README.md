@@ -58,6 +58,12 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 
 ## 安装说明
 
+### Docker 安装
+
+```shell
+docker run --rm -it --name proxy --net host docker.io/arloor/rust_http_proxy
+```
+
 ### rpm包安装：
 
 **安装：**
@@ -120,18 +126,23 @@ Nginx收到的消息：
 
 可以看到请求URL和`Proxy-Connection`都被正确处理了。
 
-## Linux运行时的网速监控
+## 可观测性
+
+### Linux运行时的网速监控
 
 在linux运行时，会监控网卡网速，并展示在 `/speed` 。
 
 ![](speed.png)
 
-## docker运行
+### Prometheus Exporter
 
-```shell
-docker run -d --name proxy -p 3128:3128 -v /tmp:/tmp docker.io/arloor/rust_http_proxy
-docker ps -a
-tail -f /tmp/proxy.log
+在 `/metrics`
+
+```text
+# HELP req_from_out Number of HTTP requests received.
+# TYPE req_from_out counter
+req_from_out_total{referer="all",path="all"} 4
+# HELP proxy_access num proxy_access.
+# TYPE proxy_access counter
+# EOF
 ```
-
-
