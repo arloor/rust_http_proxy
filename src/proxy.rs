@@ -23,15 +23,15 @@ use rand::Rng;
 use tokio::{net::TcpStream, sync::RwLock};
 
 #[derive(Clone)]
-pub struct Proxy {
+pub struct ProxyHandler {
     prom_registry: Arc<RwLock<Registry>>,
     http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
     access_counter: Family<AccessLabel, Counter, fn() -> Counter>,
     net_monitor: NetMonitor,
 }
 
-impl Proxy {
-    pub async fn new() -> Proxy {
+impl ProxyHandler {
+    pub async fn new() -> ProxyHandler {
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
         let registry = <Registry>::default();
@@ -52,7 +52,7 @@ impl Proxy {
             "num proxy_access",
             access.clone(),
         );
-        Proxy {
+        ProxyHandler {
             prom_registry: registry.clone(),
             http_req_counter: http_requests,
             access_counter: access,

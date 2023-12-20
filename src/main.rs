@@ -16,7 +16,7 @@ use hyper::{Error, Request, Response};
 use hyper_util::rt::tokio::TokioIo;
 use hyper_util::server::conn::auto;
 use log::{debug, info, warn};
-use proxy::Proxy;
+use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config_from_env();
     let config: &'static StaticConfig = Box::leak(Box::new(config));
     info(config);
-    let proxy_handler = Proxy::new().await;
+    let proxy_handler = ProxyHandler::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
     if config.over_tls {
@@ -149,7 +149,7 @@ async fn proxy(
     req: Request<hyper::body::Incoming>,
     config: &'static StaticConfig,
     client_socket_addr: SocketAddr,
-    proxy_handler: Proxy,
+    proxy_handler: ProxyHandler,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler.proxy(req, config, client_socket_addr).await
 }
