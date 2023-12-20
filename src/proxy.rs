@@ -1,7 +1,7 @@
 use std::{sync::Arc, net::SocketAddr, collections::VecDeque, io::{self, ErrorKind}, borrow::Cow};
 
 use http_body_util::{combinators::BoxBody, BodyExt};
-use hyper::{upgrade::Upgraded, Request,http, Response, body::Bytes, Method, Version, header::HeaderValue};
+use hyper::{upgrade::Upgraded, Request, http, Response, body::Bytes, Method, Version, header::HeaderValue};
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use percent_encoding::percent_decode_str;
@@ -34,7 +34,7 @@ pub struct AccessLabel {
 pub struct Proxy {
     registry: Arc<RwLock<Registry>>,
     http_requests: Family<ReqLabels, Counter, fn() -> Counter>,
-    access: Family<AccessLabel, Counter, fn() -> Counter>
+    access: Family<AccessLabel, Counter, fn() -> Counter>,
 }
 
 impl Proxy {
@@ -60,10 +60,10 @@ impl Proxy {
         Proxy {
             registry: registry.clone(),
             http_requests,
-            access
-        }        
+            access,
+        }
     }
-     pub async fn proxy(
+    pub async fn proxy(
         &self,
         mut req: Request<hyper::body::Incoming>,
         config: &'static StaticConfig,
@@ -90,16 +90,16 @@ impl Proxy {
                     return Err(io::Error::new(ErrorKind::PermissionDenied, "reject http GET/POST when ask_for_auth and basic_auth not empty"));
                 }
                 return Ok(web_func::serve_http_request(
-                    &req,
-                    client_socket_addr,
-                    config,
-                    path,
-                    buffer,
-                    self.http_requests.clone(),
-                    self.registry.clone(),
-                ).await
-                    );
-            }
+                            &req,
+                            client_socket_addr,
+                            config,
+                            path,
+                            buffer,
+                            self.http_requests.clone(),
+                            self.registry.clone(),
+                            ).await
+                        );
+                }
             if let Some(host) = req.uri().host() {
                 let host = host.to_string();
                 info!(
@@ -109,15 +109,15 @@ impl Proxy {
                     req.uri(),
                     req.version(),
                     req.headers()
-                        .get(hyper::http::header::HOST)
+                        .get(http::header::HOST)
                         .unwrap_or(&HeaderValue::from_str(host.as_str()).unwrap()),
                     req.headers()
-                        .get(hyper::http::header::USER_AGENT)
+                        .get(http::header::USER_AGENT)
                         .unwrap_or(&HeaderValue::from_str("None").unwrap())
                 );
             };
         }
-    
+
         if basic_auth.len() != 0 {
             //需要检验鉴权
             let mut authed: bool = false;
@@ -160,12 +160,12 @@ impl Proxy {
             // connection be upgraded, so we can't return a response inside
             // `on_upgrade` future.
             if let Some(addr) = host_addr(req.uri()) {
-                let access=self.access.clone();
+                let access = self.access.clone();
                 tokio::task::spawn(async move {
                     match hyper::upgrade::on(req).await {
                         Ok(upgraded) => {
-                            let access_label = AccessLabel { client: client_socket_addr.ip().to_string(),target:addr.clone()};
-                            if let Err(e) = tunnel(upgraded, addr,access,access_label).await {
+                            let access_label = AccessLabel { client: client_socket_addr.ip().to_string(), target: addr.clone() };
+                            if let Err(e) = tunnel(upgraded, addr, access, access_label).await {
                                 warn!("server io error: {}", e);
                             };
                         }
@@ -186,7 +186,7 @@ impl Proxy {
                 warn!("CONNECT host is not socket addr: {:?}", req.uri());
                 let mut resp = Response::new(full("CONNECT must be to a socket address"));
                 *resp.status_mut() = http::StatusCode::BAD_REQUEST;
-    
+
                 Ok(resp)
             }
         } else {
@@ -198,24 +198,24 @@ impl Proxy {
             let port = req.uri().port_u16().unwrap_or(80);
             let stream = TcpStream::connect((host, port)).await?;
             self.access.get_or_create(
-                &AccessLabel { client: "all".to_string(),target:"all".to_string() }
+                &AccessLabel { client: "all".to_string(), target: "all".to_string() }
             ).inc();
             self.access.get_or_create(
-                &AccessLabel { client: client_socket_addr.ip().to_string(),target:format!("{}:{}",host,port) }
+                &AccessLabel { client: client_socket_addr.ip().to_string(), target: format!("{}:{}", host, port) }
             ).inc();
             let io = TokioIo::new(stream);
             match Builder::new()
                 .preserve_header_case(true)
                 .title_case_headers(true)
                 .handshake(io).await
-                 {
+            {
                 Ok((mut sender, conn)) => {
                     tokio::task::spawn(async move {
                         if let Err(err) = conn.await {
                             println!("Connection failed: {:?}", err);
                         }
                     });
-    
+
                     if let Ok(resp) = sender.send_request(req).await {
                         return Ok(
                             resp.map(|b| b.map_err(|e| match e { e => io::Error::new(ErrorKind::InvalidData, e), })
@@ -236,11 +236,11 @@ impl Proxy {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(upgraded: Upgraded, addr: String, access: Family<AccessLabel, Counter, fn() -> Counter>,access_label:AccessLabel) -> std::io::Result<()> {
+async fn tunnel(upgraded: Upgraded, addr: String, access: Family<AccessLabel, Counter, fn() -> Counter>, access_label: AccessLabel) -> std::io::Result<()> {
     // Connect to remote server
     let mut server = TcpStream::connect(addr.clone()).await?;
     access.get_or_create(
-        &AccessLabel { client: "all".to_string(),target:"all".to_string() }
+        &AccessLabel { client: "all".to_string(), target: "all".to_string() }
     ).inc();
     access.get_or_create(
         &access_label,

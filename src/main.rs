@@ -93,8 +93,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());// http2 but no with_upgrades support
                                 let connection =
                                     binding.serve_connection_with_upgrades(io, service_fn(move |req| {
-                                        proxy(req, config, client_socket_addr, monitor.get_data().clone(),proxy_handler.clone())
-
+                                        proxy(
+                                            req,
+                                            config,
+                                            client_socket_addr,
+                                            monitor.get_data().clone(),
+                                            proxy_handler.clone()
+                                        )
                                     }));
                                 if let Err(err) = connection.await {
                                      handle_hyper_error(client_socket_addr,err);
@@ -154,7 +159,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn proxy(req: Request<hyper::body::Incoming>,
                config: &'static StaticConfig,
                client_socket_addr: SocketAddr,
-               buffer: Arc<RwLock<VecDeque<Point>>>, proxy_handler: Proxy) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
+               buffer: Arc<RwLock<VecDeque<Point>>>,
+               proxy_handler: Proxy,
+) -> Result<Response<BoxBody<Bytes, std::io::Error>>, io::Error> {
     proxy_handler.proxy(req, config, client_socket_addr, buffer).await
 }
 
