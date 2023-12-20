@@ -373,7 +373,8 @@ async fn proxy(
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
                     Ok(upgraded) => {
-                        if let Err(e) = tunnel(upgraded, addr,client_socket_addr,access).await {
+                        let access_label = AccessLabel { client: client_socket_addr.ip().to_string(),target:addr.clone()};
+                        if let Err(e) = tunnel(upgraded, addr,access,access_label).await {
                             warn!("server io error: {}", e);
                         };
                     }
@@ -464,14 +465,14 @@ fn host_addr(uri: &http::Uri) -> Option<String> {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(upgraded: Upgraded, addr: String, client_socket_addr: SocketAddr, access: Family<AccessLabel, Counter, fn() -> Counter>) -> std::io::Result<()> {
+async fn tunnel(upgraded: Upgraded, addr: String, access: Family<AccessLabel, Counter, fn() -> Counter>,access_label:AccessLabel) -> std::io::Result<()> {
     // Connect to remote server
     let mut server = TcpStream::connect(addr.clone()).await?;
     access.get_or_create(
         &AccessLabel { client: "all".to_string(),target:"all".to_string() }
     ).inc();
     access.get_or_create(
-        &AccessLabel { client: client_socket_addr.ip().to_string(),target:addr.clone() }
+        &access_label,
     ).inc();
     let mut upgraded = TokioIo::new(upgraded);
 
