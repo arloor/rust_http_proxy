@@ -21,3 +21,5 @@
 | shift + F11 | Step out |
 | F12 | 查看定义和使用 |
 
+[keyboard-shortcuts-macos.pdf](https://code.visualstudio.com/shortcuts/keyboard-shortcuts-macos.pdf)
+
