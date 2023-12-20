@@ -2,32 +2,30 @@
 
 mod log_x;
 mod net_monitor;
+mod proxy;
 mod tls_helper;
 mod web_func;
-mod proxy;
 
-
-use hyper_util::server::conn::auto;
-use proxy::Proxy;
 use crate::log_x::init_log;
 use crate::tls_helper::rust_tls_acceptor;
+use http_body_util::combinators::BoxBody;
+use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Error, Request, Response};
-use log::{debug, info, warn};
 use hyper_util::rt::tokio::TokioIo;
+use hyper_util::server::conn::auto;
+use log::{debug, info, warn};
+use proxy::Proxy;
+use std::error::Error as stdError;
 use std::net::SocketAddr;
+use std::net::UdpSocket;
 use std::time::{Duration, SystemTime};
 use std::{env, io};
-use std::error::Error as stdError;
-use tokio::net::TcpListener;
-use tokio::sync::mpsc;
-use std::net::UdpSocket;
-use http_body_util::combinators::BoxBody;
-use hyper::body::Bytes;
 use tls_listener::TlsListener;
+use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
-
+use tokio::sync::mpsc;
 
 const TRUE: &str = "true";
 const REFRESH_TIME: u64 = 24 * 60 * 60;
@@ -46,7 +44,6 @@ pub struct StaticConfig {
     hostname: &'static String,
 }
 
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config_from_env();
@@ -56,7 +53,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
     if config.over_tls {
-        let mut listener = TlsListener::new(rust_tls_acceptor(&config.raw_key, &config.cert)?, TcpListener::bind(addr).await?);
+        let mut listener = TlsListener::new(
+            rust_tls_acceptor(&config.raw_key, &config.cert)?,
+            TcpListener::bind(addr).await?,
+        );
         let (tx, mut rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
 
         let mut last_refresh_time = SystemTime::now();
@@ -145,10 +145,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn proxy(req: Request<hyper::body::Incoming>,
-               config: &'static StaticConfig,
-               client_socket_addr: SocketAddr,
-               proxy_handler: Proxy,
+async fn proxy(
+    req: Request<hyper::body::Incoming>,
+    config: &'static StaticConfig,
+    client_socket_addr: SocketAddr,
+    proxy_handler: Proxy,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler.proxy(req, config, client_socket_addr).await
 }
@@ -161,7 +162,7 @@ fn info(config: &StaticConfig) {
     } else {
         info!("serve web content of \"{}\"", config.web_content_path);
         if config.refer.len() != 0 {
-            info!("Referer header to images must contain \"{}\"",config.refer);
+            info!("Referer header to images must contain \"{}\"", config.refer);
         }
     }
     info!("basic auth is \"{}\"", config.basic_auth);
@@ -169,38 +170,37 @@ fn info(config: &StaticConfig) {
         warn!("basic_auth contains quotation marks, please check if it is a mistake!")
     }
     info!(
-            "Listening on http{}://{}:{}",
-            match config.over_tls{
-                true=>"s",
-                false=>"",
-            },
-            local_ip().unwrap_or("0.0.0.0".to_string()),
-            config.port
-        );
+        "Listening on http{}://{}:{}",
+        match config.over_tls {
+            true => "s",
+            false => "",
+        },
+        local_ip().unwrap_or("0.0.0.0".to_string()),
+        config.port
+    );
 }
 
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         let cause = match http_err.source() {
-            None => { http_err }
-            Some(e) => { e } // 解析cause
+            None => http_err,
+            Some(e) => e, // 解析cause
         };
         if http_err.is_user() {
-            warn!("[hyper user error]: {:?} [client:{}]",
-                cause,
-                client_socket_addr
+            warn!(
+                "[hyper user error]: {:?} [client:{}]",
+                cause, client_socket_addr
             );
         } else {
-            debug!("[hyper system error]: {:?} [client:{}]",
-                cause,
-                client_socket_addr
+            debug!(
+                "[hyper system error]: {:?} [client:{}]",
+                cause, client_socket_addr
             )
         }
     } else {
         warn!(
             "[hyper other error]: {} [client:{}]",
-            http_err,
-            client_socket_addr
+            http_err, client_socket_addr
         );
     }
 }
@@ -208,24 +208,31 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::err
 fn load_config_from_env() -> StaticConfig {
     let config = StaticConfig {
         log_dir: Box::leak(Box::new(env::var("log_dir").unwrap_or("/tmp".to_string()))),
-        log_file: Box::leak(Box::new(env::var("log_file").unwrap_or("proxy.log".to_string()))),
-        port: env::var("port").unwrap_or("3128".to_string()).parse::<u16>().unwrap_or(444),
+        log_file: Box::leak(Box::new(
+            env::var("log_file").unwrap_or("proxy.log".to_string()),
+        )),
+        port: env::var("port")
+            .unwrap_or("3128".to_string())
+            .parse::<u16>()
+            .unwrap_or(444),
         cert: Box::leak(Box::new(env::var("cert").unwrap_or("cert.pem".to_string()))),
-        raw_key: Box::leak(Box::new(env::var("raw_key").unwrap_or(env::var("key").unwrap_or("privkey.pem".to_string())))),
+        raw_key: Box::leak(Box::new(
+            env::var("raw_key").unwrap_or(env::var("key").unwrap_or("privkey.pem".to_string())),
+        )),
         basic_auth: Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string()))),
-        web_content_path: Box::leak(Box::new(env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()))),
+        web_content_path: Box::leak(Box::new(
+            env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()),
+        )),
         refer: Box::leak(Box::new(env::var("refer").unwrap_or("".to_string()))),
         ask_for_auth: TRUE == env::var("ask_for_auth").unwrap_or("true".to_string()),
         over_tls: TRUE == env::var("over_tls").unwrap_or("false".to_string()),
-        hostname: Box::leak(Box::new(env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string())))),
+        hostname: Box::leak(Box::new(
+            env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string())),
+        )),
     };
     init_log(config.log_dir, config.log_file);
     return config;
 }
-
-
-
-
 
 pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;

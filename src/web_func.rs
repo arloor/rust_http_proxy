@@ -1,9 +1,22 @@
 use crate::net_monitor::{NetMonitor, Point};
+use crate::proxy::empty_body;
+use crate::proxy::full_body;
+use crate::proxy::ReqLabels;
+use crate::StaticConfig;
+use futures_util::TryStreamExt;
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, StreamBody};
 use httpdate::fmt_http_date;
+use hyper::body::{Body, Bytes, Frame};
+use hyper::header::REFERER;
 use hyper::http::HeaderValue;
 use hyper::{http, Method, Request, Response, StatusCode};
 use log::{info, warn};
 use mime_guess::from_path;
+use prometheus_client::encoding::text::encode;
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::metrics::family::Family;
+use prometheus_client::registry::Registry;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -11,22 +24,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::SystemTime;
-use futures_util::TryStreamExt;
-use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, StreamBody};
-use hyper::body::{Body, Bytes, Frame};
-use hyper::header::REFERER;
-use prometheus_client::metrics::counter::Counter;
-use prometheus_client::metrics::family::Family;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
-use crate::StaticConfig;
-use crate::proxy::empty_body;
-use crate::proxy::full_body;
-use crate::proxy::ReqLabels;
-use prometheus_client::encoding::text::encode;
-use prometheus_client::registry::Registry;
 
 const SERVER_NAME: &str = "arloor's creation";
 
@@ -42,12 +42,20 @@ pub async fn serve_http_request(
     let hostname = config.hostname;
     let web_content_path = config.web_content_path;
     let refer = config.refer;
-    let referer_header = req.headers().get(REFERER).map_or("", |h| h.to_str().unwrap_or(""));
+    let referer_header = req
+        .headers()
+        .get(REFERER)
+        .map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
-        && refer != "" && referer_header != ""
-    { // 拒绝图片盗链
+        && refer != ""
+        && referer_header != ""
+    {
+        // 拒绝图片盗链
         if !referer_header.contains(refer) {
-            warn!("{} wrong Referer Header \"{}\" from {}",path,referer_header,client_socket_addr);
+            warn!(
+                "{} wrong Referer Header \"{}\" from {}",
+                path, referer_header, client_socket_addr
+            );
             return build_500_resp();
         }
     }
@@ -70,18 +78,25 @@ pub async fn serve_http_request(
                 req.method().as_str(),
                 path,
                 req.version(),
-                if (path.ends_with("/")||path.ends_with(".html"))
-                    &&referer_header!=""
-                    &&!referer_header.contains(refer) //来自外链的点击，记录Referer
+                if (path.ends_with("/") || path.ends_with(".html"))
+                    && referer_header != ""
+                    && !referer_header.contains(refer)
+                //来自外链的点击，记录Referer
                 {
-                    http_requests.get_or_create(
-                        &ReqLabels { referer: referer_header.to_string(), path: path.to_string() }
-                    ).inc();
-                    http_requests.get_or_create(
-                        &ReqLabels { referer: "all".to_string(), path: "all".to_string() }
-                    ).inc();
-                    format!("\"Referer: {}\"",referer_header)
-                }else{
+                    http_requests
+                        .get_or_create(&ReqLabels {
+                            referer: referer_header.to_string(),
+                            path: path.to_string(),
+                        })
+                        .inc();
+                    http_requests
+                        .get_or_create(&ReqLabels {
+                            referer: "all".to_string(),
+                            path: "all".to_string(),
+                        })
+                        .inc();
+                    format!("\"Referer: {}\"", referer_header)
+                } else {
                     "".to_string()
                 }
             );
@@ -222,7 +237,10 @@ const PART3: &'static str = include_str!("../html/part3.html");
 const PART4: &'static str = include_str!("../html/part4.html");
 const H404: &'static str = include_str!("../html/404.html");
 
-async fn speed(net_monitor: NetMonitor, hostname: &String) -> Response<BoxBody<Bytes, std::io::Error>> {
+async fn speed(
+    net_monitor: NetMonitor,
+    hostname: &String,
+) -> Response<BoxBody<Bytes, std::io::Error>> {
     let r = fetch_all(net_monitor.get_data()).await;
     let mut scales = vec![];
     let mut series_up = vec![];
@@ -260,7 +278,6 @@ async fn fetch_all(buffer: Arc<RwLock<VecDeque<Point>>>) -> Vec<Point> {
     r.extend_from_slice(x.1);
     r
 }
-
 
 fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     let mut resp = Response::new(full_body("Internal Server Error"));
