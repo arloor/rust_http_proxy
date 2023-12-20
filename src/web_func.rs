@@ -21,13 +21,14 @@ use prometheus_client::metrics::family::Family;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
-use crate::{_build_500_resp, empty, full, ReqLabels, StaticConfig};
+use crate::{_build_500_resp, empty, full, StaticConfig};
+use crate::proxy::ReqLabels;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::registry::Registry;
 
 const SERVER_NAME: &str = "arloor's creation";
 
-pub async fn serve_http_request(
+pub async  fn serve_http_request(
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
     config: &'static StaticConfig,
