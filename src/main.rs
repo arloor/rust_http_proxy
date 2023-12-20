@@ -24,7 +24,6 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use std::net::UdpSocket;
 use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Bytes;
 use tls_listener::TlsListener;
 use tokio::signal::unix::{signal, SignalKind};
@@ -234,16 +233,4 @@ pub fn local_ip() -> io::Result<String> {
     return socket
         .local_addr()
         .map(|local_addr| local_addr.ip().to_string());
-}
-
-fn empty() -> BoxBody<Bytes, std::io::Error> {
-    Empty::<Bytes>::new()
-        .map_err(|never| match never {})
-        .boxed()
-}
-
-fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, std::io::Error> {
-    Full::new(chunk.into())
-        .map_err(|never| match never {})
-        .boxed()
 }

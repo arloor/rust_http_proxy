@@ -1,6 +1,6 @@
 use std::{sync::Arc, net::SocketAddr, io::{self, ErrorKind}, borrow::Cow};
 
-use http_body_util::{combinators::BoxBody, BodyExt};
+use http_body_util::{combinators::BoxBody, BodyExt, Full, Empty};
 use hyper::{upgrade::Upgraded, Request, http, Response, body::Bytes, Method, Version, header::HeaderValue};
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
@@ -13,7 +13,7 @@ use prometheus_client::{
 use rand::Rng;
 use tokio::{sync::RwLock, net::TcpStream};
 use hyper::client::conn::http1::Builder;
-use crate::{StaticConfig, net_monitor::NetMonitor, web_func, empty, full};
+use crate::{StaticConfig, net_monitor::NetMonitor, web_func};
 
 #[derive(Clone)]
 pub struct Proxy {
@@ -161,7 +161,7 @@ impl Proxy {
                         Err(e) => warn!("upgrade error: {}", e),
                     }
                 });
-                let mut response = Response::new(empty());
+                let mut response = Response::new(empty_body());
                 // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
                 let count = rand::thread_rng().gen_range(1..150);
                 for _ in 0..count {
@@ -173,7 +173,7 @@ impl Proxy {
                 Ok(response)
             } else {
                 warn!("CONNECT host is not socket addr: {:?}", req.uri());
-                let mut resp = Response::new(full("CONNECT must be to a socket address"));
+                let mut resp = Response::new(full_body("CONNECT must be to a socket address"));
                 *resp.status_mut() = http::StatusCode::BAD_REQUEST;
 
                 Ok(resp)
@@ -269,11 +269,23 @@ pub struct AccessLabel {
 }
 
 fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
-    let mut resp = Response::new(full("auth need"));
+    let mut resp = Response::new(full_body("auth need"));
     resp.headers_mut().append(
         http::header::PROXY_AUTHENTICATE,
         HeaderValue::from_static("Basic realm=\"are you kidding me\""),
     );
     *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
     resp
+}
+
+pub fn empty_body() -> BoxBody<Bytes, std::io::Error> {
+    Empty::<Bytes>::new()
+        .map_err(|never| match never {})
+        .boxed()
+}
+
+pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, std::io::Error> {
+    Full::new(chunk.into())
+        .map_err(|never| match never {})
+        .boxed()
 }

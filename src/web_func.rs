@@ -21,7 +21,9 @@ use prometheus_client::metrics::family::Family;
 use tokio::fs::{metadata, File};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
-use crate::{empty, full, StaticConfig};
+use crate::StaticConfig;
+use crate::proxy::empty_body;
+use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::registry::Registry;
@@ -96,7 +98,7 @@ async fn metrics(registry: Arc<RwLock<Registry>>) -> Response<BoxBody<Bytes, std
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(full(buffer))
+        .body(full_body(buffer))
         .unwrap()
 }
 
@@ -173,7 +175,7 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Response<BoxBody<Bytes, std::io::
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(full(client_socket_addr.ip().to_string()))
+        .body(full_body(client_socket_addr.ip().to_string()))
         .unwrap()
 }
 
@@ -188,7 +190,7 @@ fn count_stream() -> Response<BoxBody<Bytes, std::io::Error>> {
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::REFRESH, "3")
-        .body(full(
+        .body(full_body(
             String::from_utf8(output.stdout).unwrap()
                 + (&*String::from_utf8(output.stderr).unwrap()),
         ))
@@ -200,7 +202,7 @@ fn not_found() -> Response<BoxBody<Bytes, std::io::Error>> {
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(full(H404))
+        .body(full_body(H404))
         .unwrap()
 }
 
@@ -209,7 +211,7 @@ fn not_modified(last_modified: SystemTime) -> Response<BoxBody<Bytes, std::io::E
         .status(StatusCode::NOT_MODIFIED)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, SERVER_NAME)
-        .body(empty())
+        .body(empty_body())
         .unwrap()
 }
 
@@ -243,7 +245,7 @@ async fn speed(net_monitor: NetMonitor, hostname: &String) -> Response<BoxBody<B
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(full(format!(
+        .body(full_body(format!(
             "{} {}网速 {} {:?} {} {} {}  {:?} {}",
             PART0, hostname, PART1, scales, PART2, interval, PART3, series_up, PART4
         )))
@@ -261,7 +263,7 @@ async fn fetch_all(buffer: Arc<RwLock<VecDeque<Point>>>) -> Vec<Point> {
 
 
 fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
-    let mut resp = Response::new(full("Internal Server Error"));
+    let mut resp = Response::new(full_body("Internal Server Error"));
     *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
     resp
 }
