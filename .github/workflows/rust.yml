@@ -19,12 +19,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+      - name: Set outputs
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
       - name: build-and-push
         run: |
           cargo build --release
-          podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ github.sha }} -t docker.io/arloor/rust_http_proxy:latest
+          podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
           podman login docker.io -u arloor -p ${{ env.REGISTRY_PASSWORD }}
-          podman push docker.io/arloor/rust_http_proxy:${{ github.sha }}
+          podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
           podman push docker.io/arloor/rust_http_proxy:latest
 #    - name: install ssh keys
 #      run: |
