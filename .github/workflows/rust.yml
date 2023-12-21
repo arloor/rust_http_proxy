@@ -29,7 +29,10 @@ jobs:
       - name: gihub_release
         run: |
           cp target/release/rust_http_proxy target/release/rust_http_proxy_linux; 
-          gh release delete v1.0.0 -y --cleanup-tag
+          if $(gh release delete v1.0.0 -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
           git tag  v1.0.0 -m 'latest'
           git push origin v1.0.0
           gh release create v1.0.0 target/release/rust_http_proxy_linux --notes-from-tag --latest -t latest 
