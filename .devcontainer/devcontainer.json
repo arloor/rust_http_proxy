@@ -1,16 +1,16 @@
 {
     // https://mcr.microsoft.com/en-us/catalog?search=devcontainers
-    //"image": "mcr.microsoft.com/devcontainers/rust:bookworm",
-    "postCreateCommand": "make rust",
+    //"image": "mcr.microsoft.com/devcontainers/rust:bookworm", // 自定义镜像
+    "postCreateCommand": "make rust", // 容器创建后的初始化命令
     "customizations": {
         "vscode": {
-            "extensions": [
-                "vadimcn.vscode-lldb",
-                "rust-lang.rust-analyzer",
-                "github.copilot",
-                "github.vscode-github-actions",
-                "redhat.vscode-yaml",
-                "ms-python.python"
+            "extensions": [ // 定义要装哪些插件
+                "vadimcn.vscode-lldb", // 调试插件
+                "rust-lang.rust-analyzer", // rust语言支持
+                "github.copilot", // github的AI代码提示
+                "github.vscode-github-actions", // github actions
+                "redhat.vscode-yaml", // yaml语言支持
+                "ms-python.python" // python语言支持
             ]
         }
     }
