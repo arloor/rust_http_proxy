@@ -1,0 +1,16 @@
+{
+    "image": "mcr.microsoft.com/devcontainers/universal:2",
+    "postCreateCommand": "make rustup",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "vadimcn.vscode-lldb",
+                "rust-lang.rust-analyzer",
+                "github.copilot",
+                "github.vscode-github-actions",
+                "redhat.vscode-yaml",
+                "ms-python.python"
+            ]
+        }
+    }
+}
