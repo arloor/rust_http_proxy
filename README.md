@@ -43,9 +43,10 @@ export log_dir=/tmp
 export log_file=proxy.log
 # 代替nginx的web服务器功能，展示http网站
 export web_content_path=/usr/share/nginx/html
-# png/jpeg/jpg等图片资源的防盗链配置，要求Request的Referer header要么为空，要么包含下面的值
+# Referer请求头处理
+# 1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含下面的值
+# 2. 外链访问监控：如果Referer不包含下面的值，并且访问html资源时，req_from_out++，用于外链访问监控
 export refer=
-
 ```
 
 其中，tls证书(`cert`)和pem格式的私钥(`raw_key`)可以通过openssl命令一键生成：
