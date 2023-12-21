@@ -5,6 +5,7 @@
     "customizations": {
         "vscode": {
             "extensions": [ // 定义要装哪些插件
+                "ms-ceintl.vscode-language-pack-zh-hans", // 中文语言包
                 "vadimcn.vscode-lldb", // 调试插件
                 "rust-lang.rust-analyzer", // rust语言支持
                 "github.copilot", // github的AI代码提示
