@@ -1,5 +1,6 @@
 {
-    "image": "mcr.microsoft.com/devcontainers/universal:2",
+    // https://mcr.microsoft.com/en-us/catalog?search=devcontainers
+    //"image": "mcr.microsoft.com/devcontainers/rust:bookworm",
     "postCreateCommand": "make rustup",
     "customizations": {
         "vscode": {
