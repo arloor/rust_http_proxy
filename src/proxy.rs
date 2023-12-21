@@ -277,7 +277,7 @@ async fn tunnel(
 
     Ok(())
 }
-
+/// Returns the host and port of the given URI.
 fn host_addr(uri: &http::Uri) -> Option<String> {
     uri.authority().and_then(|auth| Some(auth.to_string()))
 }
