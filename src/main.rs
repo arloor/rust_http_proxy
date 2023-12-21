@@ -46,12 +46,11 @@ pub struct GlobalConfig {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_config_from_env();
-    let config: &'static GlobalConfig = Box::leak(Box::new(config));
-    info(config);
+    let config: &'static GlobalConfig = load_config_from_env();
     let proxy_handler = ProxyHandler::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
+    
     if config.over_tls {
         let mut listener = TlsListener::new(
             rust_tls_acceptor(&config.raw_key, &config.cert)?,
@@ -164,7 +163,7 @@ async fn proxy(
     proxy_handler.proxy(req, config, client_socket_addr).await
 }
 
-fn info(config: &GlobalConfig) {
+fn log_config(config: &GlobalConfig) {
     info!("log is output to {}/{}", config.log_dir, config.log_file);
     info!("hostname seems to be {}", config.hostname);
     if config.basic_auth.len() != 0 && config.ask_for_auth {
@@ -191,17 +190,17 @@ fn info(config: &GlobalConfig) {
 }
 
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
-    if let Some(http_err) = http_err.downcast_ref::<Error>() {
+    if let Some(http_err) = http_err.downcast_ref::<Error>() { // 转换为hyper::Error
         let cause = match http_err.source() {
             None => http_err,
             Some(e) => e, // 解析cause
         };
-        if http_err.is_user() {
+        if http_err.is_user() { // 判断是否是用户错误
             warn!(
                 "[hyper user error]: {:?} [client:{}]",
                 cause, client_socket_addr
             );
-        } else {
+        } else { // 系统错误
             debug!(
                 "[hyper system error]: {:?} [client:{}]",
                 cause, client_socket_addr
@@ -215,7 +214,7 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::err
     }
 }
 
-fn load_config_from_env() -> GlobalConfig {
+fn load_config_from_env() -> &'static GlobalConfig {
     let config = GlobalConfig {
         log_dir: Box::leak(Box::new(env::var("log_dir").unwrap_or("/tmp".to_string()))),
         log_file: Box::leak(Box::new(
@@ -241,7 +240,8 @@ fn load_config_from_env() -> GlobalConfig {
         )),
     };
     init_log(config.log_dir, config.log_file);
-    return config;
+    log_config(&config);
+    return Box::leak(Box::new(config));
 }
 
 pub fn local_ip() -> io::Result<String> {
