@@ -73,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let now = SystemTime::now();
                             if now.duration_since(last_refresh_time).unwrap_or(Duration::from_secs(0)) > Duration::from_secs(REFRESH_TIME) {
                                 last_refresh_time = now;
+                                // 重新加载证书
                                 if let Ok(new_acceptor)=rust_tls_acceptor(&config.raw_key, &config.cert){
                                     info!("Rotating certificate triggered...");
                                     tx.try_send(new_acceptor).ok(); // 防止阻塞
@@ -104,6 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 message = rx.recv() => {
                     let acceptor = message.expect("Channel should not be closed");
                     info!("Rotating certificate...");
+                    // Replace the acceptor with the new one
                     listener.replace_acceptor(acceptor);
                 }
             }
