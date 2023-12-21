@@ -19,3 +19,8 @@ rust:
 
 musl:
 	bash deploy/musl.sh
+
+gh:
+	cargo install --path .
+	gh release delete-asset v1.0.0 rust_http_proxy --repo github.com/arloor/rust_http_proxy -y
+	gh release upload v1.0.0 target/release/rust_http_proxy --repo github.com/arloor/rust_http_proxy
