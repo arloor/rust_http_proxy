@@ -124,7 +124,7 @@ Nginx收到的消息：
 
 ### Prometheus Exporter
 
-在 `/metrics`
+提供了Prometheus的Exporter，可以使用[此Grafana大盘Template](https://grafana.com/grafana/dashboards/20185-rust-http-proxy/)来创建Grafana大盘
 
 ```text
 # HELP req_from_out Number of HTTP requests received.
