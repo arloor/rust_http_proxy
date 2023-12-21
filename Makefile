@@ -1,13 +1,5 @@
 all: gh
 
-
-rpm:
-	bash deploy/rpm.sh
-
-# 第一次执行需要 make pre&&make all
-pre: rust musl
-	bash deploy/rpm_prepare.sh
-
 rust:
 	bash deploy/rust_install.sh
 
