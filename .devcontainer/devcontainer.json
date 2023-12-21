@@ -1,7 +1,7 @@
 {
     // https://mcr.microsoft.com/en-us/catalog?search=devcontainers
     //"image": "mcr.microsoft.com/devcontainers/rust:bookworm",
-    "postCreateCommand": "make rustup",
+    "postCreateCommand": "make rust",
     "customizations": {
         "vscode": {
             "extensions": [

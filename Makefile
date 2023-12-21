@@ -11,8 +11,11 @@ build:
 	bash deploy/build.sh
 
 # 第一次执行需要 make pre&&make all
-pre: rustup
+pre: rust musl
 	bash deploy/rpm_prepare.sh
 
-rustup:
+rust:
 	bash deploy/rust_install.sh
+
+musl:
+	bash deploy/musl.sh
