@@ -59,14 +59,6 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 
 ## 安装说明
 
-### Docker 安装 
-
-> 通过Github Action自动更新release，永远是最新版，可放心使用
-
-```shell
-docker run --rm -it --name proxy --net host docker.io/arloor/rust_http_proxy
-```
-
 ### linux amd64 可执行文件
 
 > 通过Github Action自动更新release，永远是最新版，可放心使用
@@ -77,6 +69,38 @@ chmod +x /tmp/rust_http_proxy_linux
 /tmp/rust_http_proxy_linux
 ```
 
+### Docker 安装 
+
+> 通过Github Action自动更新release，永远是最新版，可放心使用
+
+```shell
+docker run --rm -it --name proxy --net host docker.io/arloor/rust_http_proxy
+```
+
+## 可观测
+
+### Linux运行时的网速监控
+
+在linux运行时，会监控网卡网速，并展示在 `/speed` 。
+
+![](speed.png)
+
+### Prometheus Exporter
+
+提供了Prometheus的Exporter
+
+```text
+# HELP req_from_out Number of HTTP requests received.
+# TYPE req_from_out counter
+req_from_out_total{referer="all",path="all"} 4
+# HELP proxy_access num proxy_access.
+# TYPE proxy_access counter
+# EOF
+```
+
+可以使用[此Grafana大盘Template](https://grafana.com/grafana/dashboards/20185-rust-http-proxy/)来创建Grafana大盘，效果如下
+
+![Alt text](grafana-dashboard.png)
 
 ## 客户端
 
@@ -105,28 +129,3 @@ Nginx收到的消息：
 ![](traffic_at_nginx.png)
 
 可以看到请求URL和`Proxy-Connection`都被正确处理了。
-
-## 可观测性
-
-### Linux运行时的网速监控
-
-在linux运行时，会监控网卡网速，并展示在 `/speed` 。
-
-![](speed.png)
-
-### Prometheus Exporter
-
-提供了Prometheus的Exporter
-
-```text
-# HELP req_from_out Number of HTTP requests received.
-# TYPE req_from_out counter
-req_from_out_total{referer="all",path="all"} 4
-# HELP proxy_access num proxy_access.
-# TYPE proxy_access counter
-# EOF
-```
-
-可以使用[此Grafana大盘Template](https://grafana.com/grafana/dashboards/20185-rust-http-proxy/)来创建Grafana大盘，效果如下
-
-![Alt text](grafana-dashboard.png)
