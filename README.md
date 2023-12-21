@@ -76,16 +76,6 @@ chmod +x ./rust_http_proxy_linux
 ./rust_http_proxy_linux
 ```
 
-### Macos arm64 可执行文件
-
-> 人工不定期更新，Mac上建议自行编译
-
-```shell
-curl -sSLfO https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy_mac 
-chmod +x ./rust_http_proxy_mac
-./rust_http_proxy_mac
-```
-
 ## 客户端
 
 可以使用clash作为客户端，见：
