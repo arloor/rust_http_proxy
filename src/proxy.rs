@@ -12,7 +12,7 @@ use hyper::{
     body::Bytes, header::HeaderValue, http, upgrade::Upgraded, Method, Request, Response, Version,
 };
 use hyper_util::rt::TokioIo;
-use log::{debug, info, warn};
+use log::{info, warn};
 use percent_encoding::percent_decode_str;
 use prometheus_client::{
     encoding::EncodeLabelSet,
@@ -27,6 +27,7 @@ pub struct ProxyHandler {
     prom_registry: Arc<RwLock<Registry>>,
     http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
     access_counter: Family<AccessLabel, Counter, fn() -> Counter>,
+    tun_bytes_counter: Family<AccessLabel, Counter, fn() -> Counter>,
     net_monitor: NetMonitor,
 }
 
@@ -52,11 +53,20 @@ impl ProxyHandler {
             "num proxy_access",
             access.clone(),
         );
+        let tun_bytes_counter = Family::<AccessLabel, Counter>::default();
+        registry.write().await.register(
+            // With the metric name.
+            "tun_bytes",
+            // And the metric help text.
+            "num tun_bytes",
+            tun_bytes_counter.clone(),
+        );
         ProxyHandler {
             prom_registry: registry.clone(),
             http_req_counter: http_requests,
             access_counter: access,
             net_monitor: monitor,
+            tun_bytes_counter: tun_bytes_counter,
         }
     }
     pub async fn proxy(
@@ -164,6 +174,7 @@ impl ProxyHandler {
             // `on_upgrade` future.
             if let Some(addr) = host_addr(req.uri()) {
                 let access = self.access_counter.clone();
+                let tun_bytes_counter=self.tun_bytes_counter.clone();
                 tokio::task::spawn(async move {
                     match hyper::upgrade::on(req).await {
                         Ok(upgraded) => {
@@ -171,9 +182,19 @@ impl ProxyHandler {
                                 client: client_socket_addr.ip().to_string(),
                                 target: addr.clone(),
                             };
-                            if let Err(e) = tunnel(upgraded, addr, access, access_label).await {
-                                warn!("server io error: {}", e);
-                            };
+                            match tunnel(upgraded, addr.clone(), access, access_label.clone()).await {
+                                Err(e) => warn!("to {} io error: {}", addr, e),
+                                Ok((from_client, from_server)) => {
+                                    let total_bytes=from_client+from_server;
+                                    tun_bytes_counter
+                                        .get_or_create(&AccessLabel {
+                                            client: "all".to_string(),
+                                            target: "all".to_string(),
+                                        })
+                                        .inc_by(total_bytes);
+                                    tun_bytes_counter.get_or_create(&access_label).inc_by(total_bytes);
+                                }
+                            }
                         }
                         Err(e) => warn!("upgrade error: {}", e),
                     }
@@ -253,7 +274,7 @@ async fn tunnel(
     addr: String,
     access: Family<AccessLabel, Counter, fn() -> Counter>,
     access_label: AccessLabel,
-) -> io::Result<()> {
+) -> io::Result<(u64, u64)> {
     // Connect to remote server
     let mut server = TcpStream::connect(addr.clone()).await?;
     access
@@ -269,13 +290,7 @@ async fn tunnel(
     let (from_client, from_server) =
         tokio::io::copy_bidirectional(&mut upgraded, &mut server).await?;
 
-    // Print message when done
-    debug!(
-        "client wrote {} bytes and received {} bytes",
-        from_client, from_server
-    );
-
-    Ok(())
+    Ok((from_client, from_server))
 }
 
 fn host_addr(uri: &http::Uri) -> Option<String> {
