@@ -1,4 +1,4 @@
-name: Rust
+name: Update
 
 on:
   push:
@@ -14,7 +14,7 @@ env:
   GH_TOKEN: ${{ github.token }}
 
 jobs:
-  build-and-push:
+  update_release_and_push_images:
 
     runs-on: ubuntu-latest
 
