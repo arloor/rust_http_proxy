@@ -172,7 +172,7 @@ async fn serve_path(
     let content_type = mime_type.as_ref();
     let content_type = if !content_type
         .to_ascii_lowercase()
-        .contains("; charset=utf-8")
+        .contains("charset")
     {
         format!("{}{}", &content_type, "; charset=utf-8")
     } else {
