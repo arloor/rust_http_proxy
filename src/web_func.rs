@@ -1,4 +1,4 @@
-use crate::net_monitor::{NetMonitor, Point};
+use crate::net_monitor::{NetMonitor, TimeValue};
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
@@ -270,7 +270,7 @@ async fn speed(
         .unwrap()
 }
 
-async fn fetch_all(buffer: Arc<RwLock<VecDeque<Point>>>) -> Vec<Point> {
+async fn fetch_all(buffer: Arc<RwLock<VecDeque<TimeValue>>>) -> Vec<TimeValue> {
     let buffer = buffer.read().await;
     let x = buffer.as_slices();
     let mut r = vec![];

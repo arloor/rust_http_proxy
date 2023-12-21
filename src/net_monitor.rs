@@ -6,26 +6,26 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
-pub struct Point {
+pub struct TimeValue {
     pub time: String,
     pub value: u64,
 }
 
-impl Point {
-    pub fn new(time: String, value: u64) -> Point {
-        Point { time, value }
+impl TimeValue {
+    pub fn new(time: String, value: u64) -> TimeValue {
+        TimeValue { time, value }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct NetMonitor {
-    buffer: Arc<RwLock<VecDeque<Point>>>,
+    buffer: Arc<RwLock<VecDeque<TimeValue>>>,
 }
 
 impl NetMonitor {
     pub fn new() -> NetMonitor {
         NetMonitor {
-            buffer: Arc::new(RwLock::new(VecDeque::<Point>::new())),
+            buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
         }
     }
     // Inter-|   Receive                                                |  Transmit
@@ -33,7 +33,7 @@ impl NetMonitor {
     //     lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
     //   ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
 
-    pub fn get_data(&self) -> Arc<RwLock<VecDeque<Point>>> {
+    pub fn get_data(&self) -> Arc<RwLock<VecDeque<TimeValue>>> {
         return self.buffer.clone();
     }
     pub fn start(&self) {
@@ -74,7 +74,7 @@ impl NetMonitor {
                                 let system_time = SystemTime::now();
                                 let datetime: DateTime<Local> = system_time.into();
                                 let mut buffer = to_move.write().await;
-                                buffer.push_back(Point::new(
+                                buffer.push_back(TimeValue::new(
                                     datetime.format("%H:%M:%S").to_string(),
                                     (new - last) * 8,
                                 ));
