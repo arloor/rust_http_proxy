@@ -145,6 +145,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+/// 代理请求
+/// # Arguments
+/// * `req` - hyper::Request
+/// * `config` - 全局配置
+/// * `client_socket_addr` - 客户端socket地址
+/// * `proxy_handler` - 代理处理器
+/// # Returns
+/// * `Result<Response<BoxBody<Bytes, io::Error>>, io::Error>` - hyper::Response
 async fn proxy(
     req: Request<hyper::body::Incoming>,
     config: &'static GlobalConfig,
