@@ -71,9 +71,9 @@ docker run --rm -it --name proxy --net host docker.io/arloor/rust_http_proxy
 > 通过Github Action自动更新release，永远是最新版，可放心使用
 
 ```shell
-curl -sSLfO https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy_linux 
-chmod +x ./rust_http_proxy_linux
-./rust_http_proxy_linux
+curl -sSLf https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy_linux -o /tmp/rust_http_proxy_linux
+chmod +x /tmp/rust_http_proxy_linux
+/tmp/rust_http_proxy_linux
 ```
 
 
