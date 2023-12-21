@@ -2,7 +2,7 @@ use crate::net_monitor::{NetMonitor, Point};
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
-use crate::StaticConfig;
+use crate::GlobalConfig;
 use futures_util::TryStreamExt;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, StreamBody};
@@ -33,7 +33,7 @@ const SERVER_NAME: &str = "arloor's creation";
 pub async fn serve_http_request(
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
-    config: &'static StaticConfig,
+    config: &'static GlobalConfig,
     path: &str,
     net_monitor: NetMonitor,
     http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,

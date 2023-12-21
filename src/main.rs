@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 const TRUE: &str = "true";
 const REFRESH_TIME: u64 = 24 * 60 * 60;
 
-pub struct StaticConfig {
+pub struct GlobalConfig {
     log_dir: &'static String,
     log_file: &'static String,
     port: u16,
@@ -47,7 +47,7 @@ pub struct StaticConfig {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config_from_env();
-    let config: &'static StaticConfig = Box::leak(Box::new(config));
+    let config: &'static GlobalConfig = Box::leak(Box::new(config));
     info(config);
     let proxy_handler = ProxyHandler::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
@@ -147,14 +147,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn proxy(
     req: Request<hyper::body::Incoming>,
-    config: &'static StaticConfig,
+    config: &'static GlobalConfig,
     client_socket_addr: SocketAddr,
     proxy_handler: ProxyHandler,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler.proxy(req, config, client_socket_addr).await
 }
 
-fn info(config: &StaticConfig) {
+fn info(config: &GlobalConfig) {
     info!("log is output to {}/{}", config.log_dir, config.log_file);
     info!("hostname seems to be {}", config.hostname);
     if config.basic_auth.len() != 0 && config.ask_for_auth {
@@ -205,8 +205,8 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::err
     }
 }
 
-fn load_config_from_env() -> StaticConfig {
-    let config = StaticConfig {
+fn load_config_from_env() -> GlobalConfig {
+    let config = GlobalConfig {
         log_dir: Box::leak(Box::new(env::var("log_dir").unwrap_or("/tmp".to_string()))),
         log_file: Box::leak(Box::new(
             env::var("log_file").unwrap_or("proxy.log".to_string()),
