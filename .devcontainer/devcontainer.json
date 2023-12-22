@@ -15,7 +15,12 @@
                 "foxundermoon.shell-format", // shell格式化
                 "tamasfe.even-better-toml", // toml格式化
                 "serayuzgur.crates" // crates.io插件
-            ]
+            ],
+            "settings": {
+                "files.watcherExclude": {
+                    "**/target/**": true
+                }
+            }
         }
     }
 }
