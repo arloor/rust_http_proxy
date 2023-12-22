@@ -1,7 +1,7 @@
 {
     // https://mcr.microsoft.com/en-us/catalog?search=devcontainers
     //"image": "mcr.microsoft.com/devcontainers/rust:bookworm", // 自定义镜像
-    "postCreateCommand": "make rust", // 容器创建后的初始化命令
+    // "postCreateCommand": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-host x86_64-unknown-linux-gnu -y", // 容器创建后的初始化命令
     "customizations": {
         "vscode": {
             "extensions": [ // 定义要装哪些插件
