@@ -9,7 +9,7 @@ edition = "2021"
 hyper = { version = "1", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 http-body-util = "0.1"
-hyper-util = { version = "0.1", features = ["tokio","server-auto"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 rustls-pemfile = "1"
 futures-util = "0.3"
 log = "0.4"
@@ -20,6 +20,6 @@ mime_guess = "2.0"
 httpdate = "1.0"
 percent-encoding = "2.2"
 chrono = "0.4"
-tls-listener  ={ version="0.9",features=["rustls"]}
+tls-listener = { version = "0.9", features = ["rustls"] }
 pin-project-lite = "0.2"
 prometheus-client = "0.22"
