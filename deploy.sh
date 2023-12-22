@@ -14,6 +14,6 @@ ssh root@us.arloor.dev '
             source /etc/profile
             echo $http_proxy
             hostname;
-            systemctl restart proxy;
+            systemctl restart guest;
             podman rmi -a 2>/dev/null
             '
