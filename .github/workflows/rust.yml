@@ -11,7 +11,6 @@ env:
   REGISTRY_USER: arloor
   IMAGE_REGISTRY: docker.io
   REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
-  GH_TOKEN: ${{ github.token }}
 
 jobs:
   all:
@@ -25,6 +24,8 @@ jobs:
         run: |
           cargo build --release
       - name: gihub_release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           cp target/release/rust_http_proxy target/release/rust_http_proxy_linux; 
           if $(gh release delete v1.0.0 -y --cleanup-tag); 
