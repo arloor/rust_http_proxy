@@ -23,7 +23,7 @@ jobs:
           cp target/release/rust_http_proxy target/release/rust_http_proxy_gnu;
       - name: build_musl
         id: build_musl
-        uses: arloor/rust_musl_action@v1
+        uses: arloor/rust_musl_action@v2
       - name: mv_musl_bin
         run: |
           # 如果target/release/不存在，则创建该文件夹
