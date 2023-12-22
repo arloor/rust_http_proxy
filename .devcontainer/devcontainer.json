@@ -11,7 +11,8 @@
                 "github.copilot", // github的AI代码提示
                 "github.vscode-github-actions", // github actions
                 "redhat.vscode-yaml", // yaml语言支持
-                "ms-python.python" // python语言支持
+                "ms-python.python", // python语言支持
+                "foxundermoon.shell-format"
             ]
         }
     }
