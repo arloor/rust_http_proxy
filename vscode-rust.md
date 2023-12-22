@@ -2,8 +2,10 @@
 
 ### 插件
 
-- rust-analyzer
-- codelldb
+- "vadimcn.vscode-lldb", // 调试插件
+- "rust-lang.rust-analyzer", // rust语言支持
+- "tamasfe.even-better-toml", // toml格式化
+- "serayuzgur.crates" // crates.io插件
 
 ### 任务
 
