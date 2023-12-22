@@ -40,6 +40,7 @@ jobs:
             then echo "delete old release"; 
             else echo "no old release";
           fi
+          git tag -d v1.0.0
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
           git tag  v1.0.0 -m 'latest'
