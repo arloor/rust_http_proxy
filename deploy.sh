@@ -1,5 +1,5 @@
 #! /bin/bash
-hosts="hk.arloor.dev sg.arloor.dev di.arloor.dev us.arloor.dev gg.arloor.dev ti.arloor.dev"
+hosts="ti.arloor.dev hk.arloor.dev sg.arloor.dev di.arloor.dev us.arloor.dev gg.arloor.dev"
 for i in ${hosts}; do
     ssh root@${i} '
             source /etc/profile
