@@ -20,6 +20,12 @@ jobs:
       - name: build
         run: |
           cargo build --release
+      - name: push
+        run: |
+          podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
+          podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
+          podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
+          podman push docker.io/arloor/rust_http_proxy:latest
       - name: gihub_release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,12 +40,6 @@ jobs:
           git tag  v1.0.0 -m 'latest'
           git push origin v1.0.0
           gh release create v1.0.0 target/release/rust_http_proxy_linux --notes-from-tag --latest -t latest 
-      - name: push
-        run: |
-          podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
-          podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
-          podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
-          podman push docker.io/arloor/rust_http_proxy:latest
           
 #    - name: install ssh keys
 #      run: |
