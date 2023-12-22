@@ -30,6 +30,7 @@ use tokio::sync::mpsc;
 const TRUE: &str = "true";
 const REFRESH_TIME: u64 = 24 * 60 * 60;
 
+/// Represents the global configuration for the HTTP proxy server.
 pub struct GlobalConfig {
     log_dir: &'static String,
     log_file: &'static String,
