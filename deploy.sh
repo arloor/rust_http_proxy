@@ -1,11 +1,11 @@
 #! /bin/bash
 hosts="ti.arloor.dev hk.arloor.dev sg.arloor.dev di.arloor.dev us.arloor.dev gg.arloor.dev bwg.arloor.dev"
-echo "" > ~/.ssh/known_hosts
+# echo "" > ~/.ssh/known_hosts
+# for i in ${hosts}; do
+#     ssh-keyscan -H ${i} >> ~/.ssh/known_hosts
+# done
 for i in ${hosts}; do
-    ssh-keyscan -H ${i} >> ~/.ssh/known_hosts
-done
-for i in ${hosts}; do
-    ssh root@${i} '
+    ssh -o StrictHostKeyChecking=no root@${i} '
             source /etc/profile
             echo $http_proxy
             hostname;
@@ -13,7 +13,7 @@ for i in ${hosts}; do
             podman rmi -a 2>/dev/null
             '
 done
-ssh root@us.arloor.dev '
+ssh -o StrictHostKeyChecking=no root@us.arloor.dev '
             source /etc/profile
             echo $http_proxy
             hostname;
