@@ -10,7 +10,7 @@ for i in ${hosts}; do
             podman rmi -a 2>/dev/null
             '
 done
-ssh-keyscan -H ${i} > ~/.ssh/known_hosts
+ssh-keyscan -H us.arloor.dev > ~/.ssh/known_hosts
 ssh root@us.arloor.dev '
             source /etc/profile
             echo $http_proxy
