@@ -10,8 +10,8 @@ hyper = { version = "1", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
-rustls-pemfile = "1"
-tokio-rustls = "0.24"
+rustls-pemfile = "2"
+tokio-rustls = "0.25"
 futures-util = "0.3"
 log = "0.4"
 flexi_logger = "0.27"
