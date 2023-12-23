@@ -1,4 +1,3 @@
-use rustls_pemfile::Item;
 use std::fs::File;
 use std::sync::Arc;
 use tokio_rustls::rustls::pki_types::CertificateDer;
@@ -19,23 +18,10 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Erro
         File::open(cert).map_err(|_| <&str as Into<Error>>::into("open cert failed"))?;
     let certs = rustls_pemfile::certs(&mut BufReader::new(cert_file))
         .collect::<io::Result<Vec<CertificateDer<'static>>>>();
-    let key_option = rustls_pemfile::read_one(&mut BufReader::new(key_file))?;
-    let key = if let Some(key_item) = key_option {
-        match key_item {
-            Item::Pkcs8Key(key) => key.into(),
-            Item::Pkcs1Key(key) => key.into(),
-            Item::Sec1Key(key) => key.into(),
-            Item::X509Certificate(_) => return Err("cert in private key file".into()),
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "error read private key".to_string(),
-                )
-                .into())
-            }
-        }
-    } else {
-        return Err("can not find any pem in key file".into());
+    let key_option = rustls_pemfile::private_key(&mut BufReader::new(key_file))?;
+    let key = match key_option{
+        Some(key) => key,
+        None => return Err("can not find any pem in key file".into()),
     };
 
     match ServerConfig::builder()
