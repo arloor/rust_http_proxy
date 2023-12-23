@@ -20,30 +20,16 @@ use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use std::{env, io};
 use tls_listener::TlsListener;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
+use tokio::time;
 
 const TRUE: &str = "true";
-const REFRESH_TIME: u64 = 24 * 60 * 60;
-
-/// Represents the global configuration for the HTTP proxy server.
-pub struct GlobalConfig {
-    log_dir: &'static String,
-    log_file: &'static String,
-    port: u16,
-    cert: &'static String,
-    raw_key: &'static String,
-    basic_auth: &'static String,
-    web_content_path: &'static String,
-    refer: &'static String,
-    ask_for_auth: bool,
-    over_tls: bool,
-    hostname: &'static String,
-}
+const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -51,15 +37,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proxy_handler = ProxyHandler::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
-    
+
     if config.over_tls {
         let mut listener = TlsListener::new(
             rust_tls_acceptor(&config.raw_key, &config.cert)?,
             TcpListener::bind(addr).await?,
         );
-        let (tx, mut rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
-
-        let mut last_refresh_time = SystemTime::now();
+        let mut rx = init_listener_config_refresh_task(config);
         loop {
             tokio::select! {
                 _ = terminate_signal.recv()=>{
@@ -70,16 +54,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match conn {
                         Ok((conn,client_socket_addr)) => {
                             let io = TokioIo::new(conn);
-                            let now = SystemTime::now();
-                            if now.duration_since(last_refresh_time).unwrap_or(Duration::from_secs(0)) > Duration::from_secs(REFRESH_TIME) {
-                                last_refresh_time = now;
-                                // 重新加载证书
-                                if let Ok(new_acceptor)=rust_tls_acceptor(&config.raw_key, &config.cert){
-                                    info!("Rotating certificate triggered...");
-                                    tx.try_send(new_acceptor).ok(); // 防止阻塞
-                                    // tx.send(new_acceptor).await.ok();
-                                }
-                            }
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
                                 let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
@@ -104,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 message = rx.recv() => {
                     let acceptor = message.expect("Channel should not be closed");
-                    info!("Rotating certificate...");
+                    info!("tls config is updated");
                     // Replace the acceptor with the new one
                     listener.replace_acceptor(acceptor);
                 }
@@ -191,17 +165,20 @@ fn log_config(config: &GlobalConfig) {
 }
 
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
-    if let Some(http_err) = http_err.downcast_ref::<Error>() { // 转换为hyper::Error
+    if let Some(http_err) = http_err.downcast_ref::<Error>() {
+        // 转换为hyper::Error
         let cause = match http_err.source() {
             None => http_err,
             Some(e) => e, // 解析cause
         };
-        if http_err.is_user() { // 判断是否是用户错误
+        if http_err.is_user() {
+            // 判断是否是用户错误
             warn!(
                 "[hyper user error]: {:?} [client:{}]",
                 cause, client_socket_addr
             );
-        } else { // 系统错误
+        } else {
+            // 系统错误
             debug!(
                 "[hyper system error]: {:?} [client:{}]",
                 cause, client_socket_addr
@@ -251,4 +228,35 @@ pub fn local_ip() -> io::Result<String> {
     return socket
         .local_addr()
         .map(|local_addr| local_addr.ip().to_string());
+}
+
+fn init_listener_config_refresh_task(
+    config: &'static GlobalConfig,
+) -> mpsc::Receiver<tokio_rustls::TlsAcceptor> {
+    let (tx, rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
+    tokio::spawn(async move {
+        loop {
+            time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
+            if let Ok(new_acceptor) = rust_tls_acceptor(&config.raw_key, &config.cert) {
+                info!("update tls config every {} seconds", REFRESH_SECONDS);
+                tx.try_send(new_acceptor).ok(); // 防止阻塞
+            }
+        }
+    });
+    return rx;
+}
+
+/// Represents the global configuration for the HTTP proxy server.
+pub struct GlobalConfig {
+    log_dir: &'static String,
+    log_file: &'static String,
+    port: u16,
+    cert: &'static String,
+    raw_key: &'static String,
+    basic_auth: &'static String,
+    web_content_path: &'static String,
+    refer: &'static String,
+    ask_for_auth: bool,
+    over_tls: bool,
+    hostname: &'static String,
 }
