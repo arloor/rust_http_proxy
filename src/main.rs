@@ -235,10 +235,11 @@ fn init_listener_config_refresh_task(
 ) -> mpsc::Receiver<tokio_rustls::TlsAcceptor> {
     let (tx, rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
     tokio::spawn(async move {
+        info!("update tls config every {} seconds", REFRESH_SECONDS);
         loop {
             time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
             if let Ok(new_acceptor) = rust_tls_acceptor(&config.raw_key, &config.cert) {
-                info!("update tls config every {} seconds", REFRESH_SECONDS);
+                info!("update tls config");
                 tx.try_send(new_acceptor).ok(); // 防止阻塞
             }
         }
