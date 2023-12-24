@@ -164,6 +164,12 @@ fn log_config(config: &GlobalConfig) {
     );
 }
 
+/// 处理hyper错误
+/// # Arguments
+/// * `client_socket_addr` - 客户端socket地址
+/// * `http_err` - hyper错误
+/// # Returns
+/// * `()` - 无返回值
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         // 转换为hyper::Error
