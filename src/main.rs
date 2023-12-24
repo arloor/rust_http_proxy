@@ -34,10 +34,14 @@ const REFRESH_SECONDS: u64 = 24 * 60 * 60; // 1 day
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config: &'static GlobalConfig = load_config_from_env();
+    serve(config).await?;
+    Ok(())
+}
+
+async fn serve(config: &'static GlobalConfig) -> Result<(), Box<dyn std::error::Error>> {
     let proxy_handler = ProxyHandler::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
-
     if config.over_tls {
         let mut listener = TlsListener::new(
             rust_tls_acceptor(&config.raw_key, &config.cert)?,
