@@ -66,8 +66,12 @@ impl NetMonitor {
                                     if array.get(0).unwrap_or(&"").starts_with("utun") {
                                         continue;
                                     }
-                                    new =
-                                        new + array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(last);
+                                    new = new
+                                        + array
+                                            .get(9)
+                                            .unwrap_or(&"")
+                                            .parse::<u64>()
+                                            .unwrap_or(last);
                                 }
                             }
                             if last != 0 {

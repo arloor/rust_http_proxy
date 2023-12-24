@@ -1,7 +1,10 @@
-use flexi_logger::{Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, Logger, Naming, LoggerHandle, FlexiLoggerError};
+use flexi_logger::{
+    Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, FlexiLoggerError, Logger, LoggerHandle,
+    Naming,
+};
 use log::Record;
 
-pub fn init_log(log_dir: &str, log_file: &str)->Result<LoggerHandle,FlexiLoggerError> {
+pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLoggerError> {
     Logger::try_with_env_or_str("info")?
         .log_to_file(
             FileSpec::default()
