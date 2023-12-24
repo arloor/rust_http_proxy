@@ -29,7 +29,7 @@ use tokio::sync::mpsc;
 use tokio::time;
 
 const TRUE: &str = "true";
-const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
+const REFRESH_SECONDS: u64 = 24 * 60 * 60; // 1 day
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
