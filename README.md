@@ -74,9 +74,9 @@ curl  https://google.com --proxy-user "username:passwrod" -x https://xxxx.com:po
 > 通过Github Action自动更新release，永远是最新版，可放心使用
 
 ```shell
-curl -sSLf https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy_musl -o /tmp/rust_http_proxy
-chmod +x /tmp/rust_http_proxy
-/tmp/rust_http_proxy
+curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy_musl
+install rust_http_proxy_musl /usr/local/bin/rust_http_proxy
+rust_http_proxy
 ```
 
 ### Docker 安装 
