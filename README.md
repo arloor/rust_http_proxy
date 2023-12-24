@@ -49,6 +49,8 @@ export web_content_path=/usr/share/nginx/html
 export refer=
 ```
 
+**SSL配置**
+
 其中，tls证书(`cert`)和pem格式的私钥(`raw_key`)可以通过openssl命令一键生成：
 
 ```shell
@@ -56,6 +58,14 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 ```
 
 如需签名证书，请购买tls证书或免费解决方案（acme.sh等）
+
+**测试TLS Proxy**
+
+可以使用curl来测试
+
+```shell
+curl  https://google.com --proxy-user "username:passwrod" -x https://xxxx.com:port 
+```
 
 ## 安装说明
 
