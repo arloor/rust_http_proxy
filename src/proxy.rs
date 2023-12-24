@@ -89,7 +89,7 @@ impl ProxyHandler {
                         "reject http GET/POST when ask_for_auth and basic_auth not empty",
                     ));
                 }
-                return Ok(web_func::serve_http_request(
+                return web_func::serve_http_request(
                     &req,
                     client_socket_addr,
                     config,
@@ -98,7 +98,8 @@ impl ProxyHandler {
                     self.http_req_counter.clone(),
                     self.prom_registry.clone(),
                 )
-                .await);
+                .await
+                .map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
             }
             if let Some(host) = req.uri().host() {
                 let host = host.to_string();
@@ -110,10 +111,10 @@ impl ProxyHandler {
                     req.version(),
                     req.headers()
                         .get(http::header::HOST)
-                        .unwrap_or(&HeaderValue::from_str(host.as_str()).unwrap()),
+                        .map_or("", |h| h.to_str().unwrap_or(host.as_str())),
                     req.headers()
                         .get(http::header::USER_AGENT)
-                        .unwrap_or(&HeaderValue::from_str("None").unwrap())
+                        .map_or("", |h| h.to_str().unwrap_or("")),
                 );
             };
         }

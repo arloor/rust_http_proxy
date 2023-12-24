@@ -4,6 +4,7 @@ use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
 use crate::GlobalConfig;
 use futures_util::TryStreamExt;
+use http::Error;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, StreamBody};
 use httpdate::fmt_http_date;
@@ -18,6 +19,7 @@ use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
 use std::collections::VecDeque;
+use std::io;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -38,7 +40,7 @@ pub async fn serve_http_request(
     net_monitor: NetMonitor,
     http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
     prom_registry: Arc<RwLock<Registry>>,
-) -> Response<BoxBody<Bytes, std::io::Error>> {
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let hostname = config.hostname;
     let web_content_path = config.web_content_path;
     let refer = config.refer;
@@ -56,7 +58,7 @@ pub async fn serve_http_request(
                 "{} wrong Referer Header \"{}\" from {}",
                 path, referer_header, client_socket_addr
             );
-            return build_500_resp();
+            return Ok(build_500_resp());
         }
     }
     return match (req.method(), path) {
@@ -107,21 +109,20 @@ pub async fn serve_http_request(
     };
 }
 
-async fn metrics(registry: Arc<RwLock<Registry>>) -> Response<BoxBody<Bytes, std::io::Error>> {
+async fn metrics(registry: Arc<RwLock<Registry>>) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let mut buffer = String::new();
     encode(&mut buffer, registry.read().await.deref()).unwrap();
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
         .body(full_body(buffer))
-        .unwrap()
 }
 
 async fn serve_path(
     web_content_path: &String,
     url_path: &str,
     req: &Request<impl Body>,
-) -> Response<BoxBody<Bytes, std::io::Error>> {
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     if String::from(url_path).contains("/..") {
         return not_found();
     }
@@ -183,18 +184,16 @@ async fn serve_path(
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, SERVER_NAME)
         .body(boxed_body)
-        .unwrap()
 }
 
-fn serve_ip(client_socket_addr: SocketAddr) -> Response<BoxBody<Bytes, std::io::Error>> {
+fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
         .body(full_body(client_socket_addr.ip().to_string()))
-        .unwrap()
 }
 
-fn count_stream() -> Response<BoxBody<Bytes, std::io::Error>> {
+fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let output = Command::new("sh")
         .arg("-c")
         .arg("netstat -ntp|tail -n +3|grep -E  \"ESTABLISHED|CLOSE_WAIT\"|awk -F \"[ :]+\"  -v OFS=\"\" '$5<10000 && $5!=\"22\" && $7>1024 {printf(\"%15s   => %15s:%-5s %s\\n\",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn")
@@ -209,25 +208,23 @@ fn count_stream() -> Response<BoxBody<Bytes, std::io::Error>> {
             String::from_utf8(output.stdout).unwrap()
                 + (&*String::from_utf8(output.stderr).unwrap()),
         ))
-        .unwrap()
 }
 
-fn not_found() -> Response<BoxBody<Bytes, std::io::Error>> {
+fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
         .body(full_body(H404))
-        .unwrap()
+    
 }
 
-fn not_modified(last_modified: SystemTime) -> Response<BoxBody<Bytes, std::io::Error>> {
+fn not_modified(last_modified: SystemTime) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     Response::builder()
         .status(StatusCode::NOT_MODIFIED)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, SERVER_NAME)
         .body(empty_body())
-        .unwrap()
 }
 
 const PART0: &'static str = include_str!("../html/part0.html");
@@ -240,7 +237,7 @@ const H404: &'static str = include_str!("../html/404.html");
 async fn speed(
     net_monitor: NetMonitor,
     hostname: &String,
-) -> Response<BoxBody<Bytes, std::io::Error>> {
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let r = fetch_all(net_monitor.get_data()).await;
     let mut scales = vec![];
     let mut series_up = vec![];
@@ -267,7 +264,6 @@ async fn speed(
             "{} {}网速 {} {:?} {} {} {}  {:?} {}",
             PART0, hostname, PART1, scales, PART2, interval, PART3, series_up, PART4
         )))
-        .unwrap()
 }
 
 async fn fetch_all(buffer: Arc<RwLock<VecDeque<TimeValue>>>) -> Vec<TimeValue> {
