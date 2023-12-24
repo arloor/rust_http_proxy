@@ -46,6 +46,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut rx = init_listener_config_refresh_task(config);
         loop {
             tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    info!("ctrl_c => shutdowning");
+                    std::process::exit(0); // 并不优雅关闭
+                },
                 _ = terminate_signal.recv()=>{
                     info!("rust_http_proxy is shutdowning");
                     std::process::exit(0); // 并不优雅关闭
@@ -88,6 +92,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tcp_listener = TcpListener::bind(addr).await?;
         loop {
             tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    info!("ctrl_c => shutdowning");
+                    std::process::exit(0); // 并不优雅关闭
+                },
                 _ = terminate_signal.recv()=>{
                     info!("rust_http_proxy is shutdowning");
                     std::process::exit(0); // 并不优雅关闭
