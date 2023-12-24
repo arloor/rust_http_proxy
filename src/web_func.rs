@@ -10,7 +10,6 @@ use http_body_util::{BodyExt, StreamBody};
 use httpdate::fmt_http_date;
 use hyper::body::{Body, Bytes, Frame};
 use hyper::header::REFERER;
-use hyper::http::HeaderValue;
 use hyper::{http, Method, Request, Response, StatusCode};
 use log::{info, warn};
 use mime_guess::from_path;
@@ -109,13 +108,21 @@ pub async fn serve_http_request(
     };
 }
 
-async fn metrics(registry: Arc<RwLock<Registry>>) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+async fn metrics(
+    registry: Arc<RwLock<Registry>>,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let mut buffer = String::new();
-    encode(&mut buffer, registry.read().await.deref()).unwrap();
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(http::header::SERVER, SERVER_NAME)
-        .body(full_body(buffer))
+    if let Err(e) = encode(&mut buffer, registry.read().await.deref()) {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header(http::header::SERVER, SERVER_NAME)
+            .body(full_body(format!("encode metrics error: {}", e)));
+    } else {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(http::header::SERVER, SERVER_NAME)
+            .body(full_body(buffer));
+    }
 }
 
 async fn serve_path(
@@ -152,10 +159,10 @@ async fn serve_path(
     };
     let mime_type = from_path(&path).first_or_octet_stream();
     if let Some(request_if_modified_since) = req.headers().get(http::header::IF_MODIFIED_SINCE) {
-        if request_if_modified_since
-            == HeaderValue::from_str(fmt_http_date(last_modified).as_str()).unwrap()
-        {
-            return not_modified(last_modified);
+        if let Ok(request_if_modified_since) = request_if_modified_since.to_str() {
+            if request_if_modified_since == fmt_http_date(last_modified).as_str() {
+                return not_modified(last_modified);
+            }
         }
     }
     let file = match File::open(path).await {
@@ -171,10 +178,7 @@ async fn serve_path(
     let boxed_body = stream_body.boxed();
 
     let content_type = mime_type.as_ref();
-    let content_type = if !content_type
-        .to_ascii_lowercase()
-        .contains("charset")
-    {
+    let content_type = if !content_type.to_ascii_lowercase().contains("charset") {
         format!("{}{}", &content_type, "; charset=utf-8")
     } else {
         String::from(content_type)
@@ -205,8 +209,8 @@ fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::REFRESH, "3")
         .body(full_body(
-            String::from_utf8(output.stdout).unwrap()
-                + (&*String::from_utf8(output.stderr).unwrap()),
+            String::from_utf8(output.stdout).unwrap_or("".to_string())
+                + (&*String::from_utf8(output.stderr).unwrap_or("".to_string())),
         ))
 }
 
@@ -216,7 +220,6 @@ fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
         .body(full_body(H404))
-    
 }
 
 fn not_modified(last_modified: SystemTime) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {

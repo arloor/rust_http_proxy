@@ -235,7 +235,10 @@ fn load_config_from_env() -> &'static GlobalConfig {
             env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string())),
         )),
     };
-    init_log(config.log_dir, config.log_file);
+    if let Err(log_init_error) = init_log(config.log_dir, config.log_file){
+        println!("init log error:{}",log_init_error);
+        std::process::exit(1);
+    }
     log_config(&config);
     return Box::leak(Box::new(config));
 }

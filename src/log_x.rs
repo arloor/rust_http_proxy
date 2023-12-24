@@ -1,9 +1,8 @@
-use flexi_logger::{Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, Logger, Naming};
+use flexi_logger::{Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, Logger, Naming, LoggerHandle, FlexiLoggerError};
 use log::Record;
 
-pub fn init_log(log_dir: &str, log_file: &str) {
-    Logger::try_with_env_or_str("info")
-        .unwrap()
+pub fn init_log(log_dir: &str, log_file: &str)->Result<LoggerHandle,FlexiLoggerError> {
+    Logger::try_with_env_or_str("info")?
         .log_to_file(
             FileSpec::default()
                 .directory(log_dir)
@@ -20,7 +19,6 @@ pub fn init_log(log_dir: &str, log_file: &str) {
         .format(my_format)
         .create_symlink(format!("{}/{}", log_dir, log_file))
         .start()
-        .unwrap();
 }
 
 fn my_format(

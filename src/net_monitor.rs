@@ -51,23 +51,23 @@ impl NetMonitor {
                                 let array: Vec<&str> = str.split_whitespace().collect();
 
                                 if array.len() == 17 {
-                                    if array.get(0).unwrap().to_string() == "lo:" {
+                                    if array.get(0).unwrap_or(&"").to_string() == "lo:" {
                                         continue;
                                     }
-                                    if array.get(0).unwrap().starts_with("veth") {
+                                    if array.get(0).unwrap_or(&"").starts_with("veth") {
                                         continue;
                                     }
-                                    if array.get(0).unwrap().starts_with("flannel") {
+                                    if array.get(0).unwrap_or(&"").starts_with("flannel") {
                                         continue;
                                     }
-                                    if array.get(0).unwrap().starts_with("cni0") {
+                                    if array.get(0).unwrap_or(&"").starts_with("cni0") {
                                         continue;
                                     }
-                                    if array.get(0).unwrap().starts_with("utun") {
+                                    if array.get(0).unwrap_or(&"").starts_with("utun") {
                                         continue;
                                     }
                                     new =
-                                        new + array.get(9).unwrap().parse::<u64>().unwrap_or(last);
+                                        new + array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(last);
                                 }
                             }
                             if last != 0 {
