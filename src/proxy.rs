@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{net_monitor::NetMonitor, web_func, GlobalConfig};
+use crate::{net_monitor::NetMonitor, web_func, ProxyConfig};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
 use hyper::{
@@ -62,11 +62,11 @@ impl ProxyHandler {
     pub async fn proxy(
         &self,
         mut req: Request<hyper::body::Incoming>,
-        config: &'static GlobalConfig,
+        proxy_config: &'static ProxyConfig,
         client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let basic_auth = config.basic_auth;
-        let ask_for_auth = config.ask_for_auth;
+        let basic_auth = proxy_config.basic_auth;
+        let ask_for_auth = proxy_config.ask_for_auth;
         if Method::CONNECT == req.method() {
             info!(
                 "{:>21?} {:^7} {:?} {:?}",
@@ -92,7 +92,7 @@ impl ProxyHandler {
                 return web_func::serve_http_request(
                     &req,
                     client_socket_addr,
-                    config,
+                    proxy_config,
                     path,
                     self.net_monitor.clone(),
                     self.http_req_counter.clone(),

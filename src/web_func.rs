@@ -2,7 +2,7 @@ use crate::net_monitor::{NetMonitor, TimeValue};
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
-use crate::GlobalConfig;
+use crate::ProxyConfig;
 use futures_util::TryStreamExt;
 use http::Error;
 use http_body_util::combinators::BoxBody;
@@ -34,15 +34,15 @@ const SERVER_NAME: &str = "arloor's creation";
 pub async fn serve_http_request(
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
-    config: &'static GlobalConfig,
+    proxy_config: &'static ProxyConfig,
     path: &str,
     net_monitor: NetMonitor,
     http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
     prom_registry: Arc<RwLock<Registry>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let hostname = config.hostname;
-    let web_content_path = config.web_content_path;
-    let refer = config.refer;
+    let hostname = proxy_config.hostname;
+    let web_content_path = proxy_config.web_content_path;
+    let refer = proxy_config.refer;
     let referer_header = req
         .headers()
         .get(REFERER)

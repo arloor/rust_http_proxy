@@ -33,12 +33,12 @@ const REFRESH_SECONDS: u64 = 24 * 60 * 60; // 1 day
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config: &'static GlobalConfig = load_config_from_env();
-    serve(config).await?;
+    let proxy_config: &'static ProxyConfig = load_config_from_env();
+    serve(proxy_config).await?;
     Ok(())
 }
 
-async fn serve(config: &'static GlobalConfig) -> Result<(), Box<dyn std::error::Error>> {
+async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::Error>> {
     let proxy_handler = ProxyHandler::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
@@ -143,14 +143,14 @@ async fn serve(config: &'static GlobalConfig) -> Result<(), Box<dyn std::error::
 /// * `Result<Response<BoxBody<Bytes, io::Error>>, io::Error>` - hyper::Response
 async fn proxy(
     req: Request<hyper::body::Incoming>,
-    config: &'static GlobalConfig,
+    config: &'static ProxyConfig,
     client_socket_addr: SocketAddr,
     proxy_handler: ProxyHandler,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler.proxy(req, config, client_socket_addr).await
 }
 
-fn log_config(config: &GlobalConfig) {
+fn log_config(config: &ProxyConfig) {
     info!("log is output to {}/{}", config.log_dir, config.log_file);
     info!("hostname seems to be {}", config.hostname);
     if config.basic_auth.len() != 0 && config.ask_for_auth {
@@ -210,8 +210,8 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::err
     }
 }
 
-fn load_config_from_env() -> &'static GlobalConfig {
-    let config = GlobalConfig {
+fn load_config_from_env() -> &'static ProxyConfig {
+    let config = ProxyConfig {
         log_dir: Box::leak(Box::new(env::var("log_dir").unwrap_or("/tmp".to_string()))),
         log_file: Box::leak(Box::new(
             env::var("log_file").unwrap_or("proxy.log".to_string()),
@@ -252,7 +252,7 @@ pub fn local_ip() -> io::Result<String> {
 }
 
 fn init_listener_config_refresh_task(
-    config: &'static GlobalConfig,
+    config: &'static ProxyConfig,
 ) -> mpsc::Receiver<tokio_rustls::TlsAcceptor> {
     let (tx, rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
     tokio::spawn(async move {
@@ -269,7 +269,7 @@ fn init_listener_config_refresh_task(
 }
 
 /// Represents the global configuration for the HTTP proxy server.
-pub struct GlobalConfig {
+pub struct ProxyConfig {
     log_dir: &'static String,
     log_file: &'static String,
     port: u16,
