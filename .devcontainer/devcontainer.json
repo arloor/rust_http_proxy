@@ -17,9 +17,12 @@
                 "github.vscode-github-actions", // github actions
                 "redhat.vscode-yaml", // yaml语言支持
                 "ms-python.python", // python语言支持
+                "ms-python.vscode-pylance",
                 "foxundermoon.shell-format", // shell格式化
                 "tamasfe.even-better-toml", // toml格式化
-                "serayuzgur.crates" // crates.io插件
+                "serayuzgur.crates", // crates.io插件
+                "waderyan.gitblame",
+                "donjayamanne.githistory"
             ],
             "settings": {
                 "files.watcherExclude": {
