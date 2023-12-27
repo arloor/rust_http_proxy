@@ -200,7 +200,15 @@ impl ProxyHandler {
             let host = req.uri().host().expect("uri has no host");
             let port = req.uri().port_u16().unwrap_or(80);
             let stream = TcpStream::connect((host, port)).await?;
-            let io = TokioIo::new(stream);
+            let server_mod=TcpStreamWrapper{
+                inner: stream,
+                proxy_traffic: self.proxy_traffic.clone(),
+                access_label: AccessLabel{
+                    client: client_socket_addr.ip().to_string(),
+                    target: format!("{}:{}", host, port),
+                },
+            };
+            let io = TokioIo::new(server_mod);
             return match Builder::new()
                 .preserve_header_case(true)
                 .title_case_headers(true)
