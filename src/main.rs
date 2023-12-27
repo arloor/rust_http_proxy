@@ -47,7 +47,7 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::E
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
     if config.over_tls {
-
+        info!("featured mine TlsAcceptor");
         let mut acceptor = TlsAcceptor::new(tls_helper::tls_config(&config.raw_key, &config.cert)?,
         TcpListener::bind(addr).await?);
         let mut rx = init_listener_config_refresh_task(config);
