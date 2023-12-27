@@ -1,6 +1,5 @@
 #![deny(warnings)]
 mod acceptor;
-#[allow(dead_code)]
 mod log_x;
 mod net_monitor;
 mod proxy;
