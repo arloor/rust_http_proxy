@@ -1,5 +1,5 @@
 #![deny(warnings)]
-
+mod acceptor;
 mod log_x;
 mod net_monitor;
 mod proxy;
@@ -7,7 +7,8 @@ mod tls_helper;
 mod web_func;
 
 use crate::log_x::init_log;
-use crate::tls_helper::rust_tls_acceptor;
+use crate::tls_helper::tls_config;
+use acceptor::TlsAcceptor;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -20,13 +21,14 @@ use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
+use std::sync::Arc;
 use std::time::Duration;
 use std::{env, io};
-use tls_listener::TlsListener;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 use tokio::time;
+use tokio_rustls::rustls::ServerConfig;
 
 const TRUE: &str = "true";
 const REFRESH_SECONDS: u64 = 24 * 60 * 60; // 1 day
@@ -43,11 +45,12 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::E
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
     if config.over_tls {
-        let mut listener = TlsListener::new(
-            rust_tls_acceptor(&config.raw_key, &config.cert)?,
+        info!("featured mine TlsAcceptor");
+        let mut acceptor = TlsAcceptor::new(
+            tls_config(&config.raw_key, &config.cert)?,
             TcpListener::bind(addr).await?,
         );
-        let mut rx = init_listener_config_refresh_task(config);
+        let mut rx = init_tls_config_refresh_task(config);
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
@@ -58,7 +61,7 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::E
                     info!("rust_http_proxy is shutdowning");
                     std::process::exit(0); // 并不优雅关闭
                 },
-                conn = listener.accept() => {
+                conn = acceptor.accept() => {
                     match conn {
                         Ok((conn,client_socket_addr)) => {
                             let io = TokioIo::new(conn);
@@ -85,10 +88,10 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::E
                     }
                 },
                 message = rx.recv() => {
-                    let acceptor = message.expect("Channel should not be closed");
+                    let new_config = message.expect("Channel should not be closed");
                     info!("tls config is updated");
                     // Replace the acceptor with the new one
-                    listener.replace_acceptor(acceptor);
+                    acceptor.replace_config(new_config);
                 }
             }
         }
@@ -251,15 +254,13 @@ pub fn local_ip() -> io::Result<String> {
         .map(|local_addr| local_addr.ip().to_string());
 }
 
-fn init_listener_config_refresh_task(
-    config: &'static ProxyConfig,
-) -> mpsc::Receiver<tokio_rustls::TlsAcceptor> {
-    let (tx, rx) = mpsc::channel::<tokio_rustls::TlsAcceptor>(1);
+fn init_tls_config_refresh_task(config: &'static ProxyConfig) -> mpsc::Receiver<Arc<ServerConfig>> {
+    let (tx, rx) = mpsc::channel::<Arc<ServerConfig>>(1);
     tokio::spawn(async move {
         info!("update tls config every {} seconds", REFRESH_SECONDS);
         loop {
             time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
-            if let Ok(new_acceptor) = rust_tls_acceptor(&config.raw_key, &config.cert) {
+            if let Ok(new_acceptor) = tls_config(&config.raw_key, &config.cert) {
                 info!("update tls config");
                 tx.try_send(new_acceptor).ok(); // 防止阻塞
             }

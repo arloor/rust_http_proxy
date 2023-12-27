@@ -727,7 +727,6 @@ dependencies = [
  "prometheus-client",
  "rand",
  "rustls-pemfile",
- "tls-listener",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -874,19 +873,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tls-listener"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e516b94ec383622ae4da09b2a9bab471c4c880453c93fd0dd4dff1f6f2ff0849"
-dependencies = [
- "futures-util",
- "pin-project-lite",
- "thiserror",
- "tokio",
- "tokio-rustls",
 ]
 
 [[package]]

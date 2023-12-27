@@ -14,7 +14,7 @@
             "preLaunchTask": "rust: cargo build",
             "env": {
                 "port": "8888",
-                // "over_tls":"true",
+                "over_tls":"true",
                 "cert": "./cert.pem",
                 "raw_key": "./privkey.pem",
                 "refer": "arloor",
