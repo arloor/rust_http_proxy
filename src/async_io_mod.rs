@@ -26,13 +26,13 @@ impl tokio::io::AsyncRead for TcpStreamWrapper {
     ) -> Poll<Result<(), std::io::Error>> {
         let proxy_traffic = self.proxy_traffic.clone();
         let access_label = self.access_label.clone();
-        match self.project().inner.poll_read(cx, buf){
+        match self.project().inner.poll_read(cx, buf) {
             Poll::Ready(Ok(_)) => {
                 proxy_traffic
                     .get_or_create(&access_label)
                     .inc_by(buf.filled().len() as u64);
                 Poll::Ready(Ok(()))
-            },
+            }
             other => other,
         }
     }

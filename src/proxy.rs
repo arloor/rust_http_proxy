@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{net_monitor::NetMonitor, web_func, ProxyConfig, async_io_mod::TcpStreamWrapper};
+use crate::{async_io_mod::TcpStreamWrapper, net_monitor::NetMonitor, web_func, ProxyConfig};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
 use hyper::{
@@ -168,7 +168,9 @@ impl ProxyHandler {
                                 client: client_socket_addr.ip().to_string(),
                                 target: addr.clone(),
                             };
-                            if let Err(e) = tunnel(upgraded, addr, proxy_traffic, access_label).await {
+                            if let Err(e) =
+                                tunnel(upgraded, addr, proxy_traffic, access_label).await
+                            {
                                 warn!("server io error: {}", e);
                             };
                         }
@@ -200,10 +202,10 @@ impl ProxyHandler {
             let host = req.uri().host().expect("uri has no host");
             let port = req.uri().port_u16().unwrap_or(80);
             let stream = TcpStream::connect((host, port)).await?;
-            let server_mod=TcpStreamWrapper{
+            let server_mod = TcpStreamWrapper {
                 inner: stream,
                 proxy_traffic: self.proxy_traffic.clone(),
-                access_label: AccessLabel{
+                access_label: AccessLabel {
                     client: client_socket_addr.ip().to_string(),
                     target: format!("{}:{}", host, port),
                 },
@@ -249,7 +251,7 @@ async fn tunnel(
 ) -> io::Result<()> {
     // Connect to remote server
     let server = TcpStream::connect(addr.clone()).await?;
-    let mut server_mod=TcpStreamWrapper{
+    let mut server_mod = TcpStreamWrapper {
         inner: server,
         proxy_traffic: proxy_traffic.clone(),
         access_label: access_label,

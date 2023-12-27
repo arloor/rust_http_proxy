@@ -19,7 +19,7 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Erro
     let certs = rustls_pemfile::certs(&mut BufReader::new(cert_file))
         .collect::<io::Result<Vec<CertificateDer<'static>>>>();
     let key_option = rustls_pemfile::private_key(&mut BufReader::new(key_file))?;
-    let key = match key_option{
+    let key = match key_option {
         Some(key) => key,
         None => return Err("can not find any pem in key file".into()),
     };
