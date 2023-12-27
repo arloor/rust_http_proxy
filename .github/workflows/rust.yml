@@ -44,7 +44,7 @@ jobs:
           git config --local user.name "arloor"
           # git tag  -f v1.0.0 -m 'latest'
           # git push --force origin v1.0.0
-          gh release create v1.0.0 target/release/rust_http_proxy_gnu target/release/rust_http_proxy_musl --notes-from-tag --latest -t latest  --target master
+          gh release create v1.0.0 target/release/rust_http_proxy_gnu target/release/rust_http_proxy_musl -n "latest" --latest -t latest  --target master
       - name: push
         run: |
           podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
