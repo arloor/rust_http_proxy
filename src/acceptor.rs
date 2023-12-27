@@ -6,9 +6,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures_util::ready;
-use tokio_rustls::rustls::{ServerConfig, ServerConnection};
-use tokio::{net::{TcpListener, TcpStream}, io::{AsyncRead, AsyncWrite,ReadBuf}};
-
+use tokio::{
+    io::{AsyncRead, AsyncWrite, ReadBuf},
+    net::{TcpListener, TcpStream},
+};
+use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::rustls::ServerConnection;
 
 /// A TLS acceptor that can be used with hyper servers.
 pub struct TlsAcceptor<L = TcpListener> {
@@ -18,12 +21,11 @@ pub struct TlsAcceptor<L = TcpListener> {
 
 /// An Acceptor for the `https` scheme.
 impl TlsAcceptor {
-
     /// Creates a new `TlsAcceptor` from a `ServerConfig` and a `TcpListener`.
     pub fn new(config: Arc<ServerConfig>, listener: TcpListener) -> Self {
         Self { config, listener }
     }
-        /// Replaces the Tls Acceptor configuration, which will be used for new connections.
+    /// Replaces the Tls Acceptor configuration, which will be used for new connections.
     ///
     /// This can be used to change the certificate used at runtime.
     pub fn replace_config(&mut self, new_config: Arc<ServerConfig>) {
@@ -33,10 +35,7 @@ impl TlsAcceptor {
     /// Accepts a new connection.
     pub async fn accept(&mut self) -> Result<(TlsStream, SocketAddr), io::Error> {
         let (sock, addr) = self.listener.accept().await?;
-        Ok((
-            TlsStream::new(sock, self.config.clone()),
-            addr,
-        ))
+        Ok((TlsStream::new(sock, self.config.clone()), addr))
     }
 }
 
@@ -68,7 +67,7 @@ impl<C: AsyncRead + AsyncWrite + Unpin> TlsStream<C> {
     /// Returns a reference to the underlying IO stream.
     ///
     /// This should always return `Some`, except if an error has already been yielded.
-    pub fn io(&self) -> Option<&C> {
+    pub fn _io(&self) -> Option<&C> {
         match &self.state {
             State::Handshaking(accept) => accept.get_ref(),
             State::Streaming(stream) => Some(stream.get_ref().0),
@@ -78,7 +77,7 @@ impl<C: AsyncRead + AsyncWrite + Unpin> TlsStream<C> {
     /// Returns a reference to the underlying [`rustls::ServerConnection'].
     ///
     /// This will start yielding `Some` only after the handshake has completed.
-    pub fn connection(&self) -> Option<&ServerConnection> {
+    pub fn _connection(&self) -> Option<&ServerConnection> {
         match &self.state {
             State::Handshaking(_) => None,
             State::Streaming(stream) => Some(stream.get_ref().1),

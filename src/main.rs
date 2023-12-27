@@ -1,15 +1,14 @@
-// #![deny(warnings)]
+#![deny(warnings)]
+mod acceptor;
 #[allow(dead_code)]
-
 mod log_x;
 mod net_monitor;
 mod proxy;
 mod tls_helper;
 mod web_func;
-mod acceptor;
 
 use crate::log_x::init_log;
-use crate::tls_helper::rust_tls_acceptor;
+use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
@@ -20,7 +19,6 @@ use hyper_util::rt::tokio::TokioIo;
 use hyper_util::server::conn::auto;
 use log::{debug, info, warn};
 use proxy::ProxyHandler;
-use tokio_rustls::rustls::ServerConfig;
 use std::error::Error as stdError;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
@@ -31,6 +29,7 @@ use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 use tokio::time;
+use tokio_rustls::rustls::ServerConfig;
 
 const TRUE: &str = "true";
 const REFRESH_SECONDS: u64 = 24 * 60 * 60; // 1 day
@@ -48,9 +47,11 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::E
     let mut terminate_signal = signal(SignalKind::terminate())?;
     if config.over_tls {
         info!("featured mine TlsAcceptor");
-        let mut acceptor = TlsAcceptor::new(tls_helper::tls_config(&config.raw_key, &config.cert)?,
-        TcpListener::bind(addr).await?);
-        let mut rx = init_listener_config_refresh_task(config);
+        let mut acceptor = TlsAcceptor::new(
+            tls_config(&config.raw_key, &config.cert)?,
+            TcpListener::bind(addr).await?,
+        );
+        let mut rx = init_tls_config_refresh_task(config);
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
@@ -254,15 +255,13 @@ pub fn local_ip() -> io::Result<String> {
         .map(|local_addr| local_addr.ip().to_string());
 }
 
-fn init_listener_config_refresh_task(
-    config: &'static ProxyConfig,
-) -> mpsc::Receiver<Arc<ServerConfig>> {
+fn init_tls_config_refresh_task(config: &'static ProxyConfig) -> mpsc::Receiver<Arc<ServerConfig>> {
     let (tx, rx) = mpsc::channel::<Arc<ServerConfig>>(1);
     tokio::spawn(async move {
         info!("update tls config every {} seconds", REFRESH_SECONDS);
         loop {
             time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
-            if let Ok(new_acceptor) = tls_helper::tls_config(&config.raw_key, &config.cert) {
+            if let Ok(new_acceptor) = tls_config(&config.raw_key, &config.cert) {
                 info!("update tls config");
                 tx.try_send(new_acceptor).ok(); // 防止阻塞
             }

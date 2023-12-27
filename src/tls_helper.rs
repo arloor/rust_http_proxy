@@ -6,7 +6,7 @@ use tokio_rustls::rustls::ServerConfig;
 // wrap error
 type Error = Box<dyn std::error::Error>;
 
-pub fn rust_tls_acceptor(key: &String, cert: &String) -> Result<tokio_rustls::TlsAcceptor, Error> {
+pub fn _rust_tls_acceptor(key: &String, cert: &String) -> Result<tokio_rustls::TlsAcceptor, Error> {
     return Ok(tls_config(key, cert)?.into());
 }
 
