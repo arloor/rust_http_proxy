@@ -2,7 +2,7 @@ name: auto_release
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "feature/no-tls-listener" ]
   pull_request:
     branches: [ "master" ]
 

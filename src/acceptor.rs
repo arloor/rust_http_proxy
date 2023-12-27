@@ -23,6 +23,12 @@ impl TlsAcceptor {
     pub fn new(config: Arc<ServerConfig>, listener: TcpListener) -> Self {
         Self { config, listener }
     }
+        /// Replaces the Tls Acceptor configuration, which will be used for new connections.
+    ///
+    /// This can be used to change the certificate used at runtime.
+    pub fn replace_config(&mut self, new_config: Arc<ServerConfig>) {
+        self.config = new_config;
+    }
 
     /// Accepts a new connection.
     pub async fn accept(&mut self) -> Result<(TlsStream, SocketAddr), io::Error> {
