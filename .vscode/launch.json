@@ -13,12 +13,12 @@
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "rust: cargo build",
             "env": {
-                // "port": "443",
+                "port": "8888",
                 // "over_tls":"true",
                 "cert": "./cert.pem",
-                "raw_key":"./privkey.pem",
-                "refer":"arloor",
-                "web_content_path":"./"
+                "raw_key": "./privkey.pem",
+                "refer": "arloor",
+                "web_content_path": "./"
             }
         }
     ]

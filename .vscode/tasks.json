@@ -12,16 +12,6 @@
 			
 			},
 			"label": "rust: cargo build"
-		},
-		{
-            "label": "gen_rpm_docker_image",
-            "type": "shell",
-            "command": "bash rpm/genbin.sh",
-            "group": {
-                "kind": "build",
-				"isDefault": true
-            },
-            "problemMatcher": []
-        }
+		}
 	]
 }
