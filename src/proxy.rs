@@ -171,11 +171,11 @@ impl ProxyHandler {
                             };
                             // Connect to remote server
                             match TcpStream::connect(addr.clone()).await {
-                                Ok(server) => {
+                                Ok(target_stream) => {
                                     let access_tag = access_label.to_string();
-                                    let server_mod =
-                                        TcpStreamWrapper::new(server, proxy_traffic, access_label);
-                                    if let Err(e) = tunnel(upgraded, server_mod).await {
+                                    let target_stream =
+                                        TcpStreamWrapper::new(target_stream, proxy_traffic, access_label);
+                                    if let Err(e) = tunnel(upgraded, target_stream).await {
                                         warn!("[tunnel io error] [{}] : {} ", access_tag, e);
                                     };
                                 }
