@@ -1,8 +1,9 @@
 use std::{
     borrow::Cow,
+    fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
-    sync::Arc, fmt::{Display, Formatter},
+    sync::Arc,
 };
 
 use crate::{async_io_mod::TcpStreamWrapper, net_monitor::NetMonitor, web_func, ProxyConfig};
@@ -202,14 +203,14 @@ impl ProxyHandler {
             let host = req.uri().host().expect("uri has no host");
             let port = req.uri().port_u16().unwrap_or(80);
             let stream = TcpStream::connect((host, port)).await?;
-            let server_mod = TcpStreamWrapper {
-                inner: stream,
-                proxy_traffic: self.proxy_traffic.clone(),
-                access_label: AccessLabel {
+            let server_mod = TcpStreamWrapper::new(
+                stream,
+                self.proxy_traffic.clone(),
+                AccessLabel {
                     client: client_socket_addr.ip().to_string(),
                     target: format!("{}:{}", host, port),
                 },
-            };
+            );
             let io = TokioIo::new(server_mod);
             return match Builder::new()
                 .preserve_header_case(true)
@@ -251,11 +252,7 @@ async fn tunnel(
 ) -> io::Result<()> {
     // Connect to remote server
     let server = TcpStream::connect(addr.clone()).await?;
-    let mut server_mod = TcpStreamWrapper {
-        inner: server,
-        proxy_traffic: proxy_traffic.clone(),
-        access_label: access_label,
-    };
+    let mut server_mod = TcpStreamWrapper::new(server, proxy_traffic.clone(), access_label);
     let mut upgraded = TokioIo::new(upgraded);
 
     // Proxying data
@@ -293,7 +290,6 @@ impl Display for AccessLabel {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} -> {}", self.client, self.target)
     }
-    
 }
 
 fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, io::Error>> {

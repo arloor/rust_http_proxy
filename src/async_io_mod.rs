@@ -10,9 +10,19 @@ pin_project! {
     #[derive(Debug)]
     pub struct TcpStreamWrapper<T> {
         #[pin]
-        pub(crate) inner: T,
-        pub(crate) proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
-        pub(crate) access_label: AccessLabel,
+        inner: T,
+        proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
+        access_label: AccessLabel,
+    }
+}
+
+impl<T> TcpStreamWrapper<T>{
+    pub fn new(inner: T, proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>, access_label: AccessLabel) -> Self {
+        Self {
+            inner,
+            proxy_traffic,
+            access_label,
+        }
     }
 }
 
