@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     io::{self, ErrorKind},
     net::SocketAddr,
-    sync::Arc,
+    sync::Arc, fmt::{Display, Formatter},
 };
 
 use crate::{async_io_mod::TcpStreamWrapper, net_monitor::NetMonitor, web_func, ProxyConfig};
@@ -171,7 +171,7 @@ impl ProxyHandler {
                             if let Err(e) =
                                 tunnel(upgraded, addr, proxy_traffic, access_label.clone()).await
                             {
-                                warn!("{:?} tunnel io error: {} ", access_label, e);
+                                warn!("tunnel io error for [{}] : {} ", access_label, e);
                             };
                         }
                         Err(e) => warn!("upgrade error: {}", e),
@@ -287,6 +287,13 @@ pub struct ReqLabels {
 pub struct AccessLabel {
     pub client: String,
     pub target: String,
+}
+
+impl Display for AccessLabel {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} -> {}", self.client, self.target)
+    }
+    
 }
 
 fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, io::Error>> {
