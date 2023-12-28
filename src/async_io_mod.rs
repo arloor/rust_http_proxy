@@ -2,7 +2,6 @@ use std::{pin::Pin, task::Context, task::Poll};
 
 use pin_project_lite::pin_project;
 use prometheus_client::metrics::{counter::Counter, family::Family};
-use tokio::net::TcpStream;
 
 use crate::proxy::AccessLabel;
 
@@ -10,15 +9,18 @@ pin_project! {
     /// A wrapping implementing hyper IO traits for a type that
     /// implements Tokio's IO traits.
     #[derive(Debug)]
-    pub struct TcpStreamWrapper {
+    pub struct TcpStreamWrapper<T> {
         #[pin]
-        pub(crate) inner: TcpStream,
+        pub(crate) inner: T,
         pub(crate) proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
         pub(crate) access_label: AccessLabel,
     }
 }
 
-impl tokio::io::AsyncRead for TcpStreamWrapper {
+impl<T> tokio::io::AsyncRead for TcpStreamWrapper<T>
+where
+    T: tokio::io::AsyncRead,
+{
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -38,7 +40,10 @@ impl tokio::io::AsyncRead for TcpStreamWrapper {
     }
 }
 
-impl tokio::io::AsyncWrite for TcpStreamWrapper {
+impl<T> tokio::io::AsyncWrite for TcpStreamWrapper<T>
+where
+    T: tokio::io::AsyncWrite,
+{
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
