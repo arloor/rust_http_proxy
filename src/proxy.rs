@@ -13,7 +13,7 @@ use hyper::{
     body::Bytes, header::HeaderValue, http, upgrade::Upgraded, Method, Request, Response, Version,
 };
 use hyper_util::rt::TokioIo;
-use log::{debug, info, warn};
+use log::{info, warn};
 use percent_encoding::percent_decode_str;
 use prometheus_client::{
     encoding::EncodeLabelSet,
@@ -169,11 +169,20 @@ impl ProxyHandler {
                                 client: client_socket_addr.ip().to_string(),
                                 target: addr.clone(),
                             };
-                            if let Err(e) =
-                                tunnel(upgraded, addr, proxy_traffic, access_label.clone()).await
-                            {
-                                warn!("tunnel io error for [{}] : {} ", access_label, e);
-                            };
+                            // Connect to remote server
+                            match TcpStream::connect(addr.clone()).await {
+                                Ok(server) => {
+                                    let access_tag = access_label.to_string();
+                                    let server_mod =
+                                        TcpStreamWrapper::new(server, proxy_traffic, access_label);
+                                    if let Err(e) = tunnel(upgraded, server_mod).await {
+                                        warn!("[tunnel io error] [{}] : {} ", access_tag, e);
+                                    };
+                                }
+                                Err(e) => {
+                                    warn!("[tunnel establish error] [{}] : {} ", access_label, e)
+                                }
+                            }
                         }
                         Err(e) => warn!("upgrade error: {}", e),
                     }
@@ -244,27 +253,11 @@ impl ProxyHandler {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(
-    upgraded: Upgraded,
-    addr: String,
-    proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
-    access_label: AccessLabel,
-) -> io::Result<()> {
-    // Connect to remote server
-    let server = TcpStream::connect(addr.clone()).await?;
-    let mut server_mod = TcpStreamWrapper::new(server, proxy_traffic.clone(), access_label);
+async fn tunnel(upgraded: Upgraded, mut target_io: TcpStreamWrapper<TcpStream>) -> io::Result<()> {
     let mut upgraded = TokioIo::new(upgraded);
-
     // Proxying data
-    let (from_client, from_server) =
-        tokio::io::copy_bidirectional(&mut upgraded, &mut server_mod).await?;
-
-    // Print message when done
-    debug!(
-        "client wrote {} bytes and received {} bytes",
-        from_client, from_server
-    );
-
+    let (_from_client, _from_server) =
+        tokio::io::copy_bidirectional(&mut upgraded, &mut target_io).await?;
     Ok(())
 }
 /// Returns the host and port of the given URI.
