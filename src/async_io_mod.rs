@@ -6,8 +6,7 @@ use prometheus_client::metrics::{counter::Counter, family::Family};
 use crate::proxy::AccessLabel;
 
 pin_project! {
-    /// A wrapping implementing hyper IO traits for a type that
-    /// implements Tokio's IO traits.
+    /// enhance inner tcp stream with prometheus counter
     #[derive(Debug)]
     pub struct TcpStreamWrapper<T> {
         #[pin]
