@@ -73,17 +73,26 @@ pub async fn serve_http_request(
         (_, "/net") => speed(net_monitor, hostname).await,
         (_, "/metrics") => metrics(prom_registry.clone()).await,
         (&Method::GET, path) => {
+            let is_outer_view_html = (path.ends_with("/") || path.ends_with(".html"))
+                && referer_header != ""
+                && !referer_header.contains(refer);
             info!(
                 "{:>21?} {:^7} {} {:?} {}",
                 client_socket_addr,
                 req.method().as_str(),
                 path,
                 req.version(),
-                if (path.ends_with("/") || path.ends_with(".html"))
-                    && referer_header != ""
-                    && !referer_header.contains(refer)
+                if is_outer_view_html
                 //来自外链的点击，记录Referer
                 {
+                    format!("\"Referer: {}\"", referer_header)
+                } else {
+                    "".to_string()
+                }
+            );
+            let r = serve_path(web_content_path, path, req).await;
+            if let Ok(ref res) = r {
+                if is_outer_view_html && res.status().is_success() {
                     http_req_counter
                         .get_or_create(&ReqLabels {
                             referer: referer_header.to_string(),
@@ -96,12 +105,9 @@ pub async fn serve_http_request(
                             path: "all".to_string(),
                         })
                         .inc();
-                    format!("\"Referer: {}\"", referer_header)
-                } else {
-                    "".to_string()
                 }
-            );
-            serve_path(web_content_path, path, req).await
+            }
+            r
         }
         (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
         _ => not_found(),
