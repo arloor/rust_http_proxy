@@ -92,7 +92,9 @@ pub async fn serve_http_request(
             );
             let r = serve_path(web_content_path, path, req).await;
             if let Ok(ref res) = r {
-                if is_outer_view_html && res.status().is_success() {
+                if is_outer_view_html
+                    && (res.status().is_success() || res.status().is_redirection())
+                {
                     http_req_counter
                         .get_or_create(&ReqLabels {
                             referer: referer_header.to_string(),
