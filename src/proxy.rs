@@ -169,9 +169,9 @@ impl ProxyHandler {
                                 target: addr.clone(),
                             };
                             if let Err(e) =
-                                tunnel(upgraded, addr, proxy_traffic, access_label).await
+                                tunnel(upgraded, addr, proxy_traffic, access_label.clone()).await
                             {
-                                warn!("server io error: {}", e);
+                                warn!("{:?} tunnel io error: {} ", access_label, e);
                             };
                         }
                         Err(e) => warn!("upgrade error: {}", e),
