@@ -32,7 +32,7 @@ use tokio::time;
 use tokio_rustls::rustls::ServerConfig;
 
 const TRUE: &str = "true";
-const REFRESH_SECONDS: u64 = 24 * 60 * 60; // 1 day
+const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
