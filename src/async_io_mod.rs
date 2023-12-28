@@ -49,7 +49,19 @@ where
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        self.project().inner.poll_write(cx, buf)
+        let proxy_traffic = self.proxy_traffic.clone();
+        let access_label = self.access_label.clone();
+        match self.project().inner.poll_write(cx, buf) {
+            Poll::Ready(result) =>{
+                if let Ok(size) = result {
+                    proxy_traffic
+                        .get_or_create(&access_label)
+                        .inc_by(size as u64);
+                }
+                Poll::Ready(result)
+            },
+            other => other,
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
