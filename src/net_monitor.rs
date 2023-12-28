@@ -34,7 +34,7 @@ impl NetMonitor {
     //   ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
 
     pub fn get_data(&self) -> Arc<RwLock<VecDeque<TimeValue>>> {
-        return self.buffer.clone();
+        self.buffer.clone()
     }
     pub fn start(&self) {
         if cfg!(target_os = "linux") {
@@ -45,29 +45,28 @@ impl NetMonitor {
                     {
                         if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
                             content = content.replace("\r\n", "\n");
-                            let strs = content.split("\n");
+                            let strs = content.split('\n');
                             let mut new: u64 = 0;
                             for str in strs {
                                 let array: Vec<&str> = str.split_whitespace().collect();
 
                                 if array.len() == 17 {
-                                    if array.get(0).unwrap_or(&"").to_string() == "lo:" {
+                                    if *array.first().unwrap_or(&"") == "lo:" {
                                         continue;
                                     }
-                                    if array.get(0).unwrap_or(&"").starts_with("veth") {
+                                    if array.first().unwrap_or(&"").starts_with("veth") {
                                         continue;
                                     }
-                                    if array.get(0).unwrap_or(&"").starts_with("flannel") {
+                                    if array.first().unwrap_or(&"").starts_with("flannel") {
                                         continue;
                                     }
-                                    if array.get(0).unwrap_or(&"").starts_with("cni0") {
+                                    if array.first().unwrap_or(&"").starts_with("cni0") {
                                         continue;
                                     }
-                                    if array.get(0).unwrap_or(&"").starts_with("utun") {
+                                    if array.first().unwrap_or(&"").starts_with("utun") {
                                         continue;
                                     }
-                                    new = new
-                                        + array
+                                    new += array
                                             .get(9)
                                             .unwrap_or(&"")
                                             .parse::<u64>()

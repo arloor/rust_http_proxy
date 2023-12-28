@@ -52,7 +52,7 @@ impl ProxyHandler {
         ProxyHandler {
             prom_registry: registry.clone(),
             http_req_counter: http_requests,
-            proxy_traffic: proxy_traffic,
+            proxy_traffic,
             net_monitor: monitor,
         }
     }
@@ -73,13 +73,13 @@ impl ProxyHandler {
                 req.version()
             );
         } else {
-            if req.version() == Version::HTTP_2 || None == req.uri().host() {
+            if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 let raw_path = req.uri().path();
                 let path = percent_decode_str(raw_path)
                     .decode_utf8()
                     .unwrap_or(Cow::from(raw_path));
                 let path = path.as_ref();
-                if basic_auth.len() != 0 && ask_for_auth {
+                if !basic_auth.is_empty() && ask_for_auth {
                     // 存在嗅探风险时，不伪装成http服务
                     return Err(io::Error::new(
                         ErrorKind::PermissionDenied,
@@ -116,7 +116,7 @@ impl ProxyHandler {
             };
         }
 
-        if basic_auth.len() != 0 {
+        if !basic_auth.is_empty() {
             //需要检验鉴权
             let mut authed: bool = false;
             match req.headers().get(http::header::PROXY_AUTHORIZATION) {
@@ -221,7 +221,7 @@ impl ProxyHandler {
                 },
             );
             let io = TokioIo::new(server_mod);
-            return match Builder::new()
+            match Builder::new()
                 .preserve_header_case(true)
                 .title_case_headers(true)
                 .handshake(io)
@@ -236,8 +236,9 @@ impl ProxyHandler {
 
                     if let Ok(resp) = sender.send_request(req).await {
                         Ok(resp.map(|b| {
-                            b.map_err(|e| match e {
-                                e => io::Error::new(ErrorKind::InvalidData, e),
+                            b.map_err(|e| {
+                                let e = e;
+                                io::Error::new(ErrorKind::InvalidData, e)
                             })
                             .boxed()
                         }))
@@ -246,7 +247,7 @@ impl ProxyHandler {
                     }
                 }
                 Err(e) => Err(io::Error::new(ErrorKind::ConnectionAborted, e)),
-            };
+            }
         }
     }
 }
@@ -262,7 +263,7 @@ async fn tunnel(upgraded: Upgraded, mut target_io: TcpStreamWrapper<TcpStream>) 
 }
 /// Returns the host and port of the given URI.
 fn host_addr(uri: &http::Uri) -> Option<String> {
-    uri.authority().and_then(|auth| Some(auth.to_string()))
+    uri.authority().map(|auth| auth.to_string())
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]

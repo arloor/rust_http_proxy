@@ -48,7 +48,7 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::E
     if config.over_tls {
         info!("init mine TlsAcceptor");
         let mut acceptor = TlsAcceptor::new(
-            tls_config(&config.raw_key, &config.cert)?,
+            tls_config(config.raw_key, config.cert)?,
             TcpListener::bind(addr).await?,
         );
         let mut rx = init_tls_config_refresh_task(config);
@@ -157,16 +157,16 @@ async fn proxy(
 fn log_config(config: &ProxyConfig) {
     info!("log is output to {}/{}", config.log_dir, config.log_file);
     info!("hostname seems to be {}", config.hostname);
-    if config.basic_auth.len() != 0 && config.ask_for_auth {
+    if !config.basic_auth.is_empty() && config.ask_for_auth {
         warn!("do not serve web content to avoid being detected!");
     } else {
         info!("serve web content of \"{}\"", config.web_content_path);
-        if config.refer.len() != 0 {
+        if !config.refer.is_empty() {
             info!("Referer header to images must contain \"{}\"", config.refer);
         }
     }
     info!("basic auth is \"{}\"", config.basic_auth);
-    if config.basic_auth.contains("\"") || config.basic_auth.contains("\'") {
+    if config.basic_auth.contains('\"') || config.basic_auth.contains('\'') {
         warn!("basic_auth contains quotation marks, please check if it is a mistake!")
     }
     info!(
@@ -250,9 +250,9 @@ fn load_config_from_env() -> &'static ProxyConfig {
 pub fn local_ip() -> io::Result<String> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
-    return socket
+    socket
         .local_addr()
-        .map(|local_addr| local_addr.ip().to_string());
+        .map(|local_addr| local_addr.ip().to_string())
 }
 
 fn init_tls_config_refresh_task(config: &'static ProxyConfig) -> mpsc::Receiver<Arc<ServerConfig>> {
@@ -261,13 +261,13 @@ fn init_tls_config_refresh_task(config: &'static ProxyConfig) -> mpsc::Receiver<
         info!("update tls config every {} seconds", REFRESH_SECONDS);
         loop {
             time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
-            if let Ok(new_acceptor) = tls_config(&config.raw_key, &config.cert) {
+            if let Ok(new_acceptor) = tls_config(config.raw_key, config.cert) {
                 info!("update tls config");
                 tx.try_send(new_acceptor).ok(); // 防止阻塞
             }
         }
     });
-    return rx;
+    rx
 }
 
 /// Represents the global configuration for the HTTP proxy server.

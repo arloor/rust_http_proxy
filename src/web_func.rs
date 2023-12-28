@@ -48,8 +48,8 @@ pub async fn serve_http_request(
         .get(REFERER)
         .map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
-        && refer != ""
-        && referer_header != ""
+        && !refer.is_empty()
+        && !referer_header.is_empty()
     {
         // 拒绝图片盗链
         if !referer_header.contains(refer) {
@@ -73,8 +73,8 @@ pub async fn serve_http_request(
         (_, "/net") => speed(net_monitor, hostname).await,
         (_, "/metrics") => metrics(prom_registry.clone()).await,
         (&Method::GET, path) => {
-            let is_outer_view_html = (path.ends_with("/") || path.ends_with(".html"))
-                && referer_header != ""
+            let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
+                && !referer_header.is_empty()
                 && !referer_header.contains(refer);
             info!(
                 "{:>21?} {:^7} {} {:?} {}",
@@ -121,15 +121,15 @@ async fn metrics(
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let mut buffer = String::new();
     if let Err(e) = encode(&mut buffer, registry.read().await.deref()) {
-        return Response::builder()
+        Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .header(http::header::SERVER, SERVER_NAME)
-            .body(full_body(format!("encode metrics error: {}", e)));
+            .body(full_body(format!("encode metrics error: {}", e)))
     } else {
-        return Response::builder()
+        Response::builder()
             .status(StatusCode::OK)
             .header(http::header::SERVER, SERVER_NAME)
-            .body(full_body(buffer));
+            .body(full_body(buffer))
     }
 }
 
@@ -141,7 +141,7 @@ async fn serve_path(
     if String::from(url_path).contains("/..") {
         return not_found();
     }
-    let mut path = PathBuf::from(if String::from(url_path).ends_with("/") {
+    let mut path = PathBuf::from(if String::from(url_path).ends_with('/') {
         format!("{}{}index.html", web_content_path, url_path)
     } else {
         format!("{}{}", web_content_path, url_path)
@@ -238,12 +238,12 @@ fn not_modified(last_modified: SystemTime) -> Result<Response<BoxBody<Bytes, io:
         .body(empty_body())
 }
 
-const PART0: &'static str = include_str!("../html/part0.html");
-const PART1: &'static str = include_str!("../html/part1.html");
-const PART2: &'static str = include_str!("../html/part2.html");
-const PART3: &'static str = include_str!("../html/part3.html");
-const PART4: &'static str = include_str!("../html/part4.html");
-const H404: &'static str = include_str!("../html/404.html");
+const PART0: &str = include_str!("../html/part0.html");
+const PART1: &str = include_str!("../html/part1.html");
+const PART2: &str = include_str!("../html/part2.html");
+const PART3: &str = include_str!("../html/part3.html");
+const PART4: &str = include_str!("../html/part4.html");
+const H404: &str = include_str!("../html/404.html");
 
 async fn speed(
     net_monitor: NetMonitor,
