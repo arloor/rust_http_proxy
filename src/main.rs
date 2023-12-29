@@ -34,7 +34,7 @@ use tokio_rustls::rustls::ServerConfig;
 const TRUE: &str = "true";
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
-type DynError = Box<dyn std::error::Error>; // wrapper for dyn Error
+type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
