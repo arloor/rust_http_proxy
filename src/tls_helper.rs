@@ -2,20 +2,21 @@ use std::fs::File;
 use std::sync::Arc;
 use tokio_rustls::rustls::pki_types::CertificateDer;
 use tokio_rustls::rustls::ServerConfig;
+use crate::DynError;
 
-// wrap error
-type Error = Box<dyn std::error::Error>;
-
-pub fn _rust_tls_acceptor(key: &String, cert: &String) -> Result<tokio_rustls::TlsAcceptor, Error> {
+pub fn _rust_tls_acceptor(
+    key: &String,
+    cert: &String,
+) -> Result<tokio_rustls::TlsAcceptor, DynError> {
     Ok(tls_config(key, cert)?.into())
 }
 
-pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, Error> {
+pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, DynError> {
     use std::io::{self, BufReader};
     let key_file =
-        File::open(key).map_err(|_| <&str as Into<Error>>::into("open private key failed"))?;
+        File::open(key).map_err(|_| <&str as Into<DynError>>::into("open private key failed"))?;
     let cert_file =
-        File::open(cert).map_err(|_| <&str as Into<Error>>::into("open cert failed"))?;
+        File::open(cert).map_err(|_| <&str as Into<DynError>>::into("open cert failed"))?;
     let certs = rustls_pemfile::certs(&mut BufReader::new(cert_file))
         .collect::<io::Result<Vec<CertificateDer<'static>>>>();
     let key_option = rustls_pemfile::private_key(&mut BufReader::new(key_file))?;

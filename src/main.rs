@@ -34,7 +34,7 @@ use tokio_rustls::rustls::ServerConfig;
 const TRUE: &str = "true";
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
-type DynError = Box<dyn std::error::Error>;
+type DynError = Box<dyn std::error::Error>; // wrapper for dyn Error
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
@@ -188,7 +188,7 @@ fn log_config(config: &ProxyConfig) {
 /// * `http_err` - hyper错误
 /// # Returns
 /// * `()` - 无返回值
-fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: Box<dyn std::error::Error>) {
+fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         // 转换为hyper::Error
         let cause = match http_err.source() {
