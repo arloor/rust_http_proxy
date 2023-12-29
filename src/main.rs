@@ -35,10 +35,12 @@ const TRUE: &str = "true";
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), impl std::error::Error> {
     let proxy_config: &'static ProxyConfig = load_config_from_env();
-    serve(proxy_config).await?;
-    Ok(())
+    serve(proxy_config)
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    Ok::<(), io::Error>(())
 }
 
 async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::Error>> {
