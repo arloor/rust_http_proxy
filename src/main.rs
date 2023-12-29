@@ -34,16 +34,16 @@ use tokio_rustls::rustls::ServerConfig;
 const TRUE: &str = "true";
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
+type DynError = Box<dyn std::error::Error>;
+
 #[tokio::main]
-async fn main() -> Result<(), impl std::error::Error> {
+async fn main() -> Result<(), DynError> {
     let proxy_config: &'static ProxyConfig = load_config_from_env();
-    serve(proxy_config)
-        .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-    Ok::<(), io::Error>(())
+    serve(proxy_config).await?;
+    Ok(())
 }
 
-async fn serve(config: &'static ProxyConfig) -> Result<(), Box<dyn std::error::Error>> {
+async fn serve(config: &'static ProxyConfig) -> Result<(), DynError> {
     let proxy_handler = ProxyHandler::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
