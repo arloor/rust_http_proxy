@@ -94,7 +94,7 @@ pub async fn serve_http_request(
                     "".to_string()
                 }
             );
-            let r = serve_path(web_content_path, path, req).await;
+            let r = serve_path(web_content_path, path, req, true).await;
             if let Ok(ref res) = r {
                 if is_outer_view_html
                     && (res.status().is_success() || res.status().is_redirection())
@@ -115,7 +115,7 @@ pub async fn serve_http_request(
             }
             r
         }
-        (&Method::HEAD, path) => serve_path(web_content_path, path, req).await,
+        (&Method::HEAD, path) => serve_path(web_content_path, path, req, false).await,
         _ => not_found(),
     };
 }
@@ -141,6 +141,7 @@ async fn serve_path(
     web_content_path: &String,
     url_path: &str,
     req: &Request<impl Body>,
+    need_body: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     if String::from(url_path).contains("/..") {
         return not_found();
@@ -184,22 +185,18 @@ async fn serve_path(
     } else {
         String::from(content_type)
     };
-    let builder = Response::builder()
+    let mut builder = Response::builder()
         .header(http::header::CONTENT_TYPE, content_type.clone())
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, SERVER_NAME);
-    let file = match File::open(path).await {
-        Ok(file) => file,
-        Err(_) => return not_found(),
-    };
 
     // 判断客户端是否支持gzip
-    let content_type=content_type.as_str();
+    let content_type = content_type.as_str();
     let accept_encoding = req
         .headers()
         .get(http::header::ACCEPT_ENCODING)
         .map_or("", |h| h.to_str().unwrap_or(""));
-    if accept_encoding.contains(GZIP)
+    let need_gzip = accept_encoding.contains(GZIP)
         && (content_type.starts_with("text/html")
             || content_type.starts_with("text/css")
             || content_type.starts_with("application/javascript")
@@ -207,15 +204,24 @@ async fn serve_path(
             || content_type.starts_with("text/xml")
             || content_type.starts_with("application/xml")
             || content_type.starts_with("text/plain")
-            || content_type.starts_with("text/markdown"))
-    {
+            || content_type.starts_with("text/markdown"));
+    if need_gzip {
+        builder = builder.header(CONTENT_ENCODING, GZIP)
+    };
+    if !need_body {
+        return builder.body(empty_body());
+    }
+
+    let file = match File::open(path).await {
+        Ok(file) => file,
+        Err(_) => return not_found(),
+    };
+    if need_gzip {
         let buf_stream = BufStream::new(file);
         let encoder = GzipEncoder::new(buf_stream);
         let reader_stream = ReaderStream::new(encoder);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-        builder
-            .header(CONTENT_ENCODING, GZIP)
-            .body(stream_body.boxed())
+        builder.body(stream_body.boxed())
     } else {
         let reader_stream = ReaderStream::new(file);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
