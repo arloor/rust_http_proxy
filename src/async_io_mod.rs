@@ -11,7 +11,9 @@ pin_project! {
     pub struct TcpStreamWrapper<T> {
         #[pin]
         inner: T,
+        #[pin]
         proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
+        #[pin]
         access_label: Arc<AccessLabel>,
     }
 }
@@ -39,9 +41,10 @@ where
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        let proxy_traffic = self.proxy_traffic.clone();
-        let access_label = self.access_label.clone();
-        match self.project().inner.poll_read(cx, buf) {
+        let pro = self.project();
+        let proxy_traffic =pro.proxy_traffic;
+        let access_label = pro.access_label;
+        match pro.inner.poll_read(cx, buf) {
             Poll::Ready(Ok(_)) => {
                 proxy_traffic
                     .get_or_create(&access_label)
@@ -62,9 +65,10 @@ where
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        let proxy_traffic = self.proxy_traffic.clone();
-        let access_label = self.access_label.clone();
-        match self.project().inner.poll_write(cx, buf) {
+        let pro = self.project();
+        let proxy_traffic =pro.proxy_traffic;
+        let access_label = pro.access_label;
+        match pro.inner.poll_write(cx, buf) {
             Poll::Ready(result) => {
                 if let Ok(size) = result {
                     proxy_traffic

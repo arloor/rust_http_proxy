@@ -65,7 +65,7 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 可以使用curl来测试
 
 ```shell
-curl  https://google.com --proxy-user "username:passwrod" -x https://xxxx.com:port  --proxy-insecure
+curl  https://baidu.com --proxy-user "username:passwrod" -x https://localhost:8888  --proxy-insecure
 ```
 
 ## 安装说明
