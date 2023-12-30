@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc, task::Context, task::Poll};
+use std::{pin::Pin, task::Context, task::Poll};
 
 use pin_project_lite::pin_project;
 use prometheus_client::metrics::{counter::Counter, family::Family};
@@ -11,10 +11,8 @@ pin_project! {
     pub struct TcpStreamWrapper<T> {
         #[pin]
         inner: T,
-        #[pin]
         proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
-        #[pin]
-        access_label: Arc<AccessLabel>,
+        access_label: AccessLabel,
     }
 }
 
@@ -27,7 +25,7 @@ impl<T> TcpStreamWrapper<T> {
         Self {
             inner,
             proxy_traffic,
-            access_label: Arc::new(access_label),
+            access_label: access_label.clone(),
         }
     }
 }
@@ -47,7 +45,7 @@ where
         match pro.inner.poll_read(cx, buf) {
             Poll::Ready(Ok(_)) => {
                 proxy_traffic
-                    .get_or_create(&access_label)
+                    .get_or_create(access_label)
                     .inc_by(buf.filled().len() as u64);
                 Poll::Ready(Ok(()))
             }
@@ -72,7 +70,7 @@ where
             Poll::Ready(result) => {
                 if let Ok(size) = result {
                     proxy_traffic
-                        .get_or_create(&access_label)
+                        .get_or_create(access_label)
                         .inc_by(size as u64);
                 }
                 Poll::Ready(result)
