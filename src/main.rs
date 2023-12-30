@@ -267,7 +267,10 @@ pub struct ProxyConfig {
     cert: String,
     #[arg(short, long, value_name = "KEY", default_value = "privkey.pem")]
     key: String,
-    #[arg(short, long, value_name = "BASIC_AUTH", default_value = "")]
+    #[arg(short, long, value_name = "BASIC_AUTH", default_value = "",help="默认为空，表示不鉴权。\n\
+    格式为 'Basic Base64Encode(username:password)'，注意username和password用英文冒号连接再进行Base64编码（RFC 7617）。\n\
+    例如 'Basic dXNlcm5hbWU6cGFzc3dvcmQ=' \n\
+    这由此命令生成： echo -n 'username:passwrod' | base64\n")]
     basic_auth: String,
     #[arg(
         short,
@@ -276,11 +279,14 @@ pub struct ProxyConfig {
         default_value = "/usr/share/nginx/html"
     )]
     web_content_path: String,
-    #[arg(short, long, value_name = "REFERER", default_value = "")]
+    #[arg(short, long, value_name = "REFERER", default_value = "",help="Http Referer请求头处理 \n\
+    1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么配置的值\n\
+    2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控\n")]
     referer: String,
-    #[arg(long, value_name = "ASK_FOR_AUTH")]
+    #[arg(long, value_name = "ASK_FOR_AUTH",help="if enable, never send '407 Proxy Authentication Required' to client。\n\
+    建议开启，否则有被嗅探的风险\n")]
     never_ask_for_auth: bool,
-    #[arg(short, long, value_name = "OVER_TLS")]
+    #[arg(short, long, value_name = "OVER_TLS",help="if enable, proxy server will listen on https")]
     over_tls: bool,
     #[arg(long, value_name = "HOSTNAME", default_value = "未知")]
     hostname: String,

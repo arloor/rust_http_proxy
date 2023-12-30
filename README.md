@@ -4,55 +4,63 @@
 
 相比 `hyper`的[正向代理example](https://github.com/hyperium/hyper/blob/0.14.x/examples/http_proxy.rs)增加了以下特性：
 
-1. proxy over tls特性( `over_tls=true` )：使用tls来对代理流量进行加密。
+1. proxy over tls特性( `--over-tls` )：使用tls来对代理流量进行加密。
 2. 每天定时加载tls证书，acme证书过期重新签发时不需要重启服务。
 3. 支持Proxy-Authorization鉴权。
-4. 开启Proxy-Authorization鉴权时，结合 `ask_for_auth=false` 配置防止嗅探。
+4. 开启Proxy-Authorization鉴权时，结合 `--never-ask-for-auth` 配置防止嗅探。
 5. 删除代理相关的header，以保持高匿。
 6. 类Nginx的静态资源托管，支持Gzip压缩。
 7. 基于Prometheus的可观测，可以监控代理的流量、外链访问等。
 
-提及的参数详见[高级配置](#高级配置)
+提及的参数详见[命令行参数](#命令行参数)
 
-## 运行
-
-```shell
-cargo run --package rust_http_proxy --bin rust_http_proxy
-```
-
-## 高级配置
-
-通过环境变量进行配置，相关环境变量及其默认值：
+## 命令行参数
 
 ```shell
-# 监听的端口
-export port=3128
-# 默认为空，表示不鉴权。格式为 "Basic Base64Encode(username:password)"，注意username和password用英文冒号连接再进行Base64编码（RFC 7617）。
-# 例如 Basic dXNlcm5hbWU6cGFzc3dvcmQ= 
-# 这由此命令生成： echo -n "username:passwrod" | base64
-export basic_auth=
-# 主动发起Proxy-Authenticate。在公网下推荐设置为false。
-export ask_for_auth=true
-# 是否使用tls，默认为http
-export over_tls=false
-# tls证书
-export cert=cert.pem
-# 私钥 pem格式
-export raw_key=privkey.pem
-# 日志文件路径，默认为/tmp/proxy.log
-export log_dir=/tmp
-export log_file=proxy.log
-# 代替nginx的web服务器功能，展示http网站
-export web_content_path=/usr/share/nginx/html
-# Referer请求头处理
-# 1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含下面的值
-# 2. 外链访问监控：如果Referer不包含下面的值，并且访问html资源时，req_from_out++，用于外链访问监控
-export refer=
+$ rust_http_proxy --help
+A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving
+
+Usage: rust_http_proxy [OPTIONS]
+
+Options:
+      --log-dir <LOG_DIR>
+          [default: /tmp]
+      --log-file <LOG_FILE>
+          [default: proxy.log]
+  -p, --port <PORT>
+          [default: 3128]
+  -c, --cert <CERT>
+          [default: cert.pem]
+  -k, --key <KEY>
+          [default: privkey.pem]
+  -b, --basic-auth <BASIC_AUTH>
+          默认为空，表示不鉴权。
+          格式为 'Basic Base64Encode(username:password)'，注意username和password用英文冒号连接再进行Base64编码（RFC 7617）。
+          例如 'Basic dXNlcm5hbWU6cGFzc3dvcmQ=' 
+          这由此命令生成： echo -n 'username:passwrod' | base64
+           [default: ]
+  -w, --web-content-path <WEB_CONTENT_PATH>
+          [default: /usr/share/nginx/html]
+  -r, --referer <REFERER>
+          Http Referer请求头处理 
+          1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么配置的值
+          2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控
+           [default: ]
+      --never-ask-for-auth
+          if enable, never send '407 Proxy Authentication Required' to client。
+          建议开启，否则有被嗅探的风险
+          
+  -o, --over-tls
+          if enable, proxy server will listen on https
+      --hostname <HOSTNAME>
+          [default: 未知]
+  -h, --help
+          Print help
 ```
 
 **SSL配置**
 
-其中，tls证书(`cert`)和pem格式的私钥(`raw_key`)可以通过openssl命令一键生成：
+其中，tls证书(`--cert`)和pem格式的私钥(`--key`)可以通过openssl命令一键生成：
 
 ```shell
 openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_proxy/privkey.pem -out /usr/share/rust_http_proxy/cert.pem -days 3650 -subj "/C=cn/ST=hl/L=sd/O=op/OU=as/CN=example.com"
@@ -62,7 +70,7 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 
 **测试TLS Proxy**
 
-可以使用curl来测试
+可以使用curl （7.52.0以上版本）来测试
 
 ```shell
 curl  https://baidu.com --proxy-user "username:passwrod" -x https://localhost:8888  --proxy-insecure
@@ -104,8 +112,8 @@ docker run --rm -it --name proxy --net host docker.io/arloor/rust_http_proxy
 # HELP req_from_out Number of HTTP requests received.
 # TYPE req_from_out counter
 req_from_out_total{referer="all",path="all"} 4
-# HELP proxy_access num proxy_access.
-# TYPE proxy_access counter
+# HELP proxy_traffic num proxy_traffic.
+# TYPE proxy_traffic counter
 # EOF
 ```
 
