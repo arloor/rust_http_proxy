@@ -218,7 +218,7 @@ async fn serve_path(
     };
     if need_gzip {
         let buf_stream = BufStream::new(file);
-        let encoder = GzipEncoder::new(buf_stream);
+        let encoder = GzipEncoder::with_quality(buf_stream,async_compression::Level::Best);
         let reader_stream = ReaderStream::new(encoder);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
