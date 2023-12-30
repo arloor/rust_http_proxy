@@ -185,7 +185,7 @@ async fn serve_path(
         String::from(content_type)
     };
     let builder = Response::builder()
-        .header(http::header::CONTENT_TYPE, content_type)
+        .header(http::header::CONTENT_TYPE, content_type.clone())
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::SERVER, SERVER_NAME);
     let file = match File::open(path).await {
@@ -194,15 +194,20 @@ async fn serve_path(
     };
 
     // 判断客户端是否支持gzip
+    let content_type=content_type.as_str();
     let accept_encoding = req
         .headers()
         .get(http::header::ACCEPT_ENCODING)
         .map_or("", |h| h.to_str().unwrap_or(""));
     if accept_encoding.contains(GZIP)
-        && (url_path.ends_with('/')
-            || url_path.ends_with(".html")
-            || url_path.ends_with(".js")
-            || url_path.ends_with(".css"))
+        && (content_type.starts_with("text/html")
+            || content_type.starts_with("text/css")
+            || content_type.starts_with("application/javascript")
+            || content_type.starts_with("application/json")
+            || content_type.starts_with("text/xml")
+            || content_type.starts_with("application/xml")
+            || content_type.starts_with("text/plain")
+            || content_type.starts_with("text/markdown"))
     {
         let buf_stream = BufStream::new(file);
         let encoder = GzipEncoder::new(buf_stream);
