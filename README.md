@@ -9,7 +9,7 @@
 3. 支持Proxy-Authorization鉴权。
 4. 开启Proxy-Authorization鉴权时，结合 `ask_for_auth=false` 配置防止嗅探。
 5. 删除代理相关的header，以保持高匿。
-6. 类Nginx的静态资源托管，可以搭建静态网站。
+6. 类Nginx的静态资源托管，支持Gzip压缩。
 7. 基于Prometheus的可观测，可以监控代理的流量、外链访问等。
 
 提及的参数详见[高级配置](#高级配置)
