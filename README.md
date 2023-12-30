@@ -84,8 +84,8 @@ curl  https://baidu.com --proxy-user "username:passwrod" -x https://localhost:88
 
 ```shell
 curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy_musl
-install rust_http_proxy_musl /usr/local/bin/rust_http_proxy
-rust_http_proxy
+mv rust_http_proxy_musl /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
+rust_http_proxy -h
 ```
 
 ### Docker 安装 
