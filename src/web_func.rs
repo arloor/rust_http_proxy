@@ -44,9 +44,9 @@ pub async fn serve_http_request(
     http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
     prom_registry: Arc<RwLock<Registry>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let hostname = proxy_config.hostname;
-    let web_content_path = proxy_config.web_content_path;
-    let refer = proxy_config.refer;
+    let hostname = &proxy_config.hostname;
+    let web_content_path = &proxy_config.web_content_path;
+    let refer = &proxy_config.referer;
     let referer_header = req
         .headers()
         .get(REFERER)

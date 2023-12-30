@@ -62,8 +62,8 @@ impl ProxyHandler {
         proxy_config: &'static ProxyConfig,
         client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let basic_auth = proxy_config.basic_auth;
-        let ask_for_auth = proxy_config.ask_for_auth;
+        let basic_auth = &proxy_config.basic_auth;
+        let never_ask_for_auth = proxy_config.never_ask_for_auth;
         if Method::CONNECT == req.method() {
             info!(
                 "{:>21?} {:^7} {:?} {:?}",
@@ -79,7 +79,7 @@ impl ProxyHandler {
                     .decode_utf8()
                     .unwrap_or(Cow::from(raw_path));
                 let path = path.as_ref();
-                if !basic_auth.is_empty() && ask_for_auth {
+                if !basic_auth.is_empty() && !never_ask_for_auth {
                     // 存在嗅探风险时，不伪装成http服务
                     return Err(io::Error::new(
                         ErrorKind::PermissionDenied,
@@ -124,7 +124,7 @@ impl ProxyHandler {
                 Some(header) => match header.to_str() {
                     Err(e) => warn!("解header失败，{:?} {:?}", header, e),
                     Ok(request_auth) => {
-                        if request_auth == *basic_auth {
+                        if request_auth == basic_auth {
                             authed = true;
                         } else {
                             warn!(
@@ -136,13 +136,13 @@ impl ProxyHandler {
                 },
             }
             if !authed {
-                return if ask_for_auth {
-                    Ok(build_proxy_authenticate_resp())
-                } else {
+                return if never_ask_for_auth {
                     Err(io::Error::new(
                         ErrorKind::PermissionDenied,
                         "wrong basic auth, closing socket...",
                     ))
+                } else {
+                    Ok(build_proxy_authenticate_resp())
                 };
             }
         }

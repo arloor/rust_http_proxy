@@ -10,6 +10,7 @@ mod web_func;
 use crate::log_x::init_log;
 use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
+use clap::Parser;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -31,14 +32,13 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tokio_rustls::rustls::ServerConfig;
 
-const TRUE: &str = "true";
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    let proxy_config: &'static ProxyConfig = load_config_from_env();
+    let proxy_config: &'static ProxyConfig = load_config();
     serve(proxy_config).await?;
     Ok(())
 }
@@ -50,7 +50,7 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), DynError> {
     if config.over_tls {
         info!("init mine TlsAcceptor");
         let mut acceptor = TlsAcceptor::new(
-            tls_config(config.raw_key, config.cert)?,
+            tls_config(&config.key, &config.cert)?,
             TcpListener::bind(addr).await?,
         );
         let mut rx = init_tls_config_refresh_task(config);
@@ -159,12 +159,15 @@ async fn proxy(
 fn log_config(config: &ProxyConfig) {
     info!("log is output to {}/{}", config.log_dir, config.log_file);
     info!("hostname seems to be {}", config.hostname);
-    if !config.basic_auth.is_empty() && config.ask_for_auth {
+    if !config.basic_auth.is_empty() && !config.never_ask_for_auth {
         warn!("do not serve web content to avoid being detected!");
     } else {
         info!("serve web content of \"{}\"", config.web_content_path);
-        if !config.refer.is_empty() {
-            info!("Referer header to images must contain \"{}\"", config.refer);
+        if !config.referer.is_empty() {
+            info!(
+                "Referer header to images must contain \"{}\"",
+                config.referer
+            );
         }
     }
     info!("basic auth is \"{}\"", config.basic_auth);
@@ -216,36 +219,14 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
     }
 }
 
-fn load_config_from_env() -> &'static ProxyConfig {
-    let config = ProxyConfig {
-        log_dir: Box::leak(Box::new(env::var("log_dir").unwrap_or("/tmp".to_string()))),
-        log_file: Box::leak(Box::new(
-            env::var("log_file").unwrap_or("proxy.log".to_string()),
-        )),
-        port: env::var("port")
-            .unwrap_or("3128".to_string())
-            .parse::<u16>()
-            .unwrap_or(444),
-        cert: Box::leak(Box::new(env::var("cert").unwrap_or("cert.pem".to_string()))),
-        raw_key: Box::leak(Box::new(
-            env::var("raw_key").unwrap_or(env::var("key").unwrap_or("privkey.pem".to_string())),
-        )),
-        basic_auth: Box::leak(Box::new(env::var("basic_auth").unwrap_or("".to_string()))),
-        web_content_path: Box::leak(Box::new(
-            env::var("web_content_path").unwrap_or("/usr/share/nginx/html".to_string()),
-        )),
-        refer: Box::leak(Box::new(env::var("refer").unwrap_or("".to_string()))),
-        ask_for_auth: TRUE == env::var("ask_for_auth").unwrap_or("true".to_string()),
-        over_tls: TRUE == env::var("over_tls").unwrap_or("false".to_string()),
-        hostname: Box::leak(Box::new(
-            env::var("HOSTNAME").unwrap_or(local_ip().unwrap_or("未知".to_string())),
-        )),
-    };
-    if let Err(log_init_error) = init_log(config.log_dir, config.log_file) {
+fn load_config() -> &'static ProxyConfig {
+    let config = Box::leak(Box::new(ProxyConfig::parse()));
+    config.hostname = env::var("HOSTNAME").unwrap_or("未知".to_string());
+    if let Err(log_init_error) = init_log(&config.log_dir, &config.log_file) {
         println!("init log error:{}", log_init_error);
         std::process::exit(1);
     }
-    log_config(&config);
+    log_config(config);
     return Box::leak(Box::new(config));
 }
 
@@ -263,7 +244,7 @@ fn init_tls_config_refresh_task(config: &'static ProxyConfig) -> mpsc::Receiver<
         info!("update tls config every {} seconds", REFRESH_SECONDS);
         loop {
             time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
-            if let Ok(new_acceptor) = tls_config(config.raw_key, config.cert) {
+            if let Ok(new_acceptor) = tls_config(&config.key, &config.cert) {
                 info!("update tls config");
                 tx.try_send(new_acceptor).ok(); // 防止阻塞
             }
@@ -272,17 +253,35 @@ fn init_tls_config_refresh_task(config: &'static ProxyConfig) -> mpsc::Receiver<
     rx
 }
 
-/// Represents the global configuration for the HTTP proxy server.
+/// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
+#[derive(Parser)]
+#[command(author, version=None, about, long_about = None)]
 pub struct ProxyConfig {
-    log_dir: &'static String,
-    log_file: &'static String,
+    #[arg(long, value_name = "LOG_DIR", default_value = "/tmp")]
+    log_dir: String,
+    #[arg(long, value_name = "LOG_FILE", default_value = "proxy.log")]
+    log_file: String,
+    #[arg(short, long, value_name = "PORT", default_value = "3128")]
     port: u16,
-    cert: &'static String,
-    raw_key: &'static String,
-    basic_auth: &'static String,
-    web_content_path: &'static String,
-    refer: &'static String,
-    ask_for_auth: bool,
+    #[arg(short, long, value_name = "CERT", default_value = "cert.pem")]
+    cert: String,
+    #[arg(short, long, value_name = "KEY", default_value = "privkey.pem")]
+    key: String,
+    #[arg(short, long, value_name = "BASIC_AUTH", default_value = "")]
+    basic_auth: String,
+    #[arg(
+        short,
+        long,
+        value_name = "WEB_CONTENT_PATH",
+        default_value = "/usr/share/nginx/html"
+    )]
+    web_content_path: String,
+    #[arg(short, long, value_name = "REFERER", default_value = "")]
+    referer: String,
+    #[arg(long, value_name = "ASK_FOR_AUTH")]
+    never_ask_for_auth: bool,
+    #[arg(short, long, value_name = "OVER_TLS")]
     over_tls: bool,
-    hostname: &'static String,
+    #[arg(long, value_name = "HOSTNAME", default_value = "未知")]
+    hostname: String,
 }
