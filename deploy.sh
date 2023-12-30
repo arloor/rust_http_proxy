@@ -10,7 +10,7 @@ for i in ${hosts}; do
             echo $http_proxy
             hostname;
             systemctl restart proxy;
-            podman rmi -a 2>/dev/null
+            podman image prune -f 2>/dev/null
             '
 done
 ssh -o StrictHostKeyChecking=no root@us.arloor.dev '
@@ -18,5 +18,5 @@ ssh -o StrictHostKeyChecking=no root@us.arloor.dev '
             echo $http_proxy
             hostname;
             systemctl restart guest;
-            podman rmi -a 2>/dev/null
+            podman image prune -f 2>/dev/null
             '
