@@ -3,13 +3,14 @@ use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
 use crate::ProxyConfig;
+use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
 use http::Error;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, StreamBody};
 use httpdate::fmt_http_date;
 use hyper::body::{Body, Bytes, Frame};
-use hyper::header::REFERER;
+use hyper::header::{CONTENT_ENCODING, REFERER};
 use hyper::{http, Method, Request, Response, StatusCode};
 use log::{info, warn};
 use mime_guess::from_path;
@@ -26,10 +27,13 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
+use tokio::io::BufStream;
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 
 const SERVER_NAME: &str = "arloor's creation";
+
+static GZIP: &str = "gzip";
 
 pub async fn serve_http_request(
     req: &Request<impl Body>,
@@ -173,17 +177,6 @@ async fn serve_path(
             }
         }
     }
-    let file = match File::open(path).await {
-        Ok(file) => file,
-        Err(_) => return not_found(),
-    };
-
-    // Wrap to a tokio_util::io::ReaderStream
-    let reader_stream = ReaderStream::new(file);
-
-    // Convert to http_body_util::BoxBody
-    let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-    let boxed_body = stream_body.boxed();
 
     let content_type = mime_type.as_ref();
     let content_type = if !content_type.to_ascii_lowercase().contains("charset") {
@@ -191,11 +184,38 @@ async fn serve_path(
     } else {
         String::from(content_type)
     };
-    Response::builder()
+    let builder = Response::builder()
         .header(http::header::CONTENT_TYPE, content_type)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
-        .header(http::header::SERVER, SERVER_NAME)
-        .body(boxed_body)
+        .header(http::header::SERVER, SERVER_NAME);
+    let file = match File::open(path).await {
+        Ok(file) => file,
+        Err(_) => return not_found(),
+    };
+
+    // 判断客户端是否支持gzip
+    let accept_encoding = req
+        .headers()
+        .get(http::header::ACCEPT_ENCODING)
+        .map_or("", |h| h.to_str().unwrap_or(""));
+    if accept_encoding.contains(GZIP)
+        && (url_path.ends_with('/')
+            || url_path.ends_with(".html")
+            || url_path.ends_with(".js")
+            || url_path.ends_with(".css"))
+    {
+        let buf_stream = BufStream::new(file);
+        let encoder = GzipEncoder::new(buf_stream);
+        let reader_stream = ReaderStream::new(encoder);
+        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+        builder
+            .header(CONTENT_ENCODING, GZIP)
+            .body(stream_body.boxed())
+    } else {
+        let reader_stream = ReaderStream::new(file);
+        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+        builder.body(stream_body.boxed())
+    }
 }
 
 fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
