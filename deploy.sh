@@ -1,5 +1,5 @@
 #! /bin/bash
-hosts="ti.arloor.dev hk.arloor.dev sg.arloor.dev di.arloor.dev us.arloor.dev gg.arloor.dev bwg.arloor.dev"
+hosts="ti.arloor.dev hk.arloor.dev hkg.arloor.dev sg.arloor.dev di.arloor.dev us.arloor.dev gg.arloor.dev bwg.arloor.dev"
 # echo "" > ~/.ssh/known_hosts
 # for i in ${hosts}; do
 #     ssh-keyscan -H ${i} >> ~/.ssh/known_hosts
