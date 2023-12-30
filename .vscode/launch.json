@@ -9,16 +9,11 @@
             "request": "launch",
             "name": "Debug",
             "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
-            "args": [],
+            "args": ["-p","444","-c","cert.pem","-k","privkey.pem","-b","","-w",".","-o","--never-ask-for-auth"],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "rust: cargo build",
             "env": {
-                "port": "8888",
-                "over_tls":"true",
-                "cert": "./cert.pem",
-                "raw_key": "./privkey.pem",
-                "refer": "arloor",
-                "web_content_path": "./"
+                "HOSTNAME":"test"
             }
         }
     ]
