@@ -26,7 +26,7 @@ pin_project! {
     {
         #[pin]
         inner: T,
-        traffic_counter: Family<R, Counter, fn() -> Counter>,
+        traffic_counter: Family<R, Counter>,
         label: R,
     }
 }
@@ -36,7 +36,7 @@ where
     T: AsyncWrite + AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
-    pub fn new(inner: T, traffic_counter: Family<R, Counter, fn() -> Counter>, label: R) -> Self {
+    pub fn new(inner: T, traffic_counter: Family<R, Counter>, label: R) -> Self {
         Self {
             inner,
             traffic_counter,

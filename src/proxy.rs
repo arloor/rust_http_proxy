@@ -26,8 +26,8 @@ use tokio::{net::TcpStream, sync::RwLock};
 #[derive(Clone)]
 pub struct ProxyHandler {
     prom_registry: Arc<RwLock<Registry>>,
-    http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
-    proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
+    http_req_counter: Family<ReqLabels, Counter>,
+    proxy_traffic: Family<AccessLabel, Counter>,
     net_monitor: NetMonitor,
 }
 
