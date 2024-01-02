@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{async_io_mod::TcpStreamWrapper, net_monitor::NetMonitor, web_func, ProxyConfig};
+use crate::{async_io_ext::AsyncIOExt, net_monitor::NetMonitor, web_func, ProxyConfig};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
 use hyper::{
@@ -174,7 +174,7 @@ impl ProxyHandler {
                                 Ok(target_stream) => {
                                     let access_tag = access_label.to_string();
                                     let target_stream =
-                                        TcpStreamWrapper::new(target_stream, proxy_traffic, access_label);
+                                        AsyncIOExt::new(target_stream, proxy_traffic, access_label);
                                     if let Err(e) = tunnel(upgraded, target_stream).await {
                                         warn!("[tunnel io error] [{}] : {} ", access_tag, e);
                                     };
@@ -212,7 +212,7 @@ impl ProxyHandler {
             let host = req.uri().host().expect("uri has no host");
             let port = req.uri().port_u16().unwrap_or(80);
             let stream = TcpStream::connect((host, port)).await?;
-            let server_mod = TcpStreamWrapper::new(
+            let server_mod = AsyncIOExt::new(
                 stream,
                 self.proxy_traffic.clone(),
                 AccessLabel {
@@ -254,7 +254,7 @@ impl ProxyHandler {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(upgraded: Upgraded, mut target_io: TcpStreamWrapper<TcpStream,AccessLabel>) -> io::Result<()> {
+async fn tunnel(upgraded: Upgraded, mut target_io: AsyncIOExt<TcpStream,AccessLabel>) -> io::Result<()> {
     let mut upgraded = TokioIo::new(upgraded);
     // Proxying data
     let (_from_client, _from_server) =

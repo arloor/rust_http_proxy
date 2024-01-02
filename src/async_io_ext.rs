@@ -10,7 +10,7 @@ use prometheus_client::{
 pin_project! {
     /// enhance inner tcp stream with prometheus counter
     #[derive(Debug)]
-    pub struct TcpStreamWrapper<T,R> {
+    pub struct AsyncIOExt<T,R> {
         #[pin]
         inner: T,
         traffic_counter: Family<R, Counter, fn() -> Counter>,
@@ -18,7 +18,7 @@ pin_project! {
     }
 }
 
-impl<T, R> TcpStreamWrapper<T, R>
+impl<T, R> AsyncIOExt<T, R>
 where
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
@@ -26,12 +26,12 @@ where
         Self {
             inner,
             traffic_counter,
-            label: label,
+            label,
         }
     }
 }
 
-impl<T, R: EncodeLabelSet> tokio::io::AsyncRead for TcpStreamWrapper<T, R>
+impl<T, R: EncodeLabelSet> tokio::io::AsyncRead for AsyncIOExt<T, R>
 where
     T: tokio::io::AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
@@ -56,7 +56,7 @@ where
     }
 }
 
-impl<T, R: EncodeLabelSet> tokio::io::AsyncWrite for TcpStreamWrapper<T, R>
+impl<T, R: EncodeLabelSet> tokio::io::AsyncWrite for AsyncIOExt<T, R>
 where
     T: tokio::io::AsyncWrite,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
