@@ -31,7 +31,7 @@ where
     }
 }
 
-impl<T, R: EncodeLabelSet> tokio::io::AsyncRead for AsyncIOExt<T, R>
+impl<T, R> tokio::io::AsyncRead for AsyncIOExt<T, R>
 where
     T: tokio::io::AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
@@ -56,7 +56,7 @@ where
     }
 }
 
-impl<T, R: EncodeLabelSet> tokio::io::AsyncWrite for AsyncIOExt<T, R>
+impl<T, R> tokio::io::AsyncWrite for AsyncIOExt<T, R>
 where
     T: tokio::io::AsyncWrite,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
