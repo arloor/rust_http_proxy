@@ -48,7 +48,6 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), DynError> {
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let mut terminate_signal = signal(SignalKind::terminate())?;
     if config.over_tls {
-        info!("init mine TlsAcceptor");
         let mut acceptor = TlsAcceptor::new(
             tls_config(&config.key, &config.cert)?,
             TcpListener::bind(addr).await?,
