@@ -6,11 +6,24 @@ use prometheus_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family},
 };
+use tokio::io::AsyncRead;
+use tokio::io::AsyncWrite;
 
 pin_project! {
     /// enhance inner tcp stream with prometheus counter
     #[derive(Debug)]
-    pub struct AsyncIOExt<T,R> {
+    pub struct AsyncIOExt<T,R>
+    where
+    T: AsyncWrite,
+    T: AsyncRead,
+    R: Clone,
+    R: Debug,
+    R: Hash,
+    R: PartialEq,
+    R: Eq ,
+    R: EncodeLabelSet,
+    R:'static,
+    {
         #[pin]
         inner: T,
         traffic_counter: Family<R, Counter, fn() -> Counter>,
@@ -20,6 +33,7 @@ pin_project! {
 
 impl<T, R> AsyncIOExt<T, R>
 where
+    T: AsyncWrite + AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
     pub fn new(inner: T, traffic_counter: Family<R, Counter, fn() -> Counter>, label: R) -> Self {
@@ -31,9 +45,9 @@ where
     }
 }
 
-impl<T, R> tokio::io::AsyncRead for AsyncIOExt<T, R>
+impl<T, R> AsyncRead for AsyncIOExt<T, R>
 where
-    T: tokio::io::AsyncRead,
+    T: AsyncWrite + AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
     fn poll_read(
@@ -56,9 +70,9 @@ where
     }
 }
 
-impl<T, R> tokio::io::AsyncWrite for AsyncIOExt<T, R>
+impl<T, R> AsyncWrite for AsyncIOExt<T, R>
 where
-    T: tokio::io::AsyncWrite,
+    T: AsyncWrite + AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
     fn poll_write(
