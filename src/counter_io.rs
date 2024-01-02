@@ -12,7 +12,7 @@ use tokio::io::AsyncWrite;
 pin_project! {
     /// enhance inner tcp stream with prometheus counter
     #[derive(Debug)]
-    pub struct AsyncIOExt<T,R>
+    pub struct CounterIO<T,R>
     where
     T: AsyncWrite,
     T: AsyncRead,
@@ -31,7 +31,7 @@ pin_project! {
     }
 }
 
-impl<T, R> AsyncIOExt<T, R>
+impl<T, R> CounterIO<T, R>
 where
     T: AsyncWrite + AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
@@ -45,7 +45,7 @@ where
     }
 }
 
-impl<T, R> AsyncRead for AsyncIOExt<T, R>
+impl<T, R> AsyncRead for CounterIO<T, R>
 where
     T: AsyncWrite + AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
@@ -70,7 +70,7 @@ where
     }
 }
 
-impl<T, R> AsyncWrite for AsyncIOExt<T, R>
+impl<T, R> AsyncWrite for CounterIO<T, R>
 where
     T: AsyncWrite + AsyncRead,
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
