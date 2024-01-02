@@ -254,7 +254,7 @@ impl ProxyHandler {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(upgraded: Upgraded, mut target_io: TcpStreamWrapper<TcpStream>) -> io::Result<()> {
+async fn tunnel(upgraded: Upgraded, mut target_io: TcpStreamWrapper<TcpStream,AccessLabel>) -> io::Result<()> {
     let mut upgraded = TokioIo::new(upgraded);
     // Proxying data
     let (_from_client, _from_server) =

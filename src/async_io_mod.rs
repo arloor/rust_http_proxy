@@ -1,38 +1,40 @@
-use std::{pin::Pin, task::Context, task::Poll};
+use core::hash::Hash;
+use std::{fmt::Debug, pin::Pin, task::Context, task::Poll};
 
 use pin_project_lite::pin_project;
-use prometheus_client::metrics::{counter::Counter, family::Family};
-
-use crate::proxy::AccessLabel;
+use prometheus_client::{
+    encoding::EncodeLabelSet,
+    metrics::{counter::Counter, family::Family},
+};
 
 pin_project! {
     /// enhance inner tcp stream with prometheus counter
     #[derive(Debug)]
-    pub struct TcpStreamWrapper<T> {
+    pub struct TcpStreamWrapper<T,R> {
         #[pin]
         inner: T,
-        proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
-        access_label: AccessLabel,
+        traffic_counter: Family<R, Counter, fn() -> Counter>,
+        label: R,
     }
 }
 
-impl<T> TcpStreamWrapper<T> {
-    pub fn new(
-        inner: T,
-        proxy_traffic: Family<AccessLabel, Counter, fn() -> Counter>,
-        access_label: AccessLabel,
-    ) -> Self {
+impl<T, R> TcpStreamWrapper<T, R>
+where
+    R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
+{
+    pub fn new(inner: T, traffic_counter: Family<R, Counter, fn() -> Counter>, label: R) -> Self {
         Self {
             inner,
-            proxy_traffic,
-            access_label: access_label.clone(),
+            traffic_counter,
+            label: label,
         }
     }
 }
 
-impl<T> tokio::io::AsyncRead for TcpStreamWrapper<T>
+impl<T, R: EncodeLabelSet> tokio::io::AsyncRead for TcpStreamWrapper<T, R>
 where
     T: tokio::io::AsyncRead,
+    R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -40,12 +42,12 @@ where
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         let pro = self.project();
-        let proxy_traffic =pro.proxy_traffic;
-        let access_label = pro.access_label;
+        let traffic_counter = pro.traffic_counter;
+        let label = pro.label;
         match pro.inner.poll_read(cx, buf) {
             Poll::Ready(Ok(_)) => {
-                proxy_traffic
-                    .get_or_create(access_label)
+                traffic_counter
+                    .get_or_create(label)
                     .inc_by(buf.filled().len() as u64);
                 Poll::Ready(Ok(()))
             }
@@ -54,9 +56,10 @@ where
     }
 }
 
-impl<T> tokio::io::AsyncWrite for TcpStreamWrapper<T>
+impl<T, R: EncodeLabelSet> tokio::io::AsyncWrite for TcpStreamWrapper<T, R>
 where
     T: tokio::io::AsyncWrite,
+    R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -64,14 +67,12 @@ where
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
         let pro = self.project();
-        let proxy_traffic =pro.proxy_traffic;
-        let access_label = pro.access_label;
+        let traffic_counter = pro.traffic_counter;
+        let label = pro.label;
         match pro.inner.poll_write(cx, buf) {
             Poll::Ready(result) => {
                 if let Ok(size) = result {
-                    proxy_traffic
-                        .get_or_create(access_label)
-                        .inc_by(size as u64);
+                    traffic_counter.get_or_create(label).inc_by(size as u64);
                 }
                 Poll::Ready(result)
             }
