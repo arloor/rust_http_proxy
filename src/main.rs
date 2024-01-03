@@ -6,6 +6,7 @@ mod net_monitor;
 mod proxy;
 mod tls_helper;
 mod web_func;
+mod prom_label;
 
 use crate::log_x::init_log;
 use crate::tls_helper::tls_config;

@@ -1,13 +1,13 @@
 use core::hash::Hash;
+use prometheus_client::encoding::EncodeLabelSet;
 use std::{fmt::Debug, pin::Pin, task::Context, task::Poll};
 
 use pin_project_lite::pin_project;
-use prometheus_client::{
-    encoding::EncodeLabelSet,
-    metrics::{counter::Counter, family::Family},
-};
+use prometheus_client::metrics::{counter::Counter, family::Family};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
+
+use crate::prom_label::PromLabelDefault;
 
 pin_project! {
     /// enhance inner tcp stream with prometheus counter
@@ -27,7 +27,7 @@ pin_project! {
         #[pin]
         inner: T,
         traffic_counter: Family<R, Counter>,
-        label: R,
+        label: PromLabelDefault<R>,
     }
 }
 
@@ -40,7 +40,7 @@ where
         Self {
             inner,
             traffic_counter,
-            label,
+            label:PromLabelDefault(label),
         }
     }
 }
