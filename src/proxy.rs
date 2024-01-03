@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{counter_io::CounterIO, net_monitor::NetMonitor, web_func, ProxyConfig};
+use crate::{counter_io::CounterIO, net_monitor::NetMonitor, web_func, ProxyConfig, prom_label::LabelImpl};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
 use hyper::{
@@ -26,8 +26,8 @@ use tokio::{net::TcpStream, sync::RwLock};
 #[derive(Clone)]
 pub struct ProxyHandler {
     prom_registry: Arc<RwLock<Registry>>,
-    http_req_counter: Family<ReqLabels, Counter>,
-    proxy_traffic: Family<AccessLabel, Counter>,
+    http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
+    proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     net_monitor: NetMonitor,
 }
 
@@ -37,13 +37,13 @@ impl ProxyHandler {
         monitor.start();
         let registry = <Registry>::default();
         let registry = Arc::new(RwLock::new(registry));
-        let http_requests = Family::<ReqLabels, Counter>::default();
+        let http_requests = Family::<LabelImpl<ReqLabels>, Counter>::default();
         registry.write().await.register(
             "req_from_out",
             "Number of HTTP requests received",
             http_requests.clone(),
         );
-        let proxy_traffic = Family::<AccessLabel, Counter>::default();
+        let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
         registry.write().await.register(
             "proxy_traffic",
             "num proxy_traffic",
@@ -174,7 +174,7 @@ impl ProxyHandler {
                                 Ok(target_stream) => {
                                     let access_tag = access_label.to_string();
                                     let target_stream =
-                                        CounterIO::new(target_stream, proxy_traffic, access_label);
+                                        CounterIO::new(target_stream, proxy_traffic, LabelImpl::from(access_label));
                                     if let Err(e) = tunnel(upgraded, target_stream).await {
                                         warn!("[tunnel io error] [{}] : {} ", access_tag, e);
                                     };
@@ -212,13 +212,13 @@ impl ProxyHandler {
             let host = req.uri().host().expect("uri has no host");
             let port = req.uri().port_u16().unwrap_or(80);
             let stream = TcpStream::connect((host, port)).await?;
-            let server_mod = CounterIO::new(
+            let server_mod: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
                 stream,
                 self.proxy_traffic.clone(),
-                AccessLabel {
+                LabelImpl::from(AccessLabel {
                     client: client_socket_addr.ip().to_string(),
                     target: format!("{}:{}", host, port),
-                },
+                }),
             );
             let io = TokioIo::new(server_mod);
             match Builder::new()
@@ -254,7 +254,7 @@ impl ProxyHandler {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(upgraded: Upgraded, mut target_io: CounterIO<TcpStream,AccessLabel>) -> io::Result<()> {
+async fn tunnel(upgraded: Upgraded, mut target_io: CounterIO<TcpStream,LabelImpl<AccessLabel>>) -> io::Result<()> {
     let mut upgraded = TokioIo::new(upgraded);
     // Proxying data
     let (_from_client, _from_server) =

@@ -1,4 +1,5 @@
 use crate::net_monitor::{NetMonitor, TimeValue};
+use crate::prom_label::LabelImpl;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
@@ -41,7 +42,7 @@ pub async fn serve_http_request(
     proxy_config: &'static ProxyConfig,
     path: &str,
     net_monitor: NetMonitor,
-    http_req_counter: Family<ReqLabels, Counter, fn() -> Counter>,
+    http_req_counter: Family<LabelImpl<ReqLabels>, Counter, fn() -> Counter>,
     prom_registry: Arc<RwLock<Registry>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let hostname = &proxy_config.hostname;
@@ -100,16 +101,16 @@ pub async fn serve_http_request(
                     && (res.status().is_success() || res.status().is_redirection())
                 {
                     http_req_counter
-                        .get_or_create(&ReqLabels {
+                        .get_or_create(&LabelImpl::from(ReqLabels {
                             referer: referer_header.to_string(),
                             path: path.to_string(),
-                        })
+                        }))
                         .inc();
                     http_req_counter
-                        .get_or_create(&ReqLabels {
+                        .get_or_create(&LabelImpl::from(ReqLabels {
                             referer: "all".to_string(),
                             path: "all".to_string(),
-                        })
+                        }))
                         .inc();
                 }
             }
