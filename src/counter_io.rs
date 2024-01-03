@@ -1,5 +1,4 @@
-use core::hash::Hash;
-use prometheus_client::encoding::EncodeLabelSet;
+
 use std::{fmt::Debug, pin::Pin, task::Context, task::Poll};
 
 use pin_project_lite::pin_project;
@@ -7,7 +6,7 @@ use prometheus_client::metrics::{counter::Counter, family::Family};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 
-use crate::prom_label::PromLabelDefault;
+use crate::prom_label::Label;
 
 pin_project! {
     /// enhance inner tcp stream with prometheus counter
@@ -16,31 +15,25 @@ pin_project! {
     where
     T: AsyncWrite,
     T: AsyncRead,
-    R: Clone,
-    R: Debug,
-    R: Hash,
-    R: PartialEq,
-    R: Eq ,
-    R: EncodeLabelSet,
-    R:'static,
+    R: Label
     {
         #[pin]
         inner: T,
         traffic_counter: Family<R, Counter>,
-        label: PromLabelDefault<R>,
+        label: R,
     }
 }
 
 impl<T, R> CounterIO<T, R>
 where
     T: AsyncWrite + AsyncRead,
-    R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
+    R: Label,
 {
     pub fn new(inner: T, traffic_counter: Family<R, Counter>, label: R) -> Self {
         Self {
             inner,
             traffic_counter,
-            label:PromLabelDefault(label),
+            label,
         }
     }
 }
@@ -48,7 +41,7 @@ where
 impl<T, R> AsyncRead for CounterIO<T, R>
 where
     T: AsyncWrite + AsyncRead,
-    R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
+    R: Label,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -73,7 +66,7 @@ where
 impl<T, R> AsyncWrite for CounterIO<T, R>
 where
     T: AsyncWrite + AsyncRead,
-    R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
+    R: Label,
 {
     fn poll_write(
         self: Pin<&mut Self>,

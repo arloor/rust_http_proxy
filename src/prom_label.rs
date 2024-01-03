@@ -3,15 +3,21 @@ use std::fmt::Debug;
 use core::hash::Hash;
 use prometheus_client::encoding::EncodeLabelSet;
 
-pub trait PromLabel: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static {}
+pub trait Label: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static {}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct PromLabelDefault<R>(pub R)
+pub struct LabelImpl<R>(R)
 where
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static;
 
+impl <R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static> From<R> for LabelImpl<R> {
+    fn from(s: R) -> Self {
+        Self(s)
+    }
+}
+
     
-impl<R> Deref for PromLabelDefault<R>
+impl<R> Deref for LabelImpl<R>
 where
     R: Clone + Debug + Hash + PartialEq + EncodeLabelSet + Eq + 'static,
 {
@@ -22,7 +28,7 @@ where
     }
 }
 
-impl<R> EncodeLabelSet for PromLabelDefault<R>
+impl<R> EncodeLabelSet for LabelImpl<R>
 where
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
@@ -34,7 +40,7 @@ where
     }
 }
 
-impl<R> PromLabel for PromLabelDefault<R> where
+impl<R> Label for LabelImpl<R> where
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static
 {
 }
