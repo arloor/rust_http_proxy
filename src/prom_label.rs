@@ -1,8 +1,9 @@
-use std::ops::Deref;
-use std::fmt::Debug;
+use core::ops::Deref;
+use core::fmt::Debug;
 use core::hash::Hash;
 use prometheus_client::encoding::EncodeLabelSet;
 
+/// wrapper trait for prometheus label
 pub trait Label: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static {}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
