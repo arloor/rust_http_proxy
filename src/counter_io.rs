@@ -107,6 +107,9 @@ where
         cx: &mut Context<'_>,
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
-        self.project().inner.poll_write_vectored(cx, bufs)
+        let pro = self.project();
+        let count=bufs.iter().map(|buf|buf.len()).sum::<usize>() as u64;
+        pro.traffic_counter.get_or_create(pro.label).inc_by(count);
+        pro.inner.poll_write_vectored(cx, bufs)
     }
 }
