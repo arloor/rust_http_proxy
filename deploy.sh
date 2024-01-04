@@ -1,5 +1,5 @@
 #! /bin/bash
-hosts="hk.arloor.dev hkg.arloor.dev sg.arloor.dev di.arloor.dev us.arloor.dev gg.arloor.dev bwg.arloor.dev"
+hosts="hk.arloor.dev hkg.arloor.dev sg.arloor.dev di.arloor.dev us.arloor.dev gg.arloor.dev bwg.arloor.dev ti.arloor.com"
 # echo "" > ~/.ssh/known_hosts
 # for i in ${hosts}; do
 #     ssh-keyscan -H ${i} >> ~/.ssh/known_hosts
@@ -13,10 +13,3 @@ for i in ${hosts}; do
             podman image prune -f 2>/dev/null
             '
 done
-ssh -o StrictHostKeyChecking=no root@us.arloor.dev '
-            source /etc/profile
-            echo $http_proxy
-            hostname;
-            systemctl restart guest;
-            podman image prune -f 2>/dev/null
-            '
