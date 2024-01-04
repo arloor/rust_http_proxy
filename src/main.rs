@@ -91,7 +91,11 @@ async fn serve(
             Some(tls_config_broadcast) => tls_config_broadcast.subscribe(),
             None => {
                 warn!("no tls config broadcast channel");
-                exit(1)
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "no tls config broadcast channel",
+                )
+                .into());
             }
         };
         loop {
