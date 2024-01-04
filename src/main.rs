@@ -48,13 +48,17 @@ async fn main() -> Result<(), DynError> {
         warn!("handle signal error:{}", e);
         exit(1)
     }
+    let proxy_handler = ProxyHandler::new().await;
     let futures = proxy_config
         .port
         .iter()
-        .map(|port| async move {
-            if let Err(e) = serve(proxy_config, *port).await {
-                warn!("serve error:{}", e);
-                exit(1)
+        .map(|port| {
+            let proxy_handler = proxy_handler.clone();
+            async move {
+                if let Err(e) = serve(proxy_config, *port, proxy_handler).await {
+                    warn!("serve error:{}", e);
+                    exit(1)
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -62,8 +66,11 @@ async fn main() -> Result<(), DynError> {
     Ok(())
 }
 
-async fn serve(config: &'static Config, port: u16) -> Result<(), DynError> {
-    let proxy_handler = ProxyHandler::new().await;
+async fn serve(
+    config: &'static Config,
+    port: u16,
+    proxy_handler: ProxyHandler,
+) -> Result<(), DynError> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!(
         "Listening on http{}://{}:{}",
