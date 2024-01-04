@@ -11,6 +11,8 @@ mod web_func;
 use crate::log_x::init_log;
 use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
+use base64::engine::general_purpose;
+use base64::Engine;
 use clap::Parser;
 use futures_util::future::join_all;
 use http_body_util::combinators::BoxBody;
@@ -22,6 +24,7 @@ use hyper_util::rt::tokio::TokioIo;
 use hyper_util::server::conn::auto;
 use log::{debug, info, warn};
 use proxy::ProxyHandler;
+use std::collections::HashMap;
 use std::error::Error as stdError;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
@@ -34,14 +37,13 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 use tokio::time;
 use tokio_rustls::rustls::ServerConfig;
-
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    let proxy_config: &'static ProxyConfig = load_config();
+    let proxy_config: &'static Config = load_config();
     if let Err(e) = handle_signal() {
         warn!("handle signal error:{}", e);
         exit(1)
@@ -60,10 +62,18 @@ async fn main() -> Result<(), DynError> {
     Ok(())
 }
 
-async fn serve(config: &'static ProxyConfig, port: u16) -> Result<(), DynError> {
+async fn serve(config: &'static Config, port: u16) -> Result<(), DynError> {
     let proxy_handler = ProxyHandler::new().await;
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-
+    info!(
+        "Listening on http{}://{}:{}",
+        match config.over_tls {
+            true => "s",
+            false => "",
+        },
+        local_ip().unwrap_or("0.0.0.0".to_string()),
+        port
+    );
     if config.over_tls {
         let mut acceptor = TlsAcceptor::new(
             tls_config(&config.key, &config.cert)?,
@@ -149,16 +159,14 @@ async fn serve(config: &'static ProxyConfig, port: u16) -> Result<(), DynError> 
 /// * `Result<Response<BoxBody<Bytes, io::Error>>, io::Error>` - hyper::Response
 async fn proxy(
     req: Request<hyper::body::Incoming>,
-    config: &'static ProxyConfig,
+    config: &'static Config,
     client_socket_addr: SocketAddr,
     proxy_handler: ProxyHandler,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler.proxy(req, config, client_socket_addr).await
 }
 
-fn log_config(config: &ProxyConfig) {
-    info!("log is output to {}/{}", config.log_dir, config.log_file);
-    info!("hostname seems to be {}", config.hostname);
+fn log_config(config: &Config) {
     if !config.basic_auth.is_empty() && !config.never_ask_for_auth {
         warn!("do not serve web content to avoid being detected!");
     } else {
@@ -170,21 +178,7 @@ fn log_config(config: &ProxyConfig) {
             );
         }
     }
-    info!("basic auth is \"{}\"", config.basic_auth);
-    if config.basic_auth.contains('\"') || config.basic_auth.contains('\'') {
-        warn!("basic_auth contains quotation marks, please check if it is a mistake!")
-    }
-    for port in &config.port {
-        info!(
-            "Listening on http{}://{}:{}",
-            match config.over_tls {
-                true => "s",
-                false => "",
-            },
-            local_ip().unwrap_or("0.0.0.0".to_string()),
-            port
-        );
-    }
+    info!("basic auth is {:?}", config.basic_auth);
 }
 
 /// 处理hyper错误
@@ -237,14 +231,17 @@ fn handle_signal() -> io::Result<()> {
     });
     Ok(())
 }
-fn load_config() -> &'static ProxyConfig {
-    let config = Box::leak(Box::new(ProxyConfig::parse()));
+fn load_config() -> &'static Config {
+    let mut config = ProxyConfig::parse();
     config.hostname = env::var("HOSTNAME").unwrap_or("未知".to_string());
     if let Err(log_init_error) = init_log(&config.log_dir, &config.log_file) {
         println!("init log error:{}", log_init_error);
         std::process::exit(1);
     }
-    log_config(config);
+    info!("log is output to {}/{}", config.log_dir, config.log_file);
+    info!("hostname seems to be {}", config.hostname);
+    let config = Config::from(config);
+    log_config(&config);
     return Box::leak(Box::new(config));
 }
 
@@ -256,7 +253,7 @@ pub fn local_ip() -> io::Result<String> {
         .map(|local_addr| local_addr.ip().to_string())
 }
 
-fn init_tls_config_refresh_task(config: &'static ProxyConfig) -> mpsc::Receiver<Arc<ServerConfig>> {
+fn init_tls_config_refresh_task(config: &'static Config) -> mpsc::Receiver<Arc<ServerConfig>> {
     let (tx, rx) = mpsc::channel::<Arc<ServerConfig>>(1);
     tokio::spawn(async move {
         info!("update tls config every {} seconds", REFRESH_SECONDS);
@@ -288,14 +285,12 @@ pub struct ProxyConfig {
     #[arg(
         short,
         long,
-        value_name = "BASIC_AUTH",
+        value_name = "USER",
         default_value = "",
         help = "默认为空，表示不鉴权。\n\
-    格式为 'Basic Base64Encode(username:password)'，注意username和password用英文冒号连接再进行Base64编码（RFC 7617）。\n\
-    例如 'Basic dXNlcm5hbWU6cGFzc3dvcmQ=' \n\
-    这由此命令生成： echo -n 'username:passwrod' | base64\n"
+    格式为 'username:password'\n"
     )]
-    basic_auth: String,
+    users: Vec<String>,
     #[arg(
         short,
         long,
@@ -329,4 +324,42 @@ pub struct ProxyConfig {
     over_tls: bool,
     #[arg(long, value_name = "HOSTNAME", default_value = "未知")]
     hostname: String,
+}
+
+pub(crate) struct Config {
+    cert: String,
+    key: String,
+    basic_auth: HashMap<String, String>,
+    web_content_path: String,
+    referer: String,
+    never_ask_for_auth: bool,
+    over_tls: bool,
+    hostname: String,
+    port: Vec<u16>,
+}
+
+impl From<ProxyConfig> for Config {
+    fn from(config: ProxyConfig) -> Self {
+        let mut basic_auth = HashMap::new();
+        for raw_user in config.users {
+            let mut user = raw_user.split(':');
+            let username = user.next().unwrap_or("").to_string();
+            let password = user.next().unwrap_or("").to_string();
+            if !username.is_empty() && !password.is_empty() {
+                let base64 = general_purpose::STANDARD.encode(raw_user);
+                basic_auth.insert(format!("Basic {}", base64), username);
+            }
+        }
+        Config {
+            cert: config.cert,
+            key: config.key,
+            basic_auth,
+            web_content_path: config.web_content_path,
+            referer: config.referer,
+            never_ask_for_auth: config.never_ask_for_auth,
+            over_tls: config.over_tls,
+            hostname: config.hostname,
+            port: config.port,
+        }
+    }
 }

@@ -846,6 +846,7 @@ name = "rust_http_proxy"
 version = "0.1.1"
 dependencies = [
  "async-compression",
+ "base64",
  "chrono",
  "clap",
  "flexi_logger",

@@ -1,9 +1,10 @@
+use crate::Config;
 use crate::net_monitor::{NetMonitor, TimeValue};
 use crate::prom_label::LabelImpl;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
-use crate::ProxyConfig;
+
 use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
 use http::Error;
@@ -39,7 +40,7 @@ static GZIP: &str = "gzip";
 pub async fn serve_http_request(
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
-    proxy_config: &'static ProxyConfig,
+    proxy_config: &'static Config,
     path: &str,
     net_monitor: NetMonitor,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter, fn() -> Counter>,

@@ -6,7 +6,9 @@ use std::{
     sync::Arc,
 };
 
-use crate::{counter_io::CounterIO, net_monitor::NetMonitor, web_func, ProxyConfig, prom_label::LabelImpl};
+use crate::{
+    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config,
+};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
 use hyper::{
@@ -59,7 +61,7 @@ impl ProxyHandler {
     pub async fn proxy(
         &self,
         mut req: Request<hyper::body::Incoming>,
-        proxy_config: &'static ProxyConfig,
+        proxy_config: &'static Config,
         client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let basic_auth = &proxy_config.basic_auth;
@@ -123,16 +125,13 @@ impl ProxyHandler {
                 None => warn!("no PROXY_AUTHORIZATION from {:?}", client_socket_addr),
                 Some(header) => match header.to_str() {
                     Err(e) => warn!("解header失败，{:?} {:?}", header, e),
-                    Ok(request_auth) => {
-                        if request_auth == basic_auth {
-                            authed = true;
-                        } else {
-                            warn!(
-                                "wrong PROXY_AUTHORIZATION from {:?}, wrong:{:?},right:{:?}",
-                                client_socket_addr, request_auth, basic_auth
-                            )
-                        }
-                    }
+                    Ok(request_auth) => match basic_auth.get(request_auth) {
+                        Some(_username) => authed = true,
+                        None => warn!(
+                            "wrong PROXY_AUTHORIZATION from {:?}, wrong:{:?},right:{:?}",
+                            client_socket_addr, request_auth, basic_auth
+                        ),
+                    },
                 },
             }
             if !authed {
@@ -173,8 +172,11 @@ impl ProxyHandler {
                             match TcpStream::connect(addr.clone()).await {
                                 Ok(target_stream) => {
                                     let access_tag = access_label.to_string();
-                                    let target_stream =
-                                        CounterIO::new(target_stream, proxy_traffic, LabelImpl::from(access_label));
+                                    let target_stream = CounterIO::new(
+                                        target_stream,
+                                        proxy_traffic,
+                                        LabelImpl::from(access_label),
+                                    );
                                     if let Err(e) = tunnel(upgraded, target_stream).await {
                                         warn!("[tunnel io error] [{}] : {} ", access_tag, e);
                                     };
@@ -254,7 +256,10 @@ impl ProxyHandler {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(upgraded: Upgraded, mut target_io: CounterIO<TcpStream,LabelImpl<AccessLabel>>) -> io::Result<()> {
+async fn tunnel(
+    upgraded: Upgraded,
+    mut target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+) -> io::Result<()> {
     let mut upgraded = TokioIo::new(upgraded);
     // Proxying data
     let (_from_client, _from_server) =
