@@ -131,7 +131,7 @@ impl ProxyHandler {
                 },
             }
             info!(
-                "{:>21?} {:^7} {:?} {:?} user:{}",
+                "{:>21?} {:^7} {:?} {:?} USER:[{}]",
                 client_socket_addr,
                 req.method().as_str(),
                 req.uri(),
