@@ -3,15 +3,16 @@ mod acceptor;
 mod counter_io;
 mod log_x;
 mod net_monitor;
+mod prom_label;
 mod proxy;
 mod tls_helper;
 mod web_func;
-mod prom_label;
 
 use crate::log_x::init_log;
 use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
 use clap::Parser;
+use futures_util::future::join_all;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -24,6 +25,7 @@ use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
+use std::process::exit;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, io};
@@ -40,14 +42,28 @@ type DynError = Box<dyn stdError>; // wrapper for dyn Error
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
     let proxy_config: &'static ProxyConfig = load_config();
-    serve(proxy_config).await?;
+    if let Err(e) = handle_signal() {
+        warn!("handle signal error:{}", e);
+        exit(1)
+    }
+    let futures = proxy_config
+        .port
+        .iter()
+        .map(|port| async move {
+            if let Err(e) = serve(proxy_config, *port).await {
+                warn!("serve error:{}", e);
+                exit(1)
+            }
+        })
+        .collect::<Vec<_>>();
+    join_all(futures).await;
     Ok(())
 }
 
-async fn serve(config: &'static ProxyConfig) -> Result<(), DynError> {
+async fn serve(config: &'static ProxyConfig, port: u16) -> Result<(), DynError> {
     let proxy_handler = ProxyHandler::new().await;
-    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    let mut terminate_signal = signal(SignalKind::terminate())?;
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+
     if config.over_tls {
         let mut acceptor = TlsAcceptor::new(
             tls_config(&config.key, &config.cert)?,
@@ -56,14 +72,6 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), DynError> {
         let mut rx = init_tls_config_refresh_task(config);
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
-                    info!("ctrl_c => shutdowning");
-                    std::process::exit(0); // 并不优雅关闭
-                },
-                _ = terminate_signal.recv()=>{
-                    info!("rust_http_proxy is shutdowning");
-                    std::process::exit(0); // 并不优雅关闭
-                },
                 conn = acceptor.accept() => {
                     match conn {
                         Ok((conn,client_socket_addr)) => {
@@ -102,14 +110,6 @@ async fn serve(config: &'static ProxyConfig) -> Result<(), DynError> {
         let tcp_listener = TcpListener::bind(addr).await?;
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
-                    info!("ctrl_c => shutdowning");
-                    std::process::exit(0); // 并不优雅关闭
-                },
-                _ = terminate_signal.recv()=>{
-                    info!("rust_http_proxy is shutdowning");
-                    std::process::exit(0); // 并不优雅关闭
-                },
                 conn = tcp_listener.accept()=>{
                     if let Ok((tcp_stream, client_socket_addr)) =conn{
                         let io = TokioIo::new(tcp_stream);
@@ -174,15 +174,17 @@ fn log_config(config: &ProxyConfig) {
     if config.basic_auth.contains('\"') || config.basic_auth.contains('\'') {
         warn!("basic_auth contains quotation marks, please check if it is a mistake!")
     }
-    info!(
-        "Listening on http{}://{}:{}",
-        match config.over_tls {
-            true => "s",
-            false => "",
-        },
-        local_ip().unwrap_or("0.0.0.0".to_string()),
-        config.port
-    );
+    for port in &config.port {
+        info!(
+            "Listening on http{}://{}:{}",
+            match config.over_tls {
+                true => "s",
+                false => "",
+            },
+            local_ip().unwrap_or("0.0.0.0".to_string()),
+            port
+        );
+    }
 }
 
 /// 处理hyper错误
@@ -219,6 +221,22 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
     }
 }
 
+fn handle_signal() -> io::Result<()> {
+    let mut terminate_signal = signal(SignalKind::terminate())?;
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = terminate_signal.recv() => {
+                info!("receive terminate signal, exit");
+                std::process::exit(0);
+            },
+            _ = tokio::signal::ctrl_c() => {
+                info!("ctrl_c => shutdowning");
+                std::process::exit(0); // 并不优雅关闭
+            },
+        };
+    });
+    Ok(())
+}
 fn load_config() -> &'static ProxyConfig {
     let config = Box::leak(Box::new(ProxyConfig::parse()));
     config.hostname = env::var("HOSTNAME").unwrap_or("未知".to_string());
@@ -262,15 +280,21 @@ pub struct ProxyConfig {
     #[arg(long, value_name = "LOG_FILE", default_value = "proxy.log")]
     log_file: String,
     #[arg(short, long, value_name = "PORT", default_value = "3128")]
-    port: u16,
+    port: Vec<u16>,
     #[arg(short, long, value_name = "CERT", default_value = "cert.pem")]
     cert: String,
     #[arg(short, long, value_name = "KEY", default_value = "privkey.pem")]
     key: String,
-    #[arg(short, long, value_name = "BASIC_AUTH", default_value = "",help="默认为空，表示不鉴权。\n\
+    #[arg(
+        short,
+        long,
+        value_name = "BASIC_AUTH",
+        default_value = "",
+        help = "默认为空，表示不鉴权。\n\
     格式为 'Basic Base64Encode(username:password)'，注意username和password用英文冒号连接再进行Base64编码（RFC 7617）。\n\
     例如 'Basic dXNlcm5hbWU6cGFzc3dvcmQ=' \n\
-    这由此命令生成： echo -n 'username:passwrod' | base64\n")]
+    这由此命令生成： echo -n 'username:passwrod' | base64\n"
+    )]
     basic_auth: String,
     #[arg(
         short,
@@ -279,14 +303,29 @@ pub struct ProxyConfig {
         default_value = "/usr/share/nginx/html"
     )]
     web_content_path: String,
-    #[arg(short, long, value_name = "REFERER", default_value = "",help="Http Referer请求头处理 \n\
+    #[arg(
+        short,
+        long,
+        value_name = "REFERER",
+        default_value = "",
+        help = "Http Referer请求头处理 \n\
     1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么配置的值\n\
-    2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控\n")]
+    2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控\n"
+    )]
     referer: String,
-    #[arg(long, value_name = "ASK_FOR_AUTH",help="if enable, never send '407 Proxy Authentication Required' to client。\n\
-    建议开启，否则有被嗅探的风险\n")]
+    #[arg(
+        long,
+        value_name = "ASK_FOR_AUTH",
+        help = "if enable, never send '407 Proxy Authentication Required' to client。\n\
+    建议开启，否则有被嗅探的风险\n"
+    )]
     never_ask_for_auth: bool,
-    #[arg(short, long, value_name = "OVER_TLS",help="if enable, proxy server will listen on https")]
+    #[arg(
+        short,
+        long,
+        value_name = "OVER_TLS",
+        help = "if enable, proxy server will listen on https"
+    )]
     over_tls: bool,
     #[arg(long, value_name = "HOSTNAME", default_value = "未知")]
     hostname: String,
