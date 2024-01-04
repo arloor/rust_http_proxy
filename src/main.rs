@@ -34,7 +34,7 @@ use std::time::Duration;
 use std::{env, io};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tokio::time;
 use tokio_rustls::rustls::ServerConfig;
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
@@ -86,7 +86,14 @@ async fn serve(
             tls_config(&config.key, &config.cert)?,
             TcpListener::bind(addr).await?,
         );
-        let mut rx = init_tls_config_refresh_task(config);
+
+        let mut rx = match &config.tls_config_broadcast {
+            Some(tls_config_broadcast) => tls_config_broadcast.subscribe(),
+            None => {
+                warn!("no tls config broadcast channel");
+                exit(1)
+            }
+        };
         loop {
             tokio::select! {
                 conn = acceptor.accept() => {
@@ -117,7 +124,7 @@ async fn serve(
                 },
                 message = rx.recv() => {
                     let new_config = message.expect("Channel should not be closed");
-                    info!("tls config is updated");
+                    info!("tls config is updated for port:{}",port);
                     // Replace the acceptor with the new one
                     acceptor.replace_config(new_config);
                 }
@@ -260,21 +267,6 @@ pub fn local_ip() -> io::Result<String> {
         .map(|local_addr| local_addr.ip().to_string())
 }
 
-fn init_tls_config_refresh_task(config: &'static Config) -> mpsc::Receiver<Arc<ServerConfig>> {
-    let (tx, rx) = mpsc::channel::<Arc<ServerConfig>>(1);
-    tokio::spawn(async move {
-        info!("update tls config every {} seconds", REFRESH_SECONDS);
-        loop {
-            time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
-            if let Ok(new_acceptor) = tls_config(&config.key, &config.cert) {
-                info!("update tls config");
-                tx.try_send(new_acceptor).ok(); // 防止阻塞
-            }
-        }
-    });
-    rx
-}
-
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
 #[derive(Parser)]
 #[command(author, version=None, about, long_about = None)]
@@ -343,6 +335,7 @@ pub(crate) struct Config {
     over_tls: bool,
     hostname: String,
     port: Vec<u16>,
+    tls_config_broadcast: Option<broadcast::Sender<Arc<ServerConfig>>>,
 }
 
 impl From<ProxyConfig> for Config {
@@ -357,6 +350,27 @@ impl From<ProxyConfig> for Config {
                 basic_auth.insert(format!("Basic {}", base64), username);
             }
         }
+        let tls_config_broadcast = if config.over_tls {
+            let (tx, _rx) = broadcast::channel::<Arc<ServerConfig>>(10);
+            let tx_clone = tx.clone();
+            let key_clone = config.key.clone();
+            let cert_clone = config.cert.clone();
+            tokio::spawn(async move {
+                info!("update tls config every {} seconds", REFRESH_SECONDS);
+                loop {
+                    time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
+                    if let Ok(new_acceptor) = tls_config(&key_clone, &cert_clone) {
+                        info!("update tls config");
+                        if let Err(e) = tx_clone.send(new_acceptor) {
+                            warn!("send tls config error:{}", e);
+                        }
+                    }
+                }
+            });
+            Some(tx)
+        } else {
+            None
+        };
         Config {
             cert: config.cert,
             key: config.key,
@@ -367,6 +381,7 @@ impl From<ProxyConfig> for Config {
             over_tls: config.over_tls,
             hostname: config.hostname,
             port: config.port,
+            tls_config_broadcast,
         }
     }
 }
