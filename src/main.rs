@@ -279,7 +279,13 @@ pub struct ProxyConfig {
     log_dir: String,
     #[arg(long, value_name = "LOG_FILE", default_value = "proxy.log")]
     log_file: String,
-    #[arg(short, long, value_name = "PORT", default_value = "3128")]
+    #[arg(
+        short,
+        long,
+        value_name = "PORT",
+        default_value = "3128",
+        help = "可以多次指定来实现多端口\n"
+    )]
     port: Vec<u16>,
     #[arg(short, long, value_name = "CERT", default_value = "cert.pem")]
     cert: String,
@@ -291,7 +297,8 @@ pub struct ProxyConfig {
         value_name = "USER",
         default_value = "",
         help = "默认为空，表示不鉴权。\n\
-    格式为 'username:password'\n"
+    格式为 'username:password'\n\
+    可以多次指定来实现多用户\n"
     )]
     users: Vec<String>,
     #[arg(

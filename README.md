@@ -28,16 +28,16 @@ Options:
       --log-file <LOG_FILE>
           [default: proxy.log]
   -p, --port <PORT>
-          [default: 3128]
+          可以多次指定来实现多端口
+           [default: 3128]
   -c, --cert <CERT>
           [default: cert.pem]
   -k, --key <KEY>
           [default: privkey.pem]
-  -b, --basic-auth <BASIC_AUTH>
+  -u, --users <USER>
           默认为空，表示不鉴权。
-          格式为 'Basic Base64Encode(username:password)'，注意username和password用英文冒号连接再进行Base64编码（RFC 7617）。
-          例如 'Basic dXNlcm5hbWU6cGFzc3dvcmQ=' 
-          这由此命令生成： echo -n 'username:passwrod' | base64
+          格式为 'username:password'
+          可以多次指定来实现多用户
            [default: ]
   -w, --web-content-path <WEB_CONTENT_PATH>
           [default: /usr/share/nginx/html]
