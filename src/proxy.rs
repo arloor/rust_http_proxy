@@ -66,15 +66,7 @@ impl ProxyHandler {
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
-        if Method::CONNECT == req.method() {
-            info!(
-                "{:>21?} {:^7} {:?} {:?}",
-                client_socket_addr,
-                req.method().as_str(),
-                req.uri(),
-                req.version()
-            );
-        } else {
+        if Method::CONNECT != req.method() {
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 let raw_path = req.uri().path();
                 let path = percent_decode_str(raw_path)
@@ -118,6 +110,7 @@ impl ProxyHandler {
             };
         }
 
+        let mut username = "unkonwn".to_string();
         if !basic_auth.is_empty() {
             //需要检验鉴权
             let mut authed: bool = false;
@@ -126,7 +119,10 @@ impl ProxyHandler {
                 Some(header) => match header.to_str() {
                     Err(e) => warn!("解header失败，{:?} {:?}", header, e),
                     Ok(request_auth) => match basic_auth.get(request_auth) {
-                        Some(_username) => authed = true,
+                        Some(_username) => {
+                            authed = true;
+                            username = _username.to_string();
+                        }
                         None => warn!(
                             "wrong PROXY_AUTHORIZATION from {:?}, wrong:{:?},right:{:?}",
                             client_socket_addr, request_auth, basic_auth
@@ -134,6 +130,14 @@ impl ProxyHandler {
                     },
                 },
             }
+            info!(
+                "{:>21?} {:^7} {:?} {:?} user:{}",
+                client_socket_addr,
+                req.method().as_str(),
+                req.uri(),
+                req.version(),
+                username
+            );
             if !authed {
                 return if never_ask_for_auth {
                     Err(io::Error::new(
