@@ -171,6 +171,7 @@ impl ProxyHandler {
                             let access_label = AccessLabel {
                                 client: client_socket_addr.ip().to_string(),
                                 target: addr.clone(),
+                                username,
                             };
                             // Connect to remote server
                             match TcpStream::connect(addr.clone()).await {
@@ -224,6 +225,7 @@ impl ProxyHandler {
                 LabelImpl::from(AccessLabel {
                     client: client_socket_addr.ip().to_string(),
                     target: format!("{}:{}", host, port),
+                    username
                 }),
             );
             let io = TokioIo::new(server_mod);
@@ -287,6 +289,7 @@ pub struct ReqLabels {
 pub struct AccessLabel {
     pub client: String,
     pub target: String,
+    pub username: String,
 }
 
 impl Display for AccessLabel {
