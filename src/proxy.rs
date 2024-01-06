@@ -23,36 +23,35 @@ use prometheus_client::{
     registry::Registry,
 };
 use rand::Rng;
-use tokio::{net::TcpStream, sync::RwLock};
+use tokio::net::TcpStream;
 
 #[derive(Clone)]
 pub struct ProxyHandler {
-    prom_registry: Arc<RwLock<Registry>>,
+    prom_registry: Arc<Registry>,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     net_monitor: NetMonitor,
 }
 
 impl ProxyHandler {
-    pub async fn new() -> ProxyHandler {
+    pub fn new() -> ProxyHandler {
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
-        let registry = <Registry>::default();
-        let registry = Arc::new(RwLock::new(registry));
+        let mut registry = <Registry>::default();
         let http_requests = Family::<LabelImpl<ReqLabels>, Counter>::default();
-        registry.write().await.register(
+        registry.register(
             "req_from_out",
             "Number of HTTP requests received",
             http_requests.clone(),
         );
         let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
-        registry.write().await.register(
+        registry.register(
             "proxy_traffic",
             "num proxy_traffic",
             proxy_traffic.clone(),
         );
         ProxyHandler {
-            prom_registry: registry.clone(),
+            prom_registry: Arc::new(registry),
             http_req_counter: http_requests,
             proxy_traffic,
             net_monitor: monitor,

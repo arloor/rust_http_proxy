@@ -44,7 +44,7 @@ pub async fn serve_http_request(
     path: &str,
     net_monitor: NetMonitor,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter, fn() -> Counter>,
-    prom_registry: Arc<RwLock<Registry>>,
+    prom_registry: Arc<Registry>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let hostname = &proxy_config.hostname;
     let web_content_path = &proxy_config.web_content_path;
@@ -123,10 +123,10 @@ pub async fn serve_http_request(
 }
 
 async fn metrics(
-    registry: Arc<RwLock<Registry>>,
+    registry: Arc<Registry>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let mut buffer = String::new();
-    if let Err(e) = encode(&mut buffer, registry.read().await.deref()) {
+    if let Err(e) = encode(&mut buffer, registry.deref()) {
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .header(http::header::SERVER, SERVER_NAME)

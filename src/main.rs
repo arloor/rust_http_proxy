@@ -22,6 +22,7 @@ use hyper::service::service_fn;
 use hyper::{Error, Request, Response};
 use hyper_util::rt::tokio::TokioIo;
 use hyper_util::server::conn::auto;
+use lazy_static::lazy_static;
 use log::{debug, info, warn};
 use proxy::ProxyHandler;
 use std::collections::HashMap;
@@ -41,6 +42,10 @@ const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
+lazy_static! {
+    static ref PROXY_HANDLER: ProxyHandler = ProxyHandler::new();
+}
+
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
     let proxy_config: &'static Config = load_config();
@@ -48,12 +53,12 @@ async fn main() -> Result<(), DynError> {
         warn!("handle signal error:{}", e);
         exit(1)
     }
-    let proxy_handler = ProxyHandler::new().await;
+
     let futures = proxy_config
         .port
         .iter()
         .map(|port| {
-            let proxy_handler = proxy_handler.clone();
+            let proxy_handler = PROXY_HANDLER.clone();
             async move {
                 if let Err(e) = serve(proxy_config, *port, proxy_handler).await {
                     warn!("serve error:{}", e);
