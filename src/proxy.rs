@@ -130,7 +130,7 @@ impl ProxyHandler {
                 },
             }
             info!(
-                "{:>21?} {:>8?} {:^7} {:?} {:?}",
+                "{:>21?} {:^8} {:^7} {:?} {:?}",
                 client_socket_addr,
                 username,
                 req.method().as_str(),
