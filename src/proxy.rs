@@ -130,12 +130,11 @@ impl ProxyHandler {
                 },
             }
             info!(
-                "{:>21?} {:^7} {:?} {:?} USER:[{}]",
+                "{:>21?} {:^7} {:?} {:?}",
                 client_socket_addr,
                 req.method().as_str(),
                 req.uri(),
                 req.version(),
-                username
             );
             if !authed {
                 return if never_ask_for_auth {
