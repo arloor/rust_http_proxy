@@ -1,9 +1,10 @@
-use crate::Config;
 use crate::net_monitor::{NetMonitor, TimeValue};
 use crate::prom_label::LabelImpl;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
+use crate::Config;
+use lazy_static::lazy_static;
 
 use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
@@ -122,9 +123,7 @@ pub async fn serve_http_request(
     };
 }
 
-async fn metrics(
-    registry: Arc<Registry>,
-) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+async fn metrics(registry: Arc<Registry>) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let mut buffer = String::new();
     if let Err(e) = encode(&mut buffer, registry.deref()) {
         Response::builder()
@@ -165,7 +164,12 @@ async fn serve_path(
                 }
             }
         }
-        Err(_) => return not_found(),
+        Err(_) => {
+            if url_path == "/favicon.ico" {
+                return serve_favico(req, need_body);
+            };
+            return not_found();
+        }
     };
 
     let last_modified: SystemTime = match meta.modified() {
@@ -220,7 +224,7 @@ async fn serve_path(
     };
     if need_gzip {
         let buf_stream = BufStream::new(file);
-        let encoder = GzipEncoder::with_quality(buf_stream,async_compression::Level::Best);
+        let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
         let reader_stream = ReaderStream::new(encoder);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
@@ -229,6 +233,32 @@ async fn serve_path(
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
     }
+}
+
+fn serve_favico(
+    req: &Request<impl Body>,
+    need_body: bool,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+    if let Some(request_if_modified_since) = req.headers().get(http::header::IF_MODIFIED_SINCE) {
+        if let Ok(request_if_modified_since) = request_if_modified_since.to_str() {
+            if request_if_modified_since == fmt_http_date(BOOTUP_TIME.to_owned()).as_str() {
+                return not_modified(BOOTUP_TIME.to_owned());
+            }
+        }
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(http::header::SERVER, SERVER_NAME)
+        .header(
+            http::header::LAST_MODIFIED,
+            fmt_http_date(BOOTUP_TIME.to_owned()),
+        )
+        .header(http::header::CONTENT_TYPE, "image/x-icon")
+        .body(if need_body {
+            full_body(FAV_ICO.to_vec())
+        } else {
+            empty_body()
+        })
 }
 
 fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
@@ -277,6 +307,10 @@ const PART2: &str = include_str!("../html/part2.html");
 const PART3: &str = include_str!("../html/part3.html");
 const PART4: &str = include_str!("../html/part4.html");
 const H404: &str = include_str!("../html/404.html");
+const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
+lazy_static! {
+    static ref BOOTUP_TIME: SystemTime = SystemTime::now();
+}
 
 async fn speed(
     net_monitor: NetMonitor,
