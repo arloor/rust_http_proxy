@@ -157,4 +157,4 @@ Nginx收到的消息：
 - [tls-listener change-certificate](https://github.com/tmccombs/tls-listener/blob/main/examples/http-change-certificate.rs)
 - [hyper example http_proxy](https://github.com/hyperium/hyper/blob/master/examples/http_proxy.rs)
 - [rustls async Acceptor for hyper v0.14](https://github.com/rustls/hyper-rustls/blob/286e1fa57ff5cac99994fab355f91c3454d6d83d/src/acceptor.rs)
-- [rustls async Acceptor for hyper v1](https://github.com/Gelbpunkt/hyper-rustls/blob/3d88d7d76c2e91e39b028dbbb92db917aa051092/src/acceptor.rs)
+- ~~[rustls async Acceptor for hyper v1](https://github.com/Gelbpunkt/hyper-rustls/blob/3d88d7d76c2e91e39b028dbbb92db917aa051092/src/acceptor.rs)已删除~~ [Update hyper to 1.x and integrate with hyper-util #232](https://github.com/rustls/hyper-rustls/pull/232#issuecomment-1878924476)的PR中hyper-rustls已删除tls acceptor，因为无必要
