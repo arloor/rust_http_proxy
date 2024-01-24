@@ -98,29 +98,33 @@ pub async fn serve_http_request(
                 }
             );
             let r = serve_path(web_content_path, path, req, true).await;
-            if let Ok(ref res) = r {
-                if is_outer_view_html
-                    && (res.status().is_success() || res.status().is_redirection())
-                {
-                    http_req_counter
-                        .get_or_create(&LabelImpl::from(ReqLabels {
-                            referer: referer_header.to_string(),
-                            path: path.to_string(),
-                        }))
-                        .inc();
-                    http_req_counter
-                        .get_or_create(&LabelImpl::from(ReqLabels {
-                            referer: "all".to_string(),
-                            path: "all".to_string(),
-                        }))
-                        .inc();
-                }
-            }
+            incr_counter_if_need(&r, is_outer_view_html, http_req_counter, referer_header, path);
             r
         }
         (&Method::HEAD, path) => serve_path(web_content_path, path, req, false).await,
         _ => not_found(),
     };
+}
+
+fn incr_counter_if_need(r: &Result<Response<BoxBody<Bytes, io::Error>>, Error>, is_outer_view_html: bool, http_req_counter: Family<LabelImpl<ReqLabels>, Counter>, referer_header: &str, path: &str) {
+    if let Ok(ref res) = *r {
+        if is_outer_view_html
+            && (res.status().is_success() || res.status().is_redirection())
+        {
+            http_req_counter
+                .get_or_create(&LabelImpl::from(ReqLabels {
+                    referer: referer_header.to_string(),
+                    path: path.to_string(),
+                }))
+                .inc();
+            http_req_counter
+                .get_or_create(&LabelImpl::from(ReqLabels {
+                    referer: "all".to_string(),
+                    path: "all".to_string(),
+                }))
+                .inc();
+        }
+    }
 }
 
 async fn metrics(registry: Arc<Registry>) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
