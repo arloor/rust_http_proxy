@@ -13,30 +13,21 @@ pub fn _rust_tls_acceptor(
 
 pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, DynError> {
     use std::io::{self, BufReader};
-    let key_file =
-        File::open(key).map_err(|_| <&str as Into<DynError>>::into("open private key failed"))?;
-    let cert_file =
-        File::open(cert).map_err(|_| <&str as Into<DynError>>::into("open cert failed"))?;
+    let key_file = File::open(key).map_err(|_| "open private key failed")?;
+    let cert_file = File::open(cert).map_err(|_| "open cert failed")?;
     let certs = rustls_pemfile::certs(&mut BufReader::new(cert_file))
-        .collect::<io::Result<Vec<CertificateDer<'static>>>>();
-    let key_option = rustls_pemfile::private_key(&mut BufReader::new(key_file))?;
-    let key = match key_option {
-        Some(key) => key,
-        None => return Err("can not find any pem in key file".into()),
-    };
+        .collect::<io::Result<Vec<CertificateDer<'static>>>>()?;
+    let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))?
+        .ok_or("can not find any pem in key file")?;
 
-    match ServerConfig::builder()
+    let mut config = ServerConfig::builder()
         .with_no_client_auth()
-        .with_single_cert(certs?, key)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
-    {
-        Ok(mut config) => {
-            config.alpn_protocols = vec![
-                b"h2".to_vec(),       // http2
-                b"http/1.1".to_vec(), // http1.1
-            ];
-            Ok(Arc::new(config))
-        }
-        Err(e) => Err(e.into()),
-    }
+        .with_single_cert(certs, key)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    config.alpn_protocols = vec![
+        b"h2".to_vec(),       // http2
+        b"http/1.1".to_vec(), // http1.1
+    ];
+    Ok(Arc::new(config))
 }
+
