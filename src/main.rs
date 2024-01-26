@@ -299,6 +299,7 @@ fn load_config() -> &'static Config {
     info!("hostname seems to be {}", config.hostname);
     let config = Config::from(config);
     log_config(&config);
+    info!("auto close connection after {} seconds",ACTIVE_SECONDS);
     return Box::leak(Box::new(config));
 }
 
