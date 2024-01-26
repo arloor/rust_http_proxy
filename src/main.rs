@@ -70,7 +70,7 @@ async fn main() -> Result<(), DynError> {
     join_all(futures).await;
     Ok(())
 }
-
+const ACTIVE_SECONDS: u64 = 2 * 60 * 60; // 2 hours
 async fn serve(
     config: &'static Config,
     port: u16,
@@ -121,8 +121,25 @@ async fn serve(
                                             proxy_handler.clone()
                                         )
                                     }));
-                                if let Err(err) = connection.await {
-                                     handle_hyper_error(client_socket_addr,err);
+                                tokio::pin!(connection);
+                                loop{
+                                    tokio::select! {
+                                        res = connection.as_mut() => {
+                                            // Polling the connection returned a result.
+                                            // In this case print either the successful or error result for the connection
+                                            // and break out of the loop.
+                                            if let Err(err)=res{
+                                                handle_hyper_error(client_socket_addr, err);
+                                            }
+                                            break;
+                                        }
+                                        _ = tokio::time::sleep(Duration::from_secs(ACTIVE_SECONDS)) => {
+                                            // tokio::time::sleep returned a result.
+                                            // Call graceful_shutdown on the connection and continue the loop.
+                                            info!("active for {} seconds, graceful_shutdown [{}]",ACTIVE_SECONDS,client_socket_addr);
+                                            connection.as_mut().graceful_shutdown();
+                                        }
+                                    }
                                 }
                             });
                         }
@@ -161,8 +178,25 @@ async fn serve(
                                     }),
                                 )
                                 .with_upgrades();
-                            if let Err(http_err) = connection.await {
-                                handle_hyper_error(client_socket_addr, Box::new(http_err));
+                            tokio::pin!(connection);
+                            loop{
+                                tokio::select! {
+                                    res = connection.as_mut() => {
+                                        // Polling the connection returned a result.
+                                        // In this case print either the successful or error result for the connection
+                                        // and break out of the loop.
+                                        if let Err(err)=res{
+                                            handle_hyper_error(client_socket_addr, Box::new(err));
+                                        }
+                                        break;
+                                    }
+                                    _ = tokio::time::sleep(Duration::from_secs(ACTIVE_SECONDS)) => {
+                                        // tokio::time::sleep returned a result.
+                                        // Call graceful_shutdown on the connection and continue the loop.
+                                        info!("active for {} seconds, graceful_shutdown [{}]",ACTIVE_SECONDS,client_socket_addr);
+                                        connection.as_mut().graceful_shutdown();
+                                    }
+                                }
                             }
                         });
                     }
