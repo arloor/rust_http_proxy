@@ -3,11 +3,12 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use crate::{
     counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config,
+    Context,
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
@@ -45,11 +46,7 @@ impl ProxyHandler {
             http_requests.clone(),
         );
         let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
-        registry.register(
-            "proxy_traffic",
-            "num proxy_traffic",
-            proxy_traffic.clone(),
-        );
+        registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
         ProxyHandler {
             prom_registry: Arc::new(registry),
             http_req_counter: http_requests,
@@ -62,6 +59,7 @@ impl ProxyHandler {
         mut req: Request<hyper::body::Incoming>,
         proxy_config: &'static Config,
         client_socket_addr: SocketAddr,
+        context: Arc<RwLock<Context>>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
@@ -149,6 +147,9 @@ impl ProxyHandler {
             }
         }
         if Method::CONNECT == req.method() {
+            if let Ok(mut context) = context.write() {
+                context.upgraded = true;
+            }
             // Received an HTTP request like:
             // ```
             // CONNECT www.domain.com:443 HTTP/1.1
@@ -224,7 +225,7 @@ impl ProxyHandler {
                 LabelImpl::from(AccessLabel {
                     client: client_socket_addr.ip().to_string(),
                     target: format!("{}:{}", host, port),
-                    username
+                    username,
                 }),
             );
             let io = TokioIo::new(server_mod);
