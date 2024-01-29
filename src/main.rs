@@ -134,7 +134,7 @@ async fn serve(
                             tokio::spawn(async move {
                                 let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
                                 let context=Arc::new(RwLock::new(Context::default()));
-                                let conext_c=context.clone();
+                                let context_c=context.clone();
                                 let connection =
                                     binding.serve_connection_with_upgrades(io, service_fn(move |req| {
                                         proxy(
@@ -147,6 +147,7 @@ async fn serve(
                                     }));
                                 tokio::pin!(connection);
                                 loop{
+                                    let last_instant = {context_c.read().unwrap().instant};
                                     tokio::select! {
                                         res = connection.as_mut() => {
                                             if let Err(err)=res{
@@ -154,16 +155,18 @@ async fn serve(
                                             }
                                             break;
                                         }
-                                        _ = tokio::time::sleep(Duration::from_secs(IDLE_SECONDS)) => {
-                                            match conext_c.read() {
-                                                Ok(context) => {if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
-                                                    info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
-                                                    connection.as_mut().graceful_shutdown();
-                                                    break;
-                                                }},
+                                        _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
+                                            match context_c.read() {
+                                                Ok(context) => {
+                                                    if !context.upgraded&&context.instant<=last_instant{
+                                                        info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                                                        connection.as_mut().graceful_shutdown();
+                                                        break;
+                                                    }
+                                                },
                                                 Err(err) => warn!("read context error:{}", err)
+                                            }
                                         }
-                                    }
                                     }
                                 }
                             });
@@ -206,21 +209,24 @@ async fn serve(
                         .with_upgrades();
                     tokio::pin!(connection);
                     loop {
+                        let last_instant = {context_c.read().unwrap().instant};
                         tokio::select! {
-                                res = connection.as_mut() => {
-                                    if let Err(err)=res{
-                                        handle_hyper_error(client_socket_addr, Box::new(err));
-                                    }
-                                    break;
+                            res = connection.as_mut() => {
+                                if let Err(err)=res{
+                                    handle_hyper_error(client_socket_addr, Box::new(err));
                                 }
-                                _ = tokio::time::sleep(Duration::from_secs(IDLE_SECONDS)) => {
-                                    match context_c.read() {
-                                        Ok(context) => {if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
+                                break;
+                            }
+                            _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
+                                match context_c.read() {
+                                    Ok(context) => {
+                                        if !context.upgraded&&context.instant<=last_instant{
                                             info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
                                             connection.as_mut().graceful_shutdown();
                                             break;
-                                        }},
-                                        Err(err) => warn!("read context error:{}", err)
+                                        }
+                                    },
+                                    Err(err) => warn!("read context error:{}", err)
                                 }
                             }
                         }
@@ -252,7 +258,9 @@ async fn proxy(
         }
         Err(err) => warn!("write context error:{}", err),
     }
-    proxy_handler.proxy(req, config, client_socket_addr, context).await
+    proxy_handler
+        .proxy(req, config, client_socket_addr, context)
+        .await
 }
 fn log_config(config: &Config) {
     if !config.basic_auth.is_empty() && !config.never_ask_for_auth {
