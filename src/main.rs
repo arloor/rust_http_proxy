@@ -217,6 +217,7 @@ async fn serve(
                                     if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
                                         info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
                                         connection.as_mut().graceful_shutdown();
+                                        break;
                                     }
                                 }
                             }
