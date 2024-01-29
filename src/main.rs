@@ -147,7 +147,7 @@ async fn serve(
                                     }));
                                 tokio::pin!(connection);
                                 loop{
-                                    let last_instant = {context_c.read().unwrap().instant};
+                                    let last_instant = context_c.read().unwrap().instant;
                                     tokio::select! {
                                         res = connection.as_mut() => {
                                             if let Err(err)=res{
@@ -209,7 +209,7 @@ async fn serve(
                         .with_upgrades();
                     tokio::pin!(connection);
                     loop {
-                        let last_instant = {context_c.read().unwrap().instant};
+                        let last_instant = context_c.read().unwrap().instant;
                         tokio::select! {
                             res = connection.as_mut() => {
                                 if let Err(err)=res{
