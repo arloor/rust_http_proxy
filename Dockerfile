@@ -6,6 +6,7 @@ FROM alpine:latest
 RUN apk add --no-cache net-tools; \
     apk add --no-cache tzdata; \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
-    echo "Asia/Shanghai" > /etc/timezone
+    echo "Asia/Shanghai" > /etc/timezone; \
+    apk del tzdata
 COPY target/release/rust_http_proxy /
 ENTRYPOINT ["/rust_http_proxy"]
