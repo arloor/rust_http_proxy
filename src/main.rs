@@ -159,6 +159,7 @@ async fn serve(
                                                 if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
                                                     info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
                                                     connection.as_mut().graceful_shutdown();
+                                                    break;
                                                 }
                                             }
                                         }
@@ -182,50 +183,46 @@ async fn serve(
     } else {
         let tcp_listener = TcpListener::bind(addr).await?;
         loop {
-            tokio::select! {
-                conn = tcp_listener.accept()=>{
-                    if let Ok((tcp_stream, client_socket_addr)) =conn{
-                        let io = TokioIo::new(tcp_stream);
-                        let proxy_handler=proxy_handler.clone();
-                        tokio::task::spawn(async move {
-                            let context=Arc::new(RwLock::new(Context::default()));
-                            let context_clone=context.clone();
-                            let connection = http1::Builder::new()
-                                .serve_connection(
-                                    io,
-                                    service_fn(move |req| {
-                                        proxy(
-                                            req,
-                                            config,
-                                            client_socket_addr,
-                                            proxy_handler.clone(),
-                                            context.clone()
-                                        )
-                                    }),
+            if let Ok((tcp_stream, client_socket_addr)) = tcp_listener.accept().await {
+                let io = TokioIo::new(tcp_stream);
+                let proxy_handler = proxy_handler.clone();
+                tokio::task::spawn(async move {
+                    let context = Arc::new(RwLock::new(Context::default()));
+                    let context_clone = context.clone();
+                    let connection = http1::Builder::new()
+                        .serve_connection(
+                            io,
+                            service_fn(move |req| {
+                                proxy(
+                                    req,
+                                    config,
+                                    client_socket_addr,
+                                    proxy_handler.clone(),
+                                    context.clone(),
                                 )
-                                .with_upgrades();
-                            tokio::pin!(connection);
-                            loop{
-                                tokio::select! {
-                                    res = connection.as_mut() => {
-                                        if let Err(err)=res{
-                                            handle_hyper_error(client_socket_addr, Box::new(err));
-                                        }
-                                        break;
-                                    }
-                                    _ = tokio::time::sleep(Duration::from_secs(IDLE_SECONDS)) => {
-                                        if let Ok(context)=context_clone.read(){
-                                            if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
-                                                info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
-                                                connection.as_mut().graceful_shutdown();
-                                            }
-                                        }
+                            }),
+                        )
+                        .with_upgrades();
+                    tokio::pin!(connection);
+                    loop {
+                        tokio::select! {
+                            res = connection.as_mut() => {
+                                if let Err(err)=res{
+                                    handle_hyper_error(client_socket_addr, Box::new(err));
+                                }
+                                break;
+                            }
+                            _ = tokio::time::sleep(Duration::from_secs(IDLE_SECONDS)) => {
+                                if let Ok(context)=context_clone.read(){
+                                    if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
+                                        info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                                        connection.as_mut().graceful_shutdown();
                                     }
                                 }
                             }
-                        });
+                        }
                     }
-                }
+                });
             }
         }
     }
@@ -246,7 +243,7 @@ async fn proxy(
     proxy_handler: ProxyHandler,
     context: Arc<RwLock<Context>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    if let Ok(mut context)=context.write(){
+    if let Ok(mut context) = context.write() {
         context.refresh();
     }
     proxy_handler
@@ -342,7 +339,10 @@ fn load_config() -> &'static Config {
     info!("hostname seems to be {}", config.hostname);
     let config = Config::from(config);
     log_config(&config);
-    info!("auto close connection after idle for {} seconds", IDLE_SECONDS);
+    info!(
+        "auto close connection after idle for {} seconds",
+        IDLE_SECONDS
+    );
     return Box::leak(Box::new(config));
 }
 
