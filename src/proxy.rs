@@ -147,8 +147,13 @@ impl ProxyHandler {
             }
         }
         if Method::CONNECT == req.method() {
-            if let Ok(mut context) = context.write() {
-                context.upgraded = true;
+            match context.write() {
+                Ok(mut context) => {
+                    context.upgraded = true;
+                }
+                Err(e) => {
+                    warn!("write context error: {}", e)
+                }
             }
             // Received an HTTP request like:
             // ```

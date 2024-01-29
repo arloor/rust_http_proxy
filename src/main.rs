@@ -155,14 +155,15 @@ async fn serve(
                                             break;
                                         }
                                         _ = tokio::time::sleep(Duration::from_secs(IDLE_SECONDS)) => {
-                                            if let Ok(context)=conext_c.read(){
-                                                if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
+                                            match conext_c.read() {
+                                                Ok(context) => {if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
                                                     info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
                                                     connection.as_mut().graceful_shutdown();
                                                     break;
-                                                }
-                                            }
+                                                }},
+                                                Err(err) => warn!("read context error:{}", err)
                                         }
+                                    }
                                     }
                                 }
                             });
@@ -188,7 +189,7 @@ async fn serve(
                 let proxy_handler = proxy_handler.clone();
                 tokio::task::spawn(async move {
                     let context = Arc::new(RwLock::new(Context::default()));
-                    let context_clone = context.clone();
+                    let context_c = context.clone();
                     let connection = http1::Builder::new()
                         .serve_connection(
                             io,
@@ -206,19 +207,20 @@ async fn serve(
                     tokio::pin!(connection);
                     loop {
                         tokio::select! {
-                            res = connection.as_mut() => {
-                                if let Err(err)=res{
-                                    handle_hyper_error(client_socket_addr, Box::new(err));
-                                }
-                                break;
-                            }
-                            _ = tokio::time::sleep(Duration::from_secs(IDLE_SECONDS)) => {
-                                if let Ok(context)=context_clone.read(){
-                                    if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
-                                        info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
-                                        connection.as_mut().graceful_shutdown();
-                                        break;
+                                res = connection.as_mut() => {
+                                    if let Err(err)=res{
+                                        handle_hyper_error(client_socket_addr, Box::new(err));
                                     }
+                                    break;
+                                }
+                                _ = tokio::time::sleep(Duration::from_secs(IDLE_SECONDS)) => {
+                                    match context_c.read() {
+                                        Ok(context) => {if !context.upgraded&&Instant::now()-context.instant>=Duration::from_secs(IDLE_SECONDS){
+                                            info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                                            connection.as_mut().graceful_shutdown();
+                                            break;
+                                        }},
+                                        Err(err) => warn!("read context error:{}", err)
                                 }
                             }
                         }
@@ -244,14 +246,14 @@ async fn proxy(
     proxy_handler: ProxyHandler,
     context: Arc<RwLock<Context>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    if let Ok(mut context) = context.write() {
-        context.refresh();
+    match context.write() {
+        Ok(mut context) => {
+            context.refresh();
+        }
+        Err(err) => warn!("write context error:{}", err),
     }
-    proxy_handler
-        .proxy(req, config, client_socket_addr, context)
-        .await
+    proxy_handler.proxy(req, config, client_socket_addr, context).await
 }
-
 fn log_config(config: &Config) {
     if !config.basic_auth.is_empty() && !config.never_ask_for_auth {
         warn!("do not serve web content to avoid being detected!");
