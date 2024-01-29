@@ -30,13 +30,13 @@ use std::error::Error as stdError;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::process::exit;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{env, io};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
-use tokio::time;
+use tokio::time::{self, Instant};
 use tokio_rustls::rustls::ServerConfig;
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 
@@ -44,6 +44,26 @@ type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
 lazy_static! {
     static ref PROXY_HANDLER: ProxyHandler = ProxyHandler::new();
+}
+
+pub struct Heartbeat {
+    pub instant: Instant,
+    pub upgraded: bool,
+}
+
+impl Default for Heartbeat {
+    fn default() -> Self {
+        Self {
+            instant: Instant::now(),
+            upgraded: false,
+        }
+    }
+}
+
+impl Heartbeat {
+    pub fn refresh(&mut self) {
+        self.instant = Instant::now();
+    }
 }
 
 #[tokio::main]
@@ -70,7 +90,7 @@ async fn main() -> Result<(), DynError> {
     join_all(futures).await;
     Ok(())
 }
-const ACTIVE_SECONDS: u64 = 2 * 60 * 60; // 2 hours
+const ACTIVE_SECONDS: u64 = 5; //2 * 60 * 60; // 2 hours
 async fn serve(
     config: &'static Config,
     port: u16,
@@ -112,13 +132,16 @@ async fn serve(
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
                                 let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
+                                let heartbeat=Arc::new(RwLock::new(Heartbeat::default()));
+                                let heartbeat_clone=heartbeat.clone();
                                 let connection =
                                     binding.serve_connection_with_upgrades(io, service_fn(move |req| {
                                         proxy(
                                             req,
                                             config,
                                             client_socket_addr,
-                                            proxy_handler.clone()
+                                            proxy_handler.clone(),
+                                            heartbeat.clone()
                                         )
                                     }));
                                 tokio::pin!(connection);
@@ -134,10 +157,13 @@ async fn serve(
                                             break;
                                         }
                                         _ = tokio::time::sleep(Duration::from_secs(ACTIVE_SECONDS)) => {
-                                            // tokio::time::sleep returned a result.
-                                            // Call graceful_shutdown on the connection and continue the loop.
-                                            info!("active for {} seconds, graceful_shutdown [{}]",ACTIVE_SECONDS,client_socket_addr);
-                                            connection.as_mut().graceful_shutdown();
+                                            let _ = heartbeat_clone.read().map(|heartbeat| {
+                                                info!("deadline read [{:?}]",heartbeat.instant);
+                                                if !heartbeat.upgraded&&Instant::now()-heartbeat.instant>=Duration::from_secs(ACTIVE_SECONDS){
+                                                    info!("active for {} seconds, graceful_shutdown [{}]",ACTIVE_SECONDS,client_socket_addr);
+                                                    connection.as_mut().graceful_shutdown();
+                                                }
+                                            });
                                         }
                                     }
                                 }
@@ -165,15 +191,19 @@ async fn serve(
                         let io = TokioIo::new(tcp_stream);
                         let proxy_handler=proxy_handler.clone();
                         tokio::task::spawn(async move {
+                            let heartbeat=Arc::new(RwLock::new(Heartbeat::default()));
+                            let heartbeat_clone=heartbeat.clone();
                             let connection = http1::Builder::new()
                                 .serve_connection(
                                     io,
                                     service_fn(move |req| {
+                                    
                                         proxy(
                                             req,
                                             config,
                                             client_socket_addr,
-                                            proxy_handler.clone()
+                                            proxy_handler.clone(),
+                                            heartbeat.clone()
                                         )
                                     }),
                                 )
@@ -191,10 +221,13 @@ async fn serve(
                                         break;
                                     }
                                     _ = tokio::time::sleep(Duration::from_secs(ACTIVE_SECONDS)) => {
-                                        // tokio::time::sleep returned a result.
-                                        // Call graceful_shutdown on the connection and continue the loop.
-                                        info!("active for {} seconds, graceful_shutdown [{}]",ACTIVE_SECONDS,client_socket_addr);
-                                        connection.as_mut().graceful_shutdown();
+                                        let _ = heartbeat_clone.read().map(|heartbeat| {
+                                            info!("deadline read [{:?}]",heartbeat.instant);
+                                            if !heartbeat.upgraded&&Instant::now()-heartbeat.instant>=Duration::from_secs(ACTIVE_SECONDS){
+                                                info!("active for {} seconds, graceful_shutdown [{}]",ACTIVE_SECONDS,client_socket_addr);
+                                                connection.as_mut().graceful_shutdown();
+                                            }
+                                        });
                                     }
                                 }
                             }
@@ -219,8 +252,13 @@ async fn proxy(
     config: &'static Config,
     client_socket_addr: SocketAddr,
     proxy_handler: ProxyHandler,
+    heartbeat: Arc<RwLock<Heartbeat>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    proxy_handler.proxy(req, config, client_socket_addr).await
+    let _ = heartbeat.write().map(|mut heartbeat| {
+        heartbeat.refresh();
+        info!("deadline refresh [{:?}]",heartbeat.instant);
+    });
+    proxy_handler.proxy(req, config, client_socket_addr,heartbeat).await
 }
 
 fn log_config(config: &Config) {
@@ -259,10 +297,23 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
             );
         } else {
             // 系统错误
-            debug!(
-                "[hyper system error]: {:?} [client:{}]",
-                cause, client_socket_addr
-            )
+            #[cfg(debug_assertions)]
+            {
+                // 在 debug 模式下执行
+                warn!(
+                    "[hyper system error]: {:?} [client:{}]",
+                    cause, client_socket_addr
+                );
+            }
+
+            #[cfg(not(debug_assertions))]
+            {
+                // 在 release 模式下执行
+                debug!(
+                    "[hyper system error]: {:?} [client:{}]",
+                    cause, client_socket_addr
+                );
+            }
         }
     } else {
         warn!(
@@ -299,7 +350,7 @@ fn load_config() -> &'static Config {
     info!("hostname seems to be {}", config.hostname);
     let config = Config::from(config);
     log_config(&config);
-    info!("auto close connection after {} seconds",ACTIVE_SECONDS);
+    info!("auto close connection after {} seconds", ACTIVE_SECONDS);
     return Box::leak(Box::new(config));
 }
 
@@ -422,6 +473,7 @@ impl From<ProxyConfig> for Config {
         } else {
             None
         };
+        debug!("");
         Config {
             cert: config.cert,
             key: config.key,

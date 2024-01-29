@@ -3,11 +3,11 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use crate::{
-    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config,
+    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config, Heartbeat
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
@@ -62,6 +62,7 @@ impl ProxyHandler {
         mut req: Request<hyper::body::Incoming>,
         proxy_config: &'static Config,
         client_socket_addr: SocketAddr,
+        heartbeat:Arc<RwLock<Heartbeat>>
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
@@ -149,6 +150,10 @@ impl ProxyHandler {
             }
         }
         if Method::CONNECT == req.method() {
+            let _ = heartbeat.write().map(|mut heartbeat| {
+                heartbeat.upgraded=true;
+                info!("mark upgraded");
+            });
             // Received an HTTP request like:
             // ```
             // CONNECT www.domain.com:443 HTTP/1.1
