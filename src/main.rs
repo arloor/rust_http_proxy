@@ -39,7 +39,7 @@ use tokio::sync::broadcast;
 use tokio::time::{self, Instant};
 use tokio_rustls::rustls::ServerConfig;
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
-const IDLE_SECONDS: u64 = 180; // 3 minutes
+const IDLE_SECONDS: u64 = 120; // 3 minutes
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
