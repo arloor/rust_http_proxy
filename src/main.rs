@@ -131,13 +131,18 @@ async fn serve(
         };
         loop {
             tokio::select! {
+                message = rx.recv() => {
+                    let new_config = message.expect("Channel should not be closed");
+                    info!("tls config is updated for port:{}",port);
+                    // Replace the acceptor with the new one
+                    acceptor.replace_config(new_config);
+                }
                 conn = acceptor.accept() => {
                     match conn {
                         Ok((conn,client_socket_addr)) => {
                             let io = TokioIo::new(conn);
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
-
                                 serve_with_idle_timeout!(io,proxy_handler,config,client_socket_addr);
                             });
                         }
@@ -145,12 +150,6 @@ async fn serve(
                             warn!("Error accepting connection: {}", err);
                         }
                     }
-                },
-                message = rx.recv() => {
-                    let new_config = message.expect("Channel should not be closed");
-                    info!("tls config is updated for port:{}",port);
-                    // Replace the acceptor with the new one
-                    acceptor.replace_config(new_config);
                 }
             }
         }
