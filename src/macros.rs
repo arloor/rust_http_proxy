@@ -1,4 +1,4 @@
-macro_rules! serve_with_idle_timeout {
+macro_rules! _serve_with_idle_timeout {
     ($io:ident,$proxy_handler:ident,$config:ident,$client_socket_addr:ident) => {
         let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
         let context=Arc::new(RwLock::new(Context::default()));
