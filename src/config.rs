@@ -2,7 +2,7 @@ use crate::log_x::init_log;
 use base64::engine::general_purpose;
 use base64::Engine;
 use clap::Parser;
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
@@ -125,7 +125,6 @@ impl From<ProxyConfig> for Config {
         } else {
             None
         };
-        debug!("");
         Config {
             cert: config.cert,
             key: config.key,
