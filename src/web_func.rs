@@ -98,7 +98,13 @@ pub async fn serve_http_request(
                 }
             );
             let r = serve_path(web_content_path, path, req, true).await;
-            incr_counter_if_need(&r, is_outer_view_html, http_req_counter, referer_header, path);
+            incr_counter_if_need(
+                &r,
+                is_outer_view_html,
+                http_req_counter,
+                referer_header,
+                path,
+            );
             r
         }
         (&Method::HEAD, path) => serve_path(web_content_path, path, req, false).await,
@@ -106,11 +112,15 @@ pub async fn serve_http_request(
     };
 }
 
-fn incr_counter_if_need(r: &Result<Response<BoxBody<Bytes, io::Error>>, Error>, is_outer_view_html: bool, http_req_counter: Family<LabelImpl<ReqLabels>, Counter>, referer_header: &str, path: &str) {
+fn incr_counter_if_need(
+    r: &Result<Response<BoxBody<Bytes, io::Error>>, Error>,
+    is_outer_view_html: bool,
+    http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
+    referer_header: &str,
+    path: &str,
+) {
     if let Ok(ref res) = *r {
-        if is_outer_view_html
-            && (res.status().is_success() || res.status().is_redirection())
-        {
+        if is_outer_view_html && (res.status().is_success() || res.status().is_redirection()) {
             http_req_counter
                 .get_or_create(&LabelImpl::from(ReqLabels {
                     referer: referer_header.to_string(),

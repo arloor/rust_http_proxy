@@ -1,8 +1,8 @@
+use crate::DynError;
 use std::fs::File;
 use std::sync::Arc;
 use tokio_rustls::rustls::pki_types::CertificateDer;
 use tokio_rustls::rustls::ServerConfig;
-use crate::DynError;
 
 pub fn _rust_tls_acceptor(
     key: &String,
@@ -30,4 +30,3 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, DynE
     ];
     Ok(Arc::new(config))
 }
-

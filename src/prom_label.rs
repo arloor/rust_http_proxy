@@ -1,6 +1,6 @@
-use core::ops::Deref;
 use core::fmt::Debug;
 use core::hash::Hash;
+use core::ops::Deref;
 use prometheus_client::encoding::EncodeLabelSet;
 
 /// wrapper trait for prometheus label
@@ -11,13 +11,12 @@ pub struct LabelImpl<R>(R)
 where
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static;
 
-impl <R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static> From<R> for LabelImpl<R> {
+impl<R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static> From<R> for LabelImpl<R> {
     fn from(s: R) -> Self {
         Self(s)
     }
 }
 
-    
 impl<R> Deref for LabelImpl<R>
 where
     R: Clone + Debug + Hash + PartialEq + EncodeLabelSet + Eq + 'static,

@@ -1,4 +1,3 @@
-
 use std::{fmt::Debug, pin::Pin, task::Context, task::Poll};
 
 use pin_project_lite::pin_project;
@@ -108,7 +107,7 @@ where
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
         let pro = self.project();
-        let count=bufs.iter().map(|buf|buf.len()).sum::<usize>() as u64;
+        let count = bufs.iter().map(|buf| buf.len()).sum::<usize>() as u64;
         pro.traffic_counter.get_or_create(pro.label).inc_by(count);
         pro.inner.poll_write_vectored(cx, bufs)
     }

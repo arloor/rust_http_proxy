@@ -195,7 +195,7 @@ async fn serve(
                             let io = TokioIo::new(conn);
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
-                                
+
                                 serve_with_idle_timeout!(io,proxy_handler,config,client_socket_addr);
                             });
                         }
@@ -219,7 +219,7 @@ async fn serve(
                 let io = TokioIo::new(tcp_stream);
                 let proxy_handler = proxy_handler.clone();
                 tokio::task::spawn(async move {
-                    serve_with_idle_timeout!(io,proxy_handler,config,client_socket_addr);
+                    serve_with_idle_timeout!(io, proxy_handler, config, client_socket_addr);
                 });
             }
         }
