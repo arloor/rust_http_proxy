@@ -41,7 +41,7 @@ use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
-const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 6 } else { 5 }; // 3 minutes
+const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 120 } else { 5 }; // 3 minutes
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
