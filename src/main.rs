@@ -48,19 +48,32 @@ lazy_static! {
 }
 
 macro_rules! serve_with_idle_timeout {
-    ($connection:ident,$context_c:ident,$client_socket_addr:ident) => {
-        tokio::pin!($connection);
+    ($io:ident,$proxy_handler:ident,$config:ident,$client_socket_addr:ident) => {
+        let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
+        let context=Arc::new(RwLock::new(Context::default()));
+        let context_c=context.clone();
+        let connection =
+            binding.serve_connection_with_upgrades($io, service_fn(move |req| {
+                proxy(
+                    req,
+                    $config,
+                    $client_socket_addr,
+                    $proxy_handler.clone(),
+                    context.clone()
+                )
+            }));
+        tokio::pin!(connection);
         loop {
             let upgraded;
             let last_instant;
             {
-                let context = $context_c.read().unwrap();
+                let context = context_c.read().unwrap();
                 upgraded = context.upgraded;
                 last_instant = context.instant;
             }
             if upgraded {
                 tokio::select! {
-                    res = $connection.as_mut() => {
+                    res = connection.as_mut() => {
                         if let Err(err)=res{
                             _handle_hyper_error($client_socket_addr,err);
                         }
@@ -69,7 +82,7 @@ macro_rules! serve_with_idle_timeout {
                 }
             } else {
                 tokio::select! {
-                    res = $connection.as_mut() => {
+                    res = connection.as_mut() => {
                         if let Err(err)=res{
                             _handle_hyper_error($client_socket_addr,err);
                         }
@@ -79,7 +92,7 @@ macro_rules! serve_with_idle_timeout {
                         let upgraded;
                         let instant;
                         {
-                            let context = $context_c.read().unwrap();
+                            let context = context_c.read().unwrap();
                             upgraded = context.upgraded;
                             instant = context.instant;
                         }
@@ -87,7 +100,7 @@ macro_rules! serve_with_idle_timeout {
                             continue;
                         }else if instant <= last_instant {
                             info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,$client_socket_addr);
-                            $connection.as_mut().graceful_shutdown();
+                            connection.as_mut().graceful_shutdown();
                             break;
                         }
                     }
@@ -182,20 +195,8 @@ async fn serve(
                             let io = TokioIo::new(conn);
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
-                                let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
-                                let context=Arc::new(RwLock::new(Context::default()));
-                                let context_c=context.clone();
-                                let connection =
-                                    binding.serve_connection_with_upgrades(io, service_fn(move |req| {
-                                        proxy(
-                                            req,
-                                            config,
-                                            client_socket_addr,
-                                            proxy_handler.clone(),
-                                            context.clone()
-                                        )
-                                    }));
-                                serve_with_idle_timeout!(connection,context_c,client_socket_addr);
+                                
+                                serve_with_idle_timeout!(io,proxy_handler,config,client_socket_addr);
                             });
                         }
                         Err(err) => {
@@ -218,22 +219,7 @@ async fn serve(
                 let io = TokioIo::new(tcp_stream);
                 let proxy_handler = proxy_handler.clone();
                 tokio::task::spawn(async move {
-                    let binding = auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
-                    let context = Arc::new(RwLock::new(Context::default()));
-                    let context_c = context.clone();
-                    let connection = binding.serve_connection_with_upgrades(
-                        io,
-                        service_fn(move |req| {
-                            proxy(
-                                req,
-                                config,
-                                client_socket_addr,
-                                proxy_handler.clone(),
-                                context.clone(),
-                            )
-                        }),
-                    );
-                    serve_with_idle_timeout!(connection, context_c, client_socket_addr);
+                    serve_with_idle_timeout!(io,proxy_handler,config,client_socket_addr);
                 });
             }
         }
