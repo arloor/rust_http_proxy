@@ -147,27 +147,44 @@ async fn serve(
                                     }));
                                 tokio::pin!(connection);
                                 loop{
-                                    let last_instant = context_c.read().unwrap().instant;
-                                    tokio::select! {
-                                        res = connection.as_mut() => {
-                                            if let Err(err)=res{
-                                                handle_hyper_error(client_socket_addr, err);
+                                    let upgraded;
+                                    let last_instant;
+                                    {
+                                        let context = context_c.read().unwrap();
+                                        upgraded = context.upgraded;
+                                        last_instant = context.instant;
+                                    }
+                                    if !upgraded {
+                                        tokio::select! {
+                                            res = connection.as_mut() => {
+                                                if let Err(err)=res{
+                                                    handle_hyper_error(client_socket_addr, err);
+                                                }
+                                                break;
                                             }
-                                            break;
+                                            _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
+                                                let upgraded;
+                                                let instant;
+                                                {
+                                                    let context = context_c.read().unwrap();
+                                                    upgraded = context.upgraded;
+                                                    instant = context.instant;
+                                                }
+                                                if upgraded {
+                                                    continue;
+                                                }else if instant <= last_instant {
+                                                    info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                                                    connection.as_mut().graceful_shutdown();
+                                                    break;
+                                                }
+                                            }
                                         }
-                                        _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
-                                            let upgraded;
-                                            let instant;
-                                            {
-                                                let context = context_c.read().unwrap();
-                                                upgraded = context.upgraded;
-                                                instant = context.instant;
-                                            }
-                                            if upgraded {
-                                                context_c.write().unwrap().refresh();
-                                            }else if instant <= last_instant {
-                                                info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
-                                                connection.as_mut().graceful_shutdown();
+                                    }else {
+                                        tokio::select! {
+                                            res = connection.as_mut() => {
+                                                if let Err(err)=res{
+                                                    handle_hyper_error(client_socket_addr, err);
+                                                }
                                                 break;
                                             }
                                         }
@@ -213,27 +230,44 @@ async fn serve(
                         .with_upgrades();
                     tokio::pin!(connection);
                     loop {
-                        let last_instant = context_c.read().unwrap().instant;
-                        tokio::select! {
-                            res = connection.as_mut() => {
-                                if let Err(err)=res{
-                                    handle_hyper_error(client_socket_addr, Box::new(err));
+                        let upgraded;
+                        let last_instant;
+                        {
+                            let context = context_c.read().unwrap();
+                            upgraded = context.upgraded;
+                            last_instant = context.instant;
+                        }
+                        if !upgraded {
+                            tokio::select! {
+                                res = connection.as_mut() => {
+                                    if let Err(err)=res{
+                                        handle_hyper_error(client_socket_addr, Box::new(err));
+                                    }
+                                    break;
                                 }
-                                break;
+                                _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
+                                    let upgraded;
+                                    let instant;
+                                    {
+                                        let context = context_c.read().unwrap();
+                                        upgraded = context.upgraded;
+                                        instant = context.instant;
+                                    }
+                                    if upgraded {
+                                        continue;
+                                    }else if instant <= last_instant {
+                                        info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                                        connection.as_mut().graceful_shutdown();
+                                        break;
+                                    }
+                                }
                             }
-                            _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
-                                let upgraded;
-                                let instant;
-                                {
-                                    let context = context_c.read().unwrap();
-                                    upgraded = context.upgraded;
-                                    instant = context.instant;
-                                }
-                                if upgraded {
-                                    context_c.write().unwrap().refresh();
-                                }else if instant <= last_instant {
-                                    info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
-                                    connection.as_mut().graceful_shutdown();
+                        } else {
+                            tokio::select! {
+                                res = connection.as_mut() => {
+                                    if let Err(err)=res{
+                                        handle_hyper_error(client_socket_addr, Box::new(err));
+                                    }
                                     break;
                                 }
                             }
