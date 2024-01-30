@@ -49,7 +49,6 @@ lazy_static! {
     static ref PROXY_HANDLER: ProxyHandler = ProxyHandler::new();
 }
 
-
 pub struct Context {
     pub instant: Instant,
     pub upgraded: bool,
@@ -420,4 +419,3 @@ impl From<ProxyConfig> for Config {
         }
     }
 }
-
