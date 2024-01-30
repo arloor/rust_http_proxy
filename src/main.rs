@@ -163,13 +163,12 @@ async fn serve(
                                                 upgraded = context.upgraded;
                                                 instant = context.instant;
                                             }
-                                            if !upgraded && instant <= last_instant {
+                                            if upgraded {
+                                                context_c.write().unwrap().refresh();
+                                            }else if instant <= last_instant {
                                                 info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
                                                 connection.as_mut().graceful_shutdown();
                                                 break;
-                                            }
-                                            if upgraded {
-                                                context_c.write().unwrap().refresh();
                                             }
                                         }
                                     }
@@ -230,13 +229,12 @@ async fn serve(
                                     upgraded = context.upgraded;
                                     instant = context.instant;
                                 }
-                                if !upgraded && instant <= last_instant {
+                                if upgraded {
+                                    context_c.write().unwrap().refresh();
+                                }else if instant <= last_instant {
                                     info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
                                     connection.as_mut().graceful_shutdown();
                                     break;
-                                }
-                                if upgraded {
-                                    context_c.write().unwrap().refresh();
                                 }
                             }
                         }
