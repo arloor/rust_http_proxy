@@ -7,6 +7,8 @@ mod prom_label;
 mod proxy;
 mod tls_helper;
 mod web_func;
+#[macro_use]
+mod macros;
 
 use crate::log_x::init_log;
 use crate::tls_helper::tls_config;
@@ -47,68 +49,6 @@ lazy_static! {
     static ref PROXY_HANDLER: ProxyHandler = ProxyHandler::new();
 }
 
-macro_rules! serve_with_idle_timeout {
-    ($io:ident,$proxy_handler:ident,$config:ident,$client_socket_addr:ident) => {
-        let binding =auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
-        let context=Arc::new(RwLock::new(Context::default()));
-        let context_c=context.clone();
-        let connection =
-            binding.serve_connection_with_upgrades($io, service_fn(move |req| {
-                proxy(
-                    req,
-                    $config,
-                    $client_socket_addr,
-                    $proxy_handler.clone(),
-                    context.clone()
-                )
-            }));
-        tokio::pin!(connection);
-        loop {
-            let upgraded;
-            let last_instant;
-            {
-                let context = context_c.read().unwrap();
-                upgraded = context.upgraded;
-                last_instant = context.instant;
-            }
-            if upgraded {
-                tokio::select! {
-                    res = connection.as_mut() => {
-                        if let Err(err)=res{
-                            _handle_hyper_error($client_socket_addr,err);
-                        }
-                        break;
-                    }
-                }
-            } else {
-                tokio::select! {
-                    res = connection.as_mut() => {
-                        if let Err(err)=res{
-                            _handle_hyper_error($client_socket_addr,err);
-                        }
-                        break;
-                    }
-                    _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
-                        let upgraded;
-                        let instant;
-                        {
-                            let context = context_c.read().unwrap();
-                            upgraded = context.upgraded;
-                            instant = context.instant;
-                        }
-                        if upgraded {
-                            continue;
-                        }else if instant <= last_instant {
-                            info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,$client_socket_addr);
-                            connection.as_mut().graceful_shutdown();
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    };
-}
 
 pub struct Context {
     pub instant: Instant,
@@ -272,7 +212,7 @@ fn log_config(config: &Config) {
 /// * `http_err` - hyper错误
 /// # Returns
 /// * `()` - 无返回值
-fn _handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
+fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         // 转换为hyper::Error
         let cause = match http_err.source() {
@@ -480,3 +420,4 @@ impl From<ProxyConfig> for Config {
         }
     }
 }
+
