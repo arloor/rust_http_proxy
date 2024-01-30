@@ -15,13 +15,7 @@ macro_rules! serve_with_idle_timeout {
             }));
         tokio::pin!(connection);
         loop {
-            let upgraded;
-            let last_instant;
-            {
-                let context = context_c.read().unwrap();
-                upgraded = context.upgraded;
-                last_instant = context.instant;
-            }
+            let (last_instant,upgraded) = current_state(&context_c);
             if upgraded {
                 tokio::select! {
                     res = connection.as_mut() => {
@@ -40,13 +34,7 @@ macro_rules! serve_with_idle_timeout {
                         break;
                     }
                     _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
-                        let upgraded;
-                        let instant;
-                        {
-                            let context = context_c.read().unwrap();
-                            upgraded = context.upgraded;
-                            instant = context.instant;
-                        }
+                        let (instant,upgraded) = current_state(&context_c);
                         if upgraded {
                             continue;
                         }else if instant <= last_instant {

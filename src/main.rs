@@ -419,3 +419,8 @@ impl From<ProxyConfig> for Config {
         }
     }
 }
+
+fn current_state(context: &Arc<RwLock<Context>>) -> (Instant, bool) {
+    let context = context.read().unwrap();
+    (context.instant, context.upgraded)
+}
