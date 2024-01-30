@@ -61,6 +61,7 @@ impl ProxyHandler {
         client_socket_addr: SocketAddr,
         context: Arc<RwLock<Context>>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        context.write().unwrap().refresh();
         let basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
         if Method::CONNECT != req.method() {
@@ -148,14 +149,7 @@ impl ProxyHandler {
             };
         }
         if Method::CONNECT == req.method() {
-            match context.write() {
-                Ok(mut context) => {
-                    context.upgraded = true;
-                }
-                Err(e) => {
-                    warn!("write context error: {}", e)
-                }
-            }
+            context.write().unwrap().set_upgraded(true);
             // Received an HTTP request like:
             // ```
             // CONNECT www.domain.com:443 HTTP/1.1

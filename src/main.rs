@@ -67,6 +67,9 @@ impl Context {
     pub fn refresh(&mut self) {
         self.instant = Instant::now();
     }
+    pub fn set_upgraded(&mut self, upgraded: bool) {
+        self.upgraded = upgraded;
+    }
 }
 
 #[tokio::main]
@@ -180,12 +183,6 @@ async fn proxy(
     proxy_handler: ProxyHandler,
     context: Arc<RwLock<Context>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    match context.write() {
-        Ok(mut context) => {
-            context.refresh();
-        }
-        Err(err) => warn!("write context error:{}", err),
-    }
     proxy_handler
         .proxy(req, config, client_socket_addr, context)
         .await
