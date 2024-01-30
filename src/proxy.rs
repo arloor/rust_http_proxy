@@ -108,9 +108,10 @@ impl ProxyHandler {
         }
 
         let mut username = "unkonwn".to_string();
+        let mut authed: bool = true;
         if !basic_auth.is_empty() {
             //需要检验鉴权
-            let mut authed: bool = false;
+            authed = false;
             match req.headers().get(http::header::PROXY_AUTHORIZATION) {
                 None => warn!("no PROXY_AUTHORIZATION from {:?}", client_socket_addr),
                 Some(header) => match header.to_str() {
@@ -127,24 +128,24 @@ impl ProxyHandler {
                     },
                 },
             }
-            info!(
-                "{:>21?} {:^8} {:^7} {:?} {:?}",
-                client_socket_addr,
-                username,
-                req.method().as_str(),
-                req.uri(),
-                req.version(),
-            );
-            if !authed {
-                return if never_ask_for_auth {
-                    Err(io::Error::new(
-                        ErrorKind::PermissionDenied,
-                        "wrong basic auth, closing socket...",
-                    ))
-                } else {
-                    Ok(build_proxy_authenticate_resp())
-                };
-            }
+        }
+        info!(
+            "{:>21?} {:^8} {:^7} {:?} {:?}",
+            client_socket_addr,
+            username,
+            req.method().as_str(),
+            req.uri(),
+            req.version(),
+        );
+        if !authed {
+            return if never_ask_for_auth {
+                Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "wrong basic auth, closing socket...",
+                ))
+            } else {
+                Ok(build_proxy_authenticate_resp())
+            };
         }
         if Method::CONNECT == req.method() {
             match context.write() {

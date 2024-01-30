@@ -39,7 +39,7 @@ use tokio::sync::broadcast;
 use tokio::time::{self, Instant};
 use tokio_rustls::rustls::ServerConfig;
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
-const IDLE_SECONDS: u64 = 120; // 3 minutes
+const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 120 } else { 5 }; // 3 minutes
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
@@ -156,15 +156,20 @@ async fn serve(
                                             break;
                                         }
                                         _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
-                                            match context_c.read() {
-                                                Ok(context) => {
-                                                    if !context.upgraded&&context.instant<=last_instant{
-                                                        info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
-                                                        connection.as_mut().graceful_shutdown();
-                                                        break;
-                                                    }
-                                                },
-                                                Err(err) => warn!("read context error:{}", err)
+                                            let upgraded;
+                                            let instant;
+                                            {
+                                                let context = context_c.read().unwrap();
+                                                upgraded = context.upgraded;
+                                                instant = context.instant;
+                                            }
+                                            if !upgraded && instant <= last_instant {
+                                                info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                                                connection.as_mut().graceful_shutdown();
+                                                break;
+                                            }
+                                            if upgraded {
+                                                context_c.write().unwrap().refresh();
                                             }
                                         }
                                     }
@@ -218,15 +223,20 @@ async fn serve(
                                 break;
                             }
                             _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
-                                match context_c.read() {
-                                    Ok(context) => {
-                                        if !context.upgraded&&context.instant<=last_instant{
-                                            info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
-                                            connection.as_mut().graceful_shutdown();
-                                            break;
-                                        }
-                                    },
-                                    Err(err) => warn!("read context error:{}", err)
+                                let upgraded;
+                                let instant;
+                                {
+                                    let context = context_c.read().unwrap();
+                                    upgraded = context.upgraded;
+                                    instant = context.instant;
+                                }
+                                if !upgraded && instant <= last_instant {
+                                    info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                                    connection.as_mut().graceful_shutdown();
+                                    break;
+                                }
+                                if upgraded {
+                                    context_c.write().unwrap().refresh();
                                 }
                             }
                         }
