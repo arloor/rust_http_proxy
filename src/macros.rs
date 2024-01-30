@@ -36,9 +36,10 @@ macro_rules! serve_with_idle_timeout {
                     _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
                         let (instant,upgraded) = context_c.read().unwrap().snapshot();
                         if upgraded {
+                            info!("upgraded from {}",$client_socket_addr);
                             continue;
                         }else if instant <= last_instant {
-                            info!("idle for {} seconds, graceful_shutdown [{}]",IDLE_SECONDS,$client_socket_addr);
+                            info!("idle for {} seconds, graceful shutdown [{}]",IDLE_SECONDS,$client_socket_addr);
                             connection.as_mut().graceful_shutdown();
                             break;
                         }
