@@ -17,7 +17,7 @@ use clap::Parser;
 use futures_util::future::join_all;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
-use hyper::server::conn::http1;
+// use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Error, Request, Response};
 use hyper_util::rt::tokio::TokioIo;
@@ -48,9 +48,6 @@ lazy_static! {
 }
 
 macro_rules! serve_with_idle_timeout {
-    // This macro takes an expression of type `expr` and prints
-    // it as a string along with its result.
-    // The `expr` designator is used for expressions.
     ($connection:ident,$context_c:ident,$client_socket_addr:ident) => {
         tokio::pin!($connection);
         loop {
@@ -65,7 +62,7 @@ macro_rules! serve_with_idle_timeout {
                 tokio::select! {
                     res = $connection.as_mut() => {
                         if let Err(err)=res{
-                            warn!("serve error:{}",err);
+                            _handle_hyper_error($client_socket_addr,err);
                         }
                         break;
                     }
@@ -74,7 +71,7 @@ macro_rules! serve_with_idle_timeout {
                 tokio::select! {
                     res = $connection.as_mut() => {
                         if let Err(err)=res{
-                            warn!("serve error:{}",err);
+                            _handle_hyper_error($client_socket_addr,err);
                         }
                         break;
                     }
@@ -221,22 +218,21 @@ async fn serve(
                 let io = TokioIo::new(tcp_stream);
                 let proxy_handler = proxy_handler.clone();
                 tokio::task::spawn(async move {
+                    let binding = auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
                     let context = Arc::new(RwLock::new(Context::default()));
                     let context_c = context.clone();
-                    let connection = http1::Builder::new()
-                        .serve_connection(
-                            io,
-                            service_fn(move |req| {
-                                proxy(
-                                    req,
-                                    config,
-                                    client_socket_addr,
-                                    proxy_handler.clone(),
-                                    context.clone(),
-                                )
-                            }),
-                        )
-                        .with_upgrades();
+                    let connection = binding.serve_connection_with_upgrades(
+                        io,
+                        service_fn(move |req| {
+                            proxy(
+                                req,
+                                config,
+                                client_socket_addr,
+                                proxy_handler.clone(),
+                                context.clone(),
+                            )
+                        }),
+                    );
                     serve_with_idle_timeout!(connection, context_c, client_socket_addr);
                 });
             }
