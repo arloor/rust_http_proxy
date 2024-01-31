@@ -37,6 +37,7 @@ use std::net::UdpSocket;
 use std::process::exit;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 
@@ -117,7 +118,7 @@ async fn serve(
                             let io = TokioIo::new(conn);
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
-                                serve_with_idle_timeout!(io,proxy_handler,config,client_socket_addr);
+                                _serve(io, proxy_handler, config, client_socket_addr).await;
                             });
                         }
                         Err(err) => {
@@ -134,8 +135,65 @@ async fn serve(
                 let io = TokioIo::new(tcp_stream);
                 let proxy_handler = proxy_handler.clone();
                 tokio::task::spawn(async move {
-                    serve_with_idle_timeout!(io, proxy_handler, config, client_socket_addr);
+                    _serve(io, proxy_handler, config, client_socket_addr).await;
                 });
+            }
+        }
+    }
+}
+
+async fn _serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
+    io: TokioIo<T>,
+    proxy_handler: ProxyHandler,
+    config: &'static Config,
+    client_socket_addr: SocketAddr,
+) {
+    let binding = auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
+    let context = Arc::new(RwLock::new(Context::default()));
+    let context_c = context.clone();
+    let connection = binding.serve_connection_with_upgrades(
+        io,
+        service_fn(move |req| {
+            proxy(
+                req,
+                config,
+                client_socket_addr,
+                proxy_handler.clone(),
+                context.clone(),
+            )
+        }),
+    );
+    tokio::pin!(connection);
+    loop {
+        let (last_instant, upgraded) = context_c.read().unwrap().snapshot();
+        if upgraded {
+            tokio::select! {
+                res = connection.as_mut() => {
+                    if let Err(err)=res{
+                        handle_hyper_error(client_socket_addr,err);
+                    }
+                    break;
+                }
+            }
+        } else {
+            tokio::select! {
+                res = connection.as_mut() => {
+                    if let Err(err)=res{
+                        handle_hyper_error(client_socket_addr,err);
+                    }
+                    break;
+                }
+                _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
+                    let (instant,upgraded) = context_c.read().unwrap().snapshot();
+                    if upgraded {
+                        info!("upgraded from {}",client_socket_addr);
+                        continue;
+                    }else if instant <= last_instant {
+                        info!("idle for {} seconds, graceful shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                        connection.as_mut().graceful_shutdown();
+                        break;
+                    }
+                }
             }
         }
     }
