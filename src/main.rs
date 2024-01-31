@@ -65,7 +65,7 @@ async fn main() -> Result<(), DynError> {
         .map(|port| {
             let proxy_handler = PROXY_HANDLER.clone();
             async move {
-                if let Err(e) = serve(proxy_config, *port, proxy_handler).await {
+                if let Err(e) = bootstrap(proxy_config, *port, proxy_handler).await {
                     warn!("serve error:{}", e);
                     exit(1)
                 }
@@ -76,7 +76,7 @@ async fn main() -> Result<(), DynError> {
     Ok(())
 }
 
-async fn serve(
+async fn bootstrap(
     config: &'static Config,
     port: u16,
     proxy_handler: ProxyHandler,
@@ -118,7 +118,7 @@ async fn serve(
                             let io = TokioIo::new(conn);
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
-                                _serve(io, proxy_handler, config, client_socket_addr).await;
+                                serve(io, proxy_handler, config, client_socket_addr).await;
                             });
                         }
                         Err(err) => {
@@ -135,14 +135,14 @@ async fn serve(
                 let io = TokioIo::new(tcp_stream);
                 let proxy_handler = proxy_handler.clone();
                 tokio::task::spawn(async move {
-                    _serve(io, proxy_handler, config, client_socket_addr).await;
+                    serve(io, proxy_handler, config, client_socket_addr).await;
                 });
             }
         }
     }
 }
 
-async fn _serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
+async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     io: TokioIo<T>,
     proxy_handler: ProxyHandler,
     config: &'static Config,
