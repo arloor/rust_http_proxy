@@ -70,7 +70,7 @@ async fn main() -> Result<(), DynError> {
     let select_result = select_all(futures.into_iter()).await;
     if let Err(e) = select_result.0 {
         warn!("serve error:{}", e);
-        return Err(e);
+        Err(e)?
     }
     Ok(())
 }
