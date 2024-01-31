@@ -18,7 +18,7 @@ use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
 
 use config::load_config;
-use futures_util::future::join_all;
+use futures_util::future::select_all;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 // use hyper::server::conn::http1;
@@ -34,7 +34,6 @@ use std::error::Error as stdError;
 use std::io;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
-use std::process::exit;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -56,7 +55,7 @@ async fn main() -> Result<(), DynError> {
     let proxy_config: &'static Config = load_config();
     if let Err(e) = handle_signal() {
         warn!("handle signal error:{}", e);
-        exit(1)
+        return Err(e.into());
     }
 
     let futures = proxy_config
@@ -64,15 +63,15 @@ async fn main() -> Result<(), DynError> {
         .iter()
         .map(|port| {
             let proxy_handler = PROXY_HANDLER.clone();
-            async move {
-                if let Err(e) = bootstrap(proxy_config, *port, proxy_handler).await {
-                    warn!("serve error:{}", e);
-                    exit(1)
-                }
-            }
+            async move { bootstrap(proxy_config, *port, proxy_handler).await }
         })
+        .map(Box::pin)
         .collect::<Vec<_>>();
-    join_all(futures).await;
+    let select_result = select_all(futures.into_iter()).await;
+    if let Err(e) = select_result.0 {
+        warn!("serve error:{}", e);
+        return Err(e);
+    }
     Ok(())
 }
 
