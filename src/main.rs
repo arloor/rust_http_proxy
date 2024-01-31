@@ -55,7 +55,7 @@ async fn main() -> Result<(), DynError> {
     let proxy_config: &'static Config = load_config();
     if let Err(e) = handle_signal() {
         warn!("handle signal error:{}", e);
-        return Err(e.into());
+        Err(e)?
     }
 
     let futures = proxy_config
