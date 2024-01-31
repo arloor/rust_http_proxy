@@ -9,6 +9,6 @@ for i in ${hosts}; do
             hostname;
             systemctl restart proxy;
             podman image prune -f 2>/dev/null
-            podman images |grep arloor/rust_http_proxy|awk "{print \$3}";
+            podman images --digests |grep arloor/rust_http_proxy|awk "{print \$4\" \"\$3}";
             '
 done
