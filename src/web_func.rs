@@ -84,7 +84,7 @@ pub async fn serve_http_request(
                 && !referer_header.is_empty()
                 && !referer_header.contains(refer);
             info!(
-                "{:>21?} {:^7} {} {:?} {}",
+                "{:>21?} {:^7} {} {:?} {} https://ip.im/{}",
                 client_socket_addr,
                 req.method().as_str(),
                 path,
@@ -95,7 +95,8 @@ pub async fn serve_http_request(
                     format!("\"Referer: {}\"", referer_header)
                 } else {
                     "".to_string()
-                }
+                },
+                client_socket_addr.ip()
             );
             let r = serve_path(web_content_path, path, req, true).await;
             incr_counter_if_need(
