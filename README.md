@@ -85,8 +85,8 @@ curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:4
 > 通过Github Action自动更新release，永远是最新版，可放心使用
 
 ```shell
-curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy_musl
-mv rust_http_proxy_musl /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
+curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/v1.0.0/rust_http_proxy
+mv rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
 rust_http_proxy -h
 ```
 

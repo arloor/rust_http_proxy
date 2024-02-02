@@ -20,20 +20,9 @@ jobs:
       # - name: build
       #   run: |
       #     cargo build --release
-      #     cp target/release/rust_http_proxy target/release/rust_http_proxy_gnu;
       - name: build_musl
         id: build_musl
         uses: arloor/rust_musl_action@v2
-      - name: mv_musl_bin
-        run: |
-          # 如果target/release/不存在，则创建该文件夹
-          if [ ! -d "target/release/" ]; then
-            mkdir -p target/release/
-          fi
-          sudo chmod +w target/release/
-          ls -l target/
-          cp ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy target/release/rust_http_proxy_musl;
-          cp ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy target/release/rust_http_proxy; # use musl bin to build docker image
       - name: gihub_release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,7 +35,7 @@ jobs:
           git config --local user.name "arloor"
           # git tag  -f v1.0.0 -m 'latest'
           # git push --force origin v1.0.0
-          gh release create v1.0.0 target/release/rust_http_proxy_musl -n "latest" --latest -t latest  --target master
+          gh release create v1.0.0 ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "latest" --latest -t latest  --target master
       - name: push
         run: |
           podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
