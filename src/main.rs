@@ -47,6 +47,7 @@ type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
 lazy_static! {
     static ref PROXY_HANDLER: ProxyHandler = ProxyHandler::new();
+    static ref LOCAL_IP: String = local_ip().unwrap_or("0.0.0.0".to_string());
 }
 
 #[tokio::main]
@@ -87,7 +88,7 @@ async fn bootstrap(
             true => "s",
             false => "",
         },
-        local_ip().unwrap_or("0.0.0.0".to_string()),
+        *LOCAL_IP,
         port
     );
     if config.over_tls {
