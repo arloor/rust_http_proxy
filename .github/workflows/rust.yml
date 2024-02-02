@@ -29,8 +29,8 @@ jobs:
           # 如果target/release/不存在，则创建该文件夹
           if [ ! -d "target/release/" ]; then
             mkdir -p target/release/
-            chmod +w target/release/
           fi
+          sudo chmod +w target/release/
           ls -l target/
           cp ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy target/release/rust_http_proxy_musl;
           cp ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy target/release/rust_http_proxy; # use musl bin to build docker image
