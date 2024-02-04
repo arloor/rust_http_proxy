@@ -22,8 +22,7 @@ pub fn tls_config(key: &String, cert: &String) -> Result<Arc<ServerConfig>, DynE
 
     let mut config = ServerConfig::builder()
         .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+        .with_single_cert(certs, key)?;
     config.alpn_protocols = vec![
         b"h2".to_vec(),       // http2
         b"http/1.1".to_vec(), // http1.1
