@@ -88,7 +88,7 @@ async fn bootstrap(
             true => "s",
             false => "",
         },
-        *LOCAL_IP,
+        LOCAL_IP.as_str(),
         port
     );
     if config.over_tls {
