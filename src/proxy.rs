@@ -7,7 +7,8 @@ use std::{
 };
 
 use crate::{
-    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config, Context, LOCAL_IP
+    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config,
+    Context, LOCAL_IP,
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
@@ -130,13 +131,13 @@ impl ProxyHandler {
             }
         }
         info!(
-            "{:>21?} {:^8} {:^7} {:?} {:?} https://ip.im/{}",
-            client_socket_addr,
+            "https://ip.im/{:<15} {:<5} {:^8} {:^7} {:?} {:?} ",
+            client_socket_addr.ip(),
+            client_socket_addr.port(),
             username,
             req.method().as_str(),
             req.uri(),
             req.version(),
-            client_socket_addr.ip()
         );
         if !authed {
             return if never_ask_for_auth {
@@ -196,13 +197,12 @@ impl ProxyHandler {
                 });
                 let mut response = Response::new(empty_body());
                 // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
-                let max_num=2048/LOCAL_IP.len();
+                let max_num = 2048 / LOCAL_IP.len();
                 let count = rand::thread_rng().gen_range(1..max_num);
                 for _ in 0..count {
-                    response.headers_mut().append(
-                        http::header::SERVER,
-                        HeaderValue::from_static(&LOCAL_IP),
-                    );
+                    response
+                        .headers_mut()
+                        .append(http::header::SERVER, HeaderValue::from_static(&LOCAL_IP));
                 }
                 Ok(response)
             } else {
