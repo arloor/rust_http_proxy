@@ -84,8 +84,9 @@ pub async fn serve_http_request(
                 && !referer_header.is_empty()
                 && !referer_header.contains(refer);
             info!(
-                "{:>21?} {:^7} {} {:?} {} https://ip.im/{}",
-                client_socket_addr,
+                "{:>29} {:<5} {:^7} {} {:?} {}",
+                "https://ip.im/".to_owned() + &client_socket_addr.ip().to_string(),
+                client_socket_addr.port(),
                 req.method().as_str(),
                 path,
                 req.version(),
@@ -96,7 +97,6 @@ pub async fn serve_http_request(
                 } else {
                     "".to_string()
                 },
-                client_socket_addr.ip()
             );
             let r = serve_path(web_content_path, path, req, true).await;
             incr_counter_if_need(

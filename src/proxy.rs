@@ -131,8 +131,8 @@ impl ProxyHandler {
             }
         }
         info!(
-            "https://ip.im/{:<15} {:<5} {:^8} {:^7} {:?} {:?} ",
-            client_socket_addr.ip(),
+            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
+            "https://ip.im/".to_owned() + &client_socket_addr.ip().to_string(),
             client_socket_addr.port(),
             username,
             req.method().as_str(),
