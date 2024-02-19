@@ -80,6 +80,7 @@ pub async fn serve_http_request(
         (_, "/net") => speed(net_monitor, hostname).await,
         (_, "/metrics") => metrics(prom_registry.clone()).await,
         (&Method::GET, path) => {
+            let is_shell = path.ends_with(".sh");
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
                 && !referer_header.is_empty()
                 && !referer_header.contains(refer);
@@ -102,6 +103,7 @@ pub async fn serve_http_request(
             incr_counter_if_need(
                 &r,
                 is_outer_view_html,
+                is_shell,
                 http_req_counter,
                 referer_header,
                 path,
@@ -116,24 +118,29 @@ pub async fn serve_http_request(
 fn incr_counter_if_need(
     r: &Result<Response<BoxBody<Bytes, io::Error>>, Error>,
     is_outer_view_html: bool,
+    is_shell: bool,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     referer_header: &str,
     path: &str,
 ) {
     if let Ok(ref res) = *r {
-        if is_outer_view_html && (res.status().is_success() || res.status().is_redirection()) {
+        if (is_outer_view_html || is_shell)
+            && (res.status().is_success() || res.status().is_redirection())
+        {
             http_req_counter
                 .get_or_create(&LabelImpl::from(ReqLabels {
                     referer: referer_header.to_string(),
                     path: path.to_string(),
                 }))
                 .inc();
-            http_req_counter
-                .get_or_create(&LabelImpl::from(ReqLabels {
-                    referer: "all".to_string(),
-                    path: "all".to_string(),
-                }))
-                .inc();
+            if !is_shell {
+                http_req_counter
+                    .get_or_create(&LabelImpl::from(ReqLabels {
+                        referer: "all".to_string(),
+                        path: "all".to_string(),
+                    }))
+                    .inc();
+            }
         }
     }
 }
