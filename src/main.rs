@@ -75,13 +75,32 @@ async fn main() -> Result<(), DynError> {
     }
     Ok(())
 }
+use socket2::{Domain, Protocol, Socket, Type};
+async fn create_dual_stack_listener(port: u16) -> io::Result<TcpListener> {
+    // 创建一个IPv6的socket
+    let domain = Domain::IPV6;
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+
+    // 支持ipv4 + ipv6双栈
+    socket.set_only_v6(false)?;
+    // 绑定socket到地址和端口
+    let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
+    socket.bind(&addr.into())?;
+    socket.listen(128)?; // 监听，128为backlog的大小
+
+    // 将socket2::Socket转换为std::net::TcpListener
+    let std_listener = std::net::TcpListener::from(socket);
+    let _ = std_listener.set_nonblocking(true);
+
+    TcpListener::from_std(std_listener)
+}
 
 async fn bootstrap(
     config: &'static Config,
     port: u16,
     proxy_handler: ProxyHandler,
 ) -> Result<(), DynError> {
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    
     info!(
         "Listening on http{}://{}:{}",
         match config.over_tls {
@@ -94,7 +113,7 @@ async fn bootstrap(
     if config.over_tls {
         let mut acceptor = TlsAcceptor::new(
             tls_config(&config.key, &config.cert)?,
-            TcpListener::bind(addr).await?,
+            create_dual_stack_listener(port).await?,
         );
 
         let mut rx = match &config.tls_config_broadcast {
@@ -129,7 +148,7 @@ async fn bootstrap(
             }
         }
     } else {
-        let tcp_listener = TcpListener::bind(addr).await?;
+        let tcp_listener = create_dual_stack_listener(port).await?;
         loop {
             if let Ok((tcp_stream, client_socket_addr)) = tcp_listener.accept().await {
                 let io = TokioIo::new(tcp_stream);

@@ -23,7 +23,7 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
 use std::collections::VecDeque;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::process::Command;
@@ -37,6 +37,43 @@ use tokio_util::io::ReaderStream;
 const SERVER_NAME: &str = "arloor's creation";
 
 static GZIP: &str = "gzip";
+
+use std::net::Ipv4Addr;
+
+fn ipv6_mapped_to_ipv4(addr: IpAddr) -> IpAddr {
+    match addr {
+        IpAddr::V6(v6_addr) => {
+            if v6_addr.segments()[..6] == [0, 0, 0, 0, 0, 0xFFFF] {
+                #[cfg(debug_assertions)]
+                {
+                    // 在 debug 模式下执行
+                    info!(
+                        "found IPv4-mapped IPv6 address: \"{}\", converting to IPv4",addr
+                    );
+                }
+                // 提取IPv4部分并转换为SocketAddr::V4
+                let ip4_bits: [u16; 2] = [
+                    v6_addr.segments()[6],
+                    v6_addr.segments()[7],
+                ];
+                Ipv4Addr::new(
+                    (ip4_bits[0] >> 8) as u8,
+                    ip4_bits[0] as u8,
+                    (ip4_bits[1] >> 8) as u8,
+                    ip4_bits[1] as u8,
+                ).into()
+
+            } else {
+                // 不是IPv4映射的IPv6地址，直接返回原地址
+                addr
+            }
+        }
+        IpAddr::V4(_) => {
+            // 已经是IPv4地址，直接返回
+            addr
+        }
+    }
+}
 
 pub async fn serve_http_request(
     req: &Request<impl Body>,
@@ -86,7 +123,7 @@ pub async fn serve_http_request(
                 && !referer_header.contains(refer);
             info!(
                 "{:>29} {:<5} {:^7} {} {:?} {}",
-                "https://ip.im/".to_owned() + &client_socket_addr.ip().to_string(),
+                "https://ip.im/".to_owned() + &ipv6_mapped_to_ipv4(client_socket_addr.ip()).to_string(),
                 client_socket_addr.port(),
                 req.method().as_str(),
                 path,
