@@ -1,6 +1,7 @@
 #![deny(warnings)]
 mod acceptor;
 mod counter_io;
+mod ip_x;
 mod log_x;
 mod net_monitor;
 mod prom_label;
@@ -14,6 +15,7 @@ mod context;
 
 use crate::config::Config;
 
+use crate::ip_x::local_ip;
 use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
 
@@ -33,7 +35,7 @@ use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::io;
 use std::net::SocketAddr;
-use std::net::UdpSocket;
+
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -100,7 +102,6 @@ async fn bootstrap(
     port: u16,
     proxy_handler: ProxyHandler,
 ) -> Result<(), DynError> {
-    
     info!(
         "Listening on http{}://{}:{}",
         match config.over_tls {
@@ -299,12 +300,4 @@ fn handle_signal() -> io::Result<()> {
         };
     });
     Ok(())
-}
-
-pub fn local_ip() -> io::Result<String> {
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("8.8.8.8:80")?;
-    socket
-        .local_addr()
-        .map(|local_addr| local_addr.ip().to_string())
 }
