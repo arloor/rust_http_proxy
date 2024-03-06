@@ -302,9 +302,9 @@ fn handle_signal() -> io::Result<()> {
 #[cfg(windows)]
 fn handle_signal() -> io::Result<()> {
     tokio::spawn(async move {
-        let _=tokio::signal::ctrl_c().await;
+        let _ = tokio::signal::ctrl_c().await;
         info!("ctrl_c => shutdowning");
-                std::process::exit(0); // 并不优雅关闭
+        std::process::exit(0); // 并不优雅关闭
     });
     Ok(())
 }
