@@ -82,13 +82,15 @@ async fn create_dual_stack_listener(port: u16) -> io::Result<TcpListener> {
     // 创建一个IPv6的socket
     let domain = Domain::IPV6;
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    #[cfg(not(windows))]
+    let _ = socket.set_reuse_address(true);
 
     // 支持ipv4 + ipv6双栈
     socket.set_only_v6(false)?;
     // 绑定socket到地址和端口
     let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
     socket.bind(&addr.into())?;
-    socket.listen(128)?; // 监听，128为backlog的大小
+    socket.listen(1024)?; // 监听，128为backlog的大小
 
     // 将socket2::Socket转换为std::net::TcpListener
     let std_listener = std::net::TcpListener::from(socket);
