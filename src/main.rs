@@ -27,7 +27,7 @@ use hyper::body::Bytes;
 use context::Context;
 use hyper::service::service_fn;
 use hyper::{Error, Request, Response};
-use hyper_util::rt::tokio::TokioIo;
+use hyper_util::rt::tokio::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use lazy_static::lazy_static;
 use log::{info, warn};
@@ -169,7 +169,7 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     config: &'static Config,
     client_socket_addr: SocketAddr,
 ) {
-    let binding = auto::Builder::new(hyper_util::rt::tokio::TokioExecutor::new());
+    let binding = auto::Builder::new(TokioExecutor::new());
     let context = Arc::new(RwLock::new(Context::default()));
     let context_c = context.clone();
     let connection = binding.serve_connection_with_upgrades(
