@@ -1,4 +1,3 @@
-use crate::ip_x::ipv6_mapped_to_ipv4;
 use crate::net_monitor::{NetMonitor, TimeValue};
 use crate::prom_label::LabelImpl;
 use crate::proxy::empty_body;
@@ -38,8 +37,6 @@ use tokio_util::io::ReaderStream;
 const SERVER_NAME: &str = "arloor's creation";
 
 static GZIP: &str = "gzip";
-
-
 
 pub async fn serve_http_request(
     req: &Request<impl Body>,
@@ -89,7 +86,7 @@ pub async fn serve_http_request(
                 && !referer_header.contains(refer);
             info!(
                 "{:>29} {:<5} {:^7} {} {:?} {}",
-                "https://ip.im/".to_owned() + &ipv6_mapped_to_ipv4(client_socket_addr.ip()).to_string(),
+                "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
                 client_socket_addr.port(),
                 req.method().as_str(),
                 path,
@@ -290,7 +287,9 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(full_body(client_socket_addr.ip().to_string()))
+        .body(full_body(
+            client_socket_addr.ip().to_canonical().to_string(),
+        ))
 }
 
 fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {

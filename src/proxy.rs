@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    counter_io::CounterIO, ip_x::ipv6_mapped_to_ipv4, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config, Context, LOCAL_IP
+    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config, Context, LOCAL_IP
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
@@ -131,7 +131,7 @@ impl ProxyHandler {
         }
         info!(
             "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
-            "https://ip.im/".to_owned() + &ipv6_mapped_to_ipv4(client_socket_addr.ip()).to_string(),
+            "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
             client_socket_addr.port(),
             username,
             req.method().as_str(),
@@ -169,7 +169,7 @@ impl ProxyHandler {
                     match hyper::upgrade::on(req).await {
                         Ok(upgraded) => {
                             let access_label = AccessLabel {
-                                client: client_socket_addr.ip().to_string(),
+                                client: client_socket_addr.ip().to_canonical().to_string(),
                                 target: addr.clone(),
                                 username,
                             };
@@ -223,7 +223,7 @@ impl ProxyHandler {
                 stream,
                 self.proxy_traffic.clone(),
                 LabelImpl::from(AccessLabel {
-                    client: client_socket_addr.ip().to_string(),
+                    client: client_socket_addr.ip().to_canonical().to_string(),
                     target: format!("{}:{}", host, port),
                     username,
                 }),

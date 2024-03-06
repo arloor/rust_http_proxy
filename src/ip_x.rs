@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::UdpSocket;
 
-pub(crate) fn ipv6_mapped_to_ipv4(addr: IpAddr) -> IpAddr {
+pub(crate) fn _ipv6_mapped_to_ipv4(addr: IpAddr) -> IpAddr {
     match addr {
         IpAddr::V6(v6_addr) => {
             if v6_addr.segments()[..6] == [0, 0, 0, 0, 0, 0xFFFF] {
