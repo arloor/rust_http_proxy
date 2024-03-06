@@ -40,7 +40,6 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
-use tokio::signal::unix::{signal, SignalKind};
 
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
 const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 120 } else { 5 }; // 3 minutes
@@ -281,7 +280,9 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
     }
 }
 
+#[cfg(unix)]
 fn handle_signal() -> io::Result<()> {
+    use tokio::signal::unix::{signal, SignalKind};
     let mut terminate_signal = signal(SignalKind::terminate())?;
     tokio::spawn(async move {
         tokio::select! {
@@ -294,6 +295,16 @@ fn handle_signal() -> io::Result<()> {
                 std::process::exit(0); // 并不优雅关闭
             },
         };
+    });
+    Ok(())
+}
+
+#[cfg(windows)]
+fn handle_signal() -> io::Result<()> {
+    tokio::spawn(async move {
+        let _=tokio::signal::ctrl_c().await;
+        info!("ctrl_c => shutdowning");
+                std::process::exit(0); // 并不优雅关闭
     });
     Ok(())
 }
