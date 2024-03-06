@@ -30,7 +30,7 @@ use hyper::{Error, Request, Response};
 use hyper_util::rt::tokio::TokioIo;
 use hyper_util::server::conn::auto;
 use lazy_static::lazy_static;
-use log::{debug, info, warn};
+use log::{info, warn};
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::io;
@@ -54,7 +54,6 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    debug!("");
     let proxy_config: &'static Config = load_config();
     if let Err(e) = handle_signal() {
         warn!("handle signal error:{}", e);
@@ -272,6 +271,7 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
             }
             #[cfg(not(debug_assertions))]
             {
+                use log::debug;
                 // 在 release 模式下执行
                 debug!(
                     "[hyper system error]: {:?} [client:{}]",
