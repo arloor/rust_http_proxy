@@ -82,7 +82,7 @@ async fn create_dual_stack_listener(port: u16) -> io::Result<TcpListener> {
     let domain = Domain::IPV6;
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
     #[cfg(not(windows))]
-    let _ = socket.set_reuse_address(true);
+    let _ = socket.set_reuse_address(true); // 设置reuse_address以支持快速重启
 
     // 支持ipv4 + ipv6双栈
     socket.set_only_v6(false)?;
@@ -262,22 +262,16 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
         } else {
             // 系统错误
             #[cfg(debug_assertions)]
-            {
-                // 在 debug 模式下执行
-                warn!(
-                    "[hyper system error]: {:?} [client:{}]",
-                    cause, client_socket_addr
-                );
-            }
+            warn!(
+                "[hyper system error]: {:?} [client:{}]",
+                cause, client_socket_addr
+            );
             #[cfg(not(debug_assertions))]
-            {
-                use log::debug;
-                // 在 release 模式下执行
-                debug!(
-                    "[hyper system error]: {:?} [client:{}]",
-                    cause, client_socket_addr
-                );
-            }
+            log::debug!(
+                "[hyper system error]: {:?} [client:{}]",
+                cause,
+                client_socket_addr
+            );
         }
     } else {
         warn!(
