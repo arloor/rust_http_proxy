@@ -187,13 +187,8 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     loop {
         let (last_instant, upgraded) = context_c.read().unwrap().snapshot();
         if upgraded {
-            tokio::select! {
-                res = connection.as_mut() => {
-                    if let Err(err)=res{
-                        handle_hyper_error(client_socket_addr,err);
-                    }
-                    break;
-                }
+            if let Err(err) = connection.as_mut().await {
+                handle_hyper_error(client_socket_addr, err);
             }
         } else {
             tokio::select! {
