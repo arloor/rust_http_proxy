@@ -54,10 +54,7 @@ lazy_static! {
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
     let proxy_config: &'static Config = load_config();
-    if let Err(e) = handle_signal() {
-        warn!("handle signal error:{}", e);
-        Err(e)?
-    }
+     handle_signal()?;
 
     let futures = proxy_config
         .port
