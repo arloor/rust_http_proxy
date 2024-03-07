@@ -5,7 +5,12 @@ use flexi_logger::{
 use log::Record;
 
 pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLoggerError> {
-    Logger::try_with_env_or_str("info")?
+    let logger = if cfg!(debug_assertions) {
+        Logger::try_with_env_or_str("debug")?
+    } else {
+        Logger::try_with_env_or_str("info")?
+    };
+    logger
         .log_to_file(
             FileSpec::default()
                 .directory(log_dir)

@@ -255,12 +255,6 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
             );
         } else {
             // 系统错误
-            #[cfg(debug_assertions)]
-            warn!(
-                "[hyper system error]: {:?} [client:{}]",
-                cause, client_socket_addr
-            );
-            #[cfg(not(debug_assertions))]
             log::debug!(
                 "[hyper system error]: {:?} [client:{}]",
                 cause,
