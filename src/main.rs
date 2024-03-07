@@ -81,7 +81,7 @@ async fn create_dual_stack_listener(port: u16) -> io::Result<TcpListener> {
     let domain = Domain::IPV6;
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
     #[cfg(not(windows))]
-    let _ = socket.set_reuse_address(true); // 设置reuse_address以支持快速重启
+    socket.set_reuse_address(true)?; // 设置reuse_address以支持快速重启
 
     // 支持ipv4 + ipv6双栈
     socket.set_only_v6(false)?;
@@ -92,7 +92,7 @@ async fn create_dual_stack_listener(port: u16) -> io::Result<TcpListener> {
 
     // 将socket2::Socket转换为std::net::TcpListener
     let std_listener = std::net::TcpListener::from(socket);
-    let _ = std_listener.set_nonblocking(true);
+    std_listener.set_nonblocking(true)?;
 
     TcpListener::from_std(std_listener)
 }
