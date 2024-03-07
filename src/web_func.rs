@@ -70,10 +70,8 @@ pub async fn serve_http_request(
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         #[cfg(target_os = "linux")]
-        (_, "/nt") => count_stream(),
-        #[cfg(target_os = "linux")]
+        (_, "/nt") => _count_stream(),
         (_, "/speed") => speed(net_monitor, hostname).await,
-        #[cfg(target_os = "linux")]
         (_, "/net") => speed(net_monitor, hostname).await,
         (_, "/metrics") => metrics(prom_registry.clone()).await,
         (&Method::GET, path) => {
@@ -289,7 +287,7 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io
         ))
 }
 
-fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+fn _count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let output = Command::new("sh")
         .arg("-c")
         .arg(r#"
