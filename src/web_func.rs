@@ -69,14 +69,11 @@ pub async fn serve_http_request(
     }
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
-        (_, "/nt") => {
-            if cfg!(target_os = "windows") {
-                not_found()
-            } else {
-                count_stream()
-            }
-        }
+        #[cfg(target_os = "linux")]
+        (_, "/nt") => count_stream(),
+        #[cfg(target_os = "linux")]
         (_, "/speed") => speed(net_monitor, hostname).await,
+        #[cfg(target_os = "linux")]
         (_, "/net") => speed(net_monitor, hostname).await,
         (_, "/metrics") => metrics(prom_registry.clone()).await,
         (&Method::GET, path) => {
