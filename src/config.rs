@@ -4,7 +4,6 @@ use base64::Engine;
 use clap::Parser;
 use log::{info, warn};
 use std::collections::HashMap;
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -142,14 +141,28 @@ impl From<ProxyConfig> for Config {
 
 pub(crate) fn load_config() -> &'static Config {
     let mut config = ProxyConfig::parse();
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(r#"
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(
+                r#"
         hostname
-        "#)
-        .output()
-        .expect("error call netstat");
-    config.hostname = String::from_utf8(output.stdout).unwrap_or("unknown".to_string()).trim().to_owned();
+        "#,
+            )
+            .output()
+            .expect("error call hostname");
+        config.hostname = String::from_utf8(output.stdout)
+            .unwrap_or("unknown".to_string())
+            .trim()
+            .to_owned();
+    }
+    #[cfg(windows)]
+    {
+        use std::env;
+        config.hostname = env::var("HOSTNAME").unwrap_or("unknown".to_string());
+    }
     if let Err(log_init_error) = init_log(&config.log_dir, &config.log_file) {
         println!("init log error:{}", log_init_error);
         std::process::exit(1);
