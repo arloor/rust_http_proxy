@@ -65,11 +65,7 @@ async fn main() -> Result<(), DynError> {
         })
         .map(Box::pin)
         .collect::<Vec<_>>();
-    let select_result = select_all(futures.into_iter()).await;
-    if let Err(e) = select_result.0 {
-        warn!("serve error:{}", e);
-        Err(e)?
-    }
+    select_all(futures.into_iter()).await.0?;
     Ok(())
 }
 use socket2::{Domain, Protocol, Socket, Type};
