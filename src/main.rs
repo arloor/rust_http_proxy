@@ -54,7 +54,7 @@ lazy_static! {
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
     let proxy_config: &'static Config = load_config();
-     handle_signal()?;
+    handle_signal()?;
 
     let futures = proxy_config
         .port
@@ -234,6 +234,10 @@ async fn proxy(
 /// # Returns
 /// * `()` - 无返回值
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
+    let formatted_client_addr = "https://ip.im/".to_owned()
+        + &client_socket_addr.ip().to_canonical().to_string()
+        + " "
+        + &client_socket_addr.port().to_string();
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         // 转换为hyper::Error
         let cause = match http_err.source() {
@@ -243,21 +247,21 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
         if http_err.is_user() {
             // 判断是否是用户错误
             warn!(
-                "[hyper user error]: {:?} [client:{}]",
-                cause, client_socket_addr
+                "[hyper user error]: {:?} from {}",
+                cause, formatted_client_addr
             );
         } else {
             // 系统错误
             log::debug!(
-                "[hyper system error]: {:?} [client:{}]",
+                "[hyper system error]: {:?} from {}",
                 cause,
-                client_socket_addr
+                formatted_client_addr
             );
         }
     } else {
         warn!(
-            "[hyper other error]: {} [client:{}]",
-            http_err, client_socket_addr
+            "[hyper other error]: {} from {}",
+            http_err, formatted_client_addr
         );
     }
 }
