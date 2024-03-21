@@ -40,3 +40,10 @@ pub fn local_ip() -> io::Result<String> {
         .local_addr()
         .map(|local_addr| local_addr.ip().to_string())
 }
+
+pub fn format_socket_addr(socket_addr: &std::net::SocketAddr, linker: &'static str) -> String {
+    "https://ip.im/".to_owned()
+        + &socket_addr.ip().to_canonical().to_string()
+        + linker
+        + &socket_addr.port().to_string()
+}

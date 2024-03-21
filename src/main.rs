@@ -29,6 +29,7 @@ use hyper::service::service_fn;
 use hyper::{Error, Request, Response};
 use hyper_util::rt::tokio::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use ip_x::format_socket_addr;
 use lazy_static::lazy_static;
 use log::{info, warn};
 use proxy::ProxyHandler;
@@ -197,7 +198,8 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
                         info!("upgraded from {}",client_socket_addr);
                         continue;
                     }else if instant <= last_instant {
-                        info!("idle for {} seconds, graceful shutdown [{}]",IDLE_SECONDS,client_socket_addr);
+                        let formatted_client_addr = format_socket_addr(&client_socket_addr," ");
+                        info!("idle for {} seconds, graceful shutdown [{}]",IDLE_SECONDS,formatted_client_addr);
                         connection.as_mut().graceful_shutdown();
                         break;
                     }
@@ -234,10 +236,7 @@ async fn proxy(
 /// # Returns
 /// * `()` - 无返回值
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
-    let formatted_client_addr = "https://ip.im/".to_owned()
-        + &client_socket_addr.ip().to_canonical().to_string()
-        + " "
-        + &client_socket_addr.port().to_string();
+    let formatted_client_addr = format_socket_addr(&client_socket_addr," ");
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         // 转换为hyper::Error
         let cause = match http_err.source() {
