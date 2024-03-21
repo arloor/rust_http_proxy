@@ -6,9 +6,9 @@ use log::Record;
 
 pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLoggerError> {
     let logger = if cfg!(debug_assertions) {
-        Logger::try_with_env_or_str("debug")?
+        Logger::try_with_env_or_str("debug,rustls=error")?
     } else {
-        Logger::try_with_env_or_str("info")?
+        Logger::try_with_env_or_str("info,rustls=error")?
     };
     logger
         .log_to_file(
