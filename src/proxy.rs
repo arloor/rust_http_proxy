@@ -263,7 +263,7 @@ impl ProxyHandler {
     }
 }
 
-const TUNNEL_TIMEOUT: Duration = Duration::from_secs(300);
+const TUNNEL_TIMEOUT: Duration = Duration::from_secs(600);
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
 async fn tunnel(
