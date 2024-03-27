@@ -184,7 +184,9 @@ impl ProxyHandler {
                                         LabelImpl::from(access_label),
                                     );
                                     if let Err(e) = tunnel(upgraded, target_stream).await {
-                                        warn!("[tunnel io error] [{}] : {} ", access_tag, e);
+                                        if e.kind() != ErrorKind::TimedOut {
+                                            warn!("[tunnel io error] [{}] : {} ", access_tag, e);
+                                        }
                                     };
                                 }
                                 Err(e) => {
