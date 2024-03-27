@@ -184,9 +184,9 @@ impl ProxyHandler {
                                         LabelImpl::from(access_label),
                                     );
                                     if let Err(e) = tunnel(upgraded, target_stream).await {
-                                        if e.kind() != ErrorKind::TimedOut {
+                                        // if e.kind() != ErrorKind::TimedOut {
                                             warn!("[tunnel io error] [{}] : {} ", access_tag, e);
-                                        }
+                                        // }
                                     };
                                 }
                                 Err(e) => {
@@ -263,6 +263,7 @@ impl ProxyHandler {
     }
 }
 
+const TUNNEL_TIMEOUT: Duration = Duration::from_secs(300);
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
 async fn tunnel(
@@ -272,10 +273,10 @@ async fn tunnel(
     let mut upgraded = TokioIo::new(upgraded);
     // Proxying data
    let mut timed_target_io= TimeoutStream::new(&mut target_io);
-   timed_target_io.set_read_timeout(Some(Duration::from_secs(30)));
+   timed_target_io.set_read_timeout(Some(TUNNEL_TIMEOUT));
    pin!(timed_target_io);
    let mut timed_upgraded= TimeoutStream::new(&mut upgraded);
-   timed_upgraded.set_read_timeout(Some(Duration::from_secs(30)));
+   timed_upgraded.set_read_timeout(Some(TUNNEL_TIMEOUT));
     let (_from_client, _from_server) =
         tokio::io::copy_bidirectional(&mut upgraded, &mut timed_target_io).await?;
     Ok(())
