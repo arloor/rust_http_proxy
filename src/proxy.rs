@@ -3,7 +3,7 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock}, time::Duration,
 };
 
 use crate::{
@@ -23,7 +23,8 @@ use prometheus_client::{
     registry::Registry,
 };
 use rand::Rng;
-use tokio::net::TcpStream;
+use tokio::{net::TcpStream, pin};
+use tokio_io_timeout::TimeoutStream;
 
 #[derive(Clone)]
 pub struct ProxyHandler {
@@ -268,8 +269,13 @@ async fn tunnel(
 ) -> io::Result<()> {
     let mut upgraded = TokioIo::new(upgraded);
     // Proxying data
+   let mut timed_target_io= TimeoutStream::new(&mut target_io);
+   timed_target_io.set_read_timeout(Some(Duration::from_secs(30)));
+   pin!(timed_target_io);
+   let mut timed_upgraded= TimeoutStream::new(&mut upgraded);
+   timed_upgraded.set_read_timeout(Some(Duration::from_secs(30)));
     let (_from_client, _from_server) =
-        tokio::io::copy_bidirectional(&mut upgraded, &mut target_io).await?;
+        tokio::io::copy_bidirectional(&mut upgraded, &mut timed_target_io).await?;
     Ok(())
 }
 /// Returns the host and port of the given URI.

@@ -29,3 +29,4 @@ clap = { version = "4.4", features = ["derive"] }
 base64 = "0.22"
 lazy_static = "1.4"
 socket2 = "0.5"
+tokio-io-timeout = "1"
