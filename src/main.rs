@@ -33,6 +33,7 @@ use ip_x::format_socket_addr;
 use lazy_static::lazy_static;
 use log::{info, warn};
 use proxy::ProxyHandler;
+use tokio_rustls::rustls::crypto;
 use std::error::Error as stdError;
 use std::io;
 use std::net::SocketAddr;
@@ -54,6 +55,8 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
+    // 使用ring作为rustls的默认加密库
+    let _ = crypto::ring::default_provider().install_default();
     let proxy_config: &'static Config = load_config();
     handle_signal()?;
 

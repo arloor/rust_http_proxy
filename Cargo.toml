@@ -11,7 +11,7 @@ tokio = { version = "1", features = ["full"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 rustls-pemfile = "2"
-tokio-rustls = "0.25"
+tokio-rustls = {version = "0.26",features = ["logging", "tls12", "ring"],default-features = false}
 futures-util = "0.3"
 log = "0.4"
 flexi_logger = {version = "0.28.0", features = ["async"] }
