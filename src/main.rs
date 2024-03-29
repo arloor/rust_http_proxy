@@ -48,10 +48,6 @@ const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 120 } else { 5 }; // 3 mi
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
-// 使用jemalloc作为全局内存分配器
-#[global_allocator]
-static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
-
 lazy_static! {
     static ref PROXY_HANDLER: ProxyHandler = ProxyHandler::new();
     static ref LOCAL_IP: String = local_ip().unwrap_or("0.0.0.0".to_string());
