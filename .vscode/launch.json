@@ -25,6 +25,7 @@
                 "-r=arloor"
             ],
             "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
             "preLaunchTask": "rust: cargo build",
             "env": {
                 "HOSTNAME": "test"
