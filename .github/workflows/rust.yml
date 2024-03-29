@@ -22,7 +22,7 @@ jobs:
       #     cargo build --release
       - name: build musl
         id: build_musl
-        uses: arloor/rust_musl_action@c91c0b823396e9aecdbea896c3fa274640d50957
+        uses: arloor/rust_musl_action@v3
       - name: docker build and push
         run: |
           podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
