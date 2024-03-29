@@ -33,7 +33,7 @@ impl NetMonitor {
     //     lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
     //   ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
 
-    pub fn get_data(&self) -> Arc<RwLock<VecDeque<TimeValue>>> {
+    pub fn _get_data(&self) -> Arc<RwLock<VecDeque<TimeValue>>> {
         self.buffer.clone()
     }
     pub fn start(&self) {

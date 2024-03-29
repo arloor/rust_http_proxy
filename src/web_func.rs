@@ -43,11 +43,11 @@ pub async fn serve_http_request(
     client_socket_addr: SocketAddr,
     proxy_config: &'static Config,
     path: &str,
-    net_monitor: NetMonitor,
+    _net_monitor: NetMonitor,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter, fn() -> Counter>,
     prom_registry: Arc<Registry>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let hostname = &proxy_config.hostname;
+    let _hostname = &proxy_config.hostname;
     let web_content_path = &proxy_config.web_content_path;
     let refer = &proxy_config.referer;
     let referer_header = req
@@ -71,8 +71,10 @@ pub async fn serve_http_request(
         (_, "/ip") => serve_ip(client_socket_addr),
         #[cfg(target_os = "linux")]
         (_, "/nt") => _count_stream(),
-        (_, "/speed") => speed(net_monitor, hostname).await,
-        (_, "/net") => speed(net_monitor, hostname).await,
+        #[cfg(target_os = "linux")]
+        (_, "/speed") => _speed(_net_monitor, _hostname).await,
+        #[cfg(target_os = "linux")]
+        (_, "/net") => _speed(_net_monitor, _hostname).await,
         (_, "/metrics") => metrics(prom_registry.clone()).await,
         (&Method::GET, path) => {
             let is_shell = path.ends_with(".sh");
@@ -322,22 +324,22 @@ fn not_modified(last_modified: SystemTime) -> Result<Response<BoxBody<Bytes, io:
         .body(empty_body())
 }
 
-const PART0: &str = include_str!("../html/part0.html");
-const PART1: &str = include_str!("../html/part1.html");
-const PART2: &str = include_str!("../html/part2.html");
-const PART3: &str = include_str!("../html/part3.html");
-const PART4: &str = include_str!("../html/part4.html");
+const _PART0: &str = include_str!("../html/part0.html");
+const _PART1: &str = include_str!("../html/part1.html");
+const _PART2: &str = include_str!("../html/part2.html");
+const _PART3: &str = include_str!("../html/part3.html");
+const _PART4: &str = include_str!("../html/part4.html");
 const H404: &str = include_str!("../html/404.html");
 const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
 lazy_static! {
     static ref BOOTUP_TIME: SystemTime = SystemTime::now();
 }
 
-async fn speed(
+async fn _speed(
     net_monitor: NetMonitor,
     hostname: &String,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let r = fetch_all(net_monitor.get_data()).await;
+    let r = _fetch_all(net_monitor._get_data()).await;
     let mut scales = vec![];
     let mut series_up = vec![];
     let mut max_up = 0;
@@ -361,11 +363,11 @@ async fn speed(
         .header(http::header::SERVER, SERVER_NAME)
         .body(full_body(format!(
             "{} {}网速 {} {:?} {} {} {}  {:?} {}",
-            PART0, hostname, PART1, scales, PART2, interval, PART3, series_up, PART4
+            _PART0, hostname, _PART1, scales, _PART2, interval, _PART3, series_up, _PART4
         )))
 }
 
-async fn fetch_all(buffer: Arc<RwLock<VecDeque<TimeValue>>>) -> Vec<TimeValue> {
+async fn _fetch_all(buffer: Arc<RwLock<VecDeque<TimeValue>>>) -> Vec<TimeValue> {
     let buffer = buffer.read().await;
     let x = buffer.as_slices();
     let mut r = vec![];
