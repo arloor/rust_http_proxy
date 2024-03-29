@@ -30,4 +30,5 @@ base64 = "0.22"
 lazy_static = "1.4"
 socket2 = "0.5"
 tokio-io-timeout = "1"
+[target.'cfg(target_os = "linux")'.dependencies]
 jemallocator = "0.5"
