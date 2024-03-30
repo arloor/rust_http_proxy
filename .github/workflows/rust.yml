@@ -26,6 +26,9 @@ jobs:
       - name: build musl
         id: build_musl
         uses: arloor/rust_musl_action@latest
+        with:
+          musl_version: 1.2.5
+          args: --features jemalloc
       - name: docker build and push
         run: |
           podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
