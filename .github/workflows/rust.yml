@@ -28,8 +28,8 @@ jobs:
         uses: arloor/rust_musl_action@latest
         with:
           musl_version: 1.2.5
-          extra_deps: cmake
-          args: --no-default-features --features aws_lc_rs
+          # extra_deps: cmake
+          # args: --no-default-features --features aws_lc_rs
       - name: docker build and push
         run: |
           podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
