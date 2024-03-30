@@ -49,7 +49,7 @@ const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 120 } else { 5 }; // 3 mi
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
 // 使用jemalloc作为全局内存分配器
-#[cfg(target_os = "linux")]
+#[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
