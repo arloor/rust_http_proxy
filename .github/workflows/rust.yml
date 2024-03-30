@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "master" ]
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -22,7 +25,7 @@ jobs:
       #     cargo build --release
       - name: build musl
         id: build_musl
-        uses: arloor/rust_musl_action@v3
+        uses: arloor/rust_musl_action@latest
       - name: docker build and push
         run: |
           podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
