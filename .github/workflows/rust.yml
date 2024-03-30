@@ -44,7 +44,7 @@ jobs:
           git config --local user.name "arloor"
           # git tag  -f v1.0.0 -m 'latest'
           # git push --force origin v1.0.0
-          gh release create v1.0.0 ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "latest" --latest -t latest  --target master
+          gh release create v1.0.0 ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "latest" --latest -t latest
           
 #    - name: install ssh keys
 #      run: |
