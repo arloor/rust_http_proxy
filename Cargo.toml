@@ -35,8 +35,13 @@ socket2 = "0.5"
 tokio-io-timeout = "1"
 jemallocator = { version = "0.5", optional = true }
 
+[target.'cfg(target_env = "musl")'.dependencies]
+aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
+clang-sys = { version = "1.7" ,optional = true}
+bindgen = { version = "0.69", optional = true }
+
 [features]
 default = ["ring"]
 jemalloc = ["dep:jemallocator"]
-aws_lc_rs = ["tokio-rustls/aws-lc-rs"]
+aws_lc_rs = ["tokio-rustls/aws-lc-rs","aws-lc-rs/bindgen","dep:clang-sys","dep:bindgen"]
 ring = ["tokio-rustls/ring"]

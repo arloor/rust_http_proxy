@@ -28,7 +28,7 @@ jobs:
         uses: arloor/rust_musl_action@latest
         with:
           musl_version: 1.2.5
-          extra_deps: cmake
+          extra_deps: cmake libclang-dev
           args: --no-default-features --features aws_lc_rs
       - name: docker build and push
         run: |
