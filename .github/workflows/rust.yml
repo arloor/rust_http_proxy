@@ -11,6 +11,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  USE_MUSL: false
 
 jobs:
   all:
@@ -28,9 +29,13 @@ jobs:
         uses: arloor/rust_musl_action@latest
         with:
           musl_version: 1.2.5
-          use_musl: false
+          use_musl: ${{ env.USE_MUSL }}
           extra_deps: cmake
           args: --no-default-features --features aws_lc_rs
+      - name: mod Dockerfile
+        if: ${{ env.USE_MUSL != 'true' }}
+        run: |
+          sed -i "s/\/x86_64-unknown-linux-musl//g" Dockerfile
       - name: docker build and push
         run: |
           podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
