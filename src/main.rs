@@ -34,7 +34,7 @@ use lazy_static::lazy_static;
 use log::{info, warn};
 use proxy::ProxyHandler;
 use tokio_rustls::rustls::crypto;
-use std::error::Error as stdError;
+// use std::error::Error as stdError;
 use std::io;
 use std::net::SocketAddr;
 
