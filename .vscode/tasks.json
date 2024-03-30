@@ -8,8 +8,7 @@
 				"$rustc"
 			],
 			"args": [
-				"--features",
-				"jemalloc"
+				"--no-default-features", "--features","aws_lc_rs"
 			],
 			"group": {
 				"kind": "build",

@@ -38,6 +38,7 @@ jobs:
           sed -i "s/\/x86_64-unknown-linux-musl//g" Dockerfile
       - name: docker build and push
         run: |
+          ls -lh ${{ steps.build_musl.outputs.release_dir }}
           podman build  -f Dockerfile . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
