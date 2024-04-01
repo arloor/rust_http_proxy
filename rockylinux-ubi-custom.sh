@@ -3,7 +3,8 @@
 # https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html-single/building_running_and_managing_containers/index#proc_using-the-ubi-micro-images_assembly_adding-software-to-a-ubi-container
 
 yum install -y container-tools
-microcontainer=$(buildah from docker.io/rockylinux/rockylinux:9-ubi-micro)
+# microcontainer=$(buildah from docker.io/rockylinux/rockylinux:9-ubi-micro)
+microcontainer=$(buildah from docker.io/redhat/ubi9-micro:9.2-9)
 micromount=$(buildah mount $microcontainer)
 dnf install \
 --installroot $micromount \
@@ -17,6 +18,7 @@ dnf clean all \
 --installroot $micromount
 buildah umount $microcontainer
 buildah commit $microcontainer docker.io/arloor/ubi-micro-net-tools:latest
-podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest /bin/sh
+podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest netstat -tulnp
+podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest awk
 podman login docker.io
 podman push docker.io/arloor/ubi-micro-net-tools:latest
