@@ -154,7 +154,7 @@ cargo build --features jemalloc
 | 依赖的包 | 是否必须 |安装方式 |
 | --- | --- | --- |
 | `cmake` | 必须 | `apt-get install cmake` |
-| `clang` | 非必需。仅在 `aws_lc_rs` 没有提供pre-generated bindings的target上需要，例如 `linux musl` 。详见：[the requirements for rust-bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html) |`apt-get install llvm-dev libclang-dev clang` 或 `apt-get install clang-13` |
+| `clang` | 非必需。仅在 `aws_lc_rs` 没有提供pre-generated bindings的target上需要，例如 `linux musl` 。详见：[the requirements for rust-bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html) |`apt-get install clang` |
 
 激活方式：
 
