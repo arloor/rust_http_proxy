@@ -40,6 +40,6 @@ aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
 
 [features]
 default = ["ring"]
-jemalloc = ["dep:jemallocator"]
+jemalloc = ["jemallocator"]
 aws_lc_rs = ["tokio-rustls/aws-lc-rs","aws-lc-rs/bindgen"]
 ring = ["tokio-rustls/ring"]

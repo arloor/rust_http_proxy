@@ -8,6 +8,7 @@
 				"$rustc"
 			],
 			"args": [
+				"--features","jemalloc"
 			],
 			"group": {
 				"kind": "build",
