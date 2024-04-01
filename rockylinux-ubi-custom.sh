@@ -4,7 +4,7 @@
 
 yum install -y container-tools
 # microcontainer=$(buildah from docker.io/rockylinux/rockylinux:9-ubi-micro)
-microcontainer=$(buildah from docker.io/redhat/ubi9-micro:9.2-9)
+microcontainer=$(buildah from docker.io/redhat/ubi9-micro:latest)
 micromount=$(buildah mount $microcontainer)
 dnf install \
 --installroot $micromount \
