@@ -31,7 +31,7 @@ jobs:
           musl_version: 1.2.5
           use_musl: ${{ env.USE_MUSL }}
           extra_deps: cmake clang-13
-          args: --no-default-features --features aws_lc_rs
+          args: --no-default-features --features aws_lc_rs,jemalloc
       - name: docker build and push
         run: |
           ls -lh ${{ steps.build_musl.outputs.release_dir }}

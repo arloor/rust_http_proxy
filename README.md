@@ -132,6 +132,36 @@ req_from_out_total{referer="all",path="all"} 4
 - [clashX pro](https://install.appcenter.ms/users/clashx/apps/clashx-pro/distribution_groups/public)
 - [ClashForAndroid](https://github.com/Kr328/ClashForAndroid/releases)
 
+## Cargo Features
+
+### jemalloc
+
+激活方式
+
+```bash
+cargo build --features jemalloc
+```
+
+### 使用aws_lc_rs作为rustls加密后端
+
+本项目默认使用ring作为加密后端，也可选择[aws_lc_rs](https://crates.io/crates/aws-lc-rs)作为加密后端。aws_lc_rs相比ring主要有两点优势:
+
+1. 在[rustls的benchmark测试](https://github.com/aochagavia/rustls-bench-results)中，aws_lc_rs的性能要优于ring。
+2. 支持美国联邦政府针对加密提出的[fips要求](https://csrc.nist.gov/pubs/fips/140-2/upd2/final)。
+
+不过，使用aws_lc_rs会增加一些编译难度，需要额外做以下操作：
+
+| 依赖的包 | 是否必须 |安装方式 |
+| --- | --- | --- |
+| cmake | 必须 | `apt-get install cmake` |
+| clang | 非必需。仅在aws_lc_rs没有提供pre-generated bindings的target上需要，例如linux musl。详见：[the requirements for rust-bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html) |`apt-get install llvm-dev libclang-dev clang` 或 `apt-get install clang-13` |
+
+激活方式：
+
+```bash
+cargo build --no-default-features --features aws_lc_rs
+```
+
 ## 高匿实现
 
 代理服务器收到的http请求有一些特征，如果代理服务器不能正确处理，则会暴露自己是一个代理。高匿代理就是能去除这些特征的代理。具体特征有三个：
@@ -151,6 +181,7 @@ Nginx收到的消息：
 ![](traffic_at_nginx.png)
 
 可以看到请求URL和`Proxy-Connection`都被正确处理了。
+
 
 
 ## 一些例子
