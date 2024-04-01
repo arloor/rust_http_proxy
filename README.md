@@ -142,19 +142,19 @@ req_from_out_total{referer="all",path="all"} 4
 cargo build --features jemalloc
 ```
 
-### 使用aws_lc_rs作为rustls加密后端
+### aws_lc_rs
 
-本项目默认使用ring作为加密后端，也可选择[aws_lc_rs](https://crates.io/crates/aws-lc-rs)作为加密后端。aws_lc_rs相比ring主要有两点优势:
+`aws_lc_rs` 和 `ring` 是 `rustls` 的两个加密后端。本项目默认使用 `ring` 作为加密后端，也可选择[aws_lc_rs](https://crates.io/crates/aws-lc-rs)作为加密后端。`aws_lc_rs` 相比ring主要有两点优势:
 
-1. 在[rustls的benchmark测试](https://github.com/aochagavia/rustls-bench-results)中，aws_lc_rs的性能要优于ring。
+1. 在[rustls的benchmark测试](https://github.com/aochagavia/rustls-bench-results)中，`aws_lc_rs` 的性能要优于 `ring` 。
 2. 支持美国联邦政府针对加密提出的[fips要求](https://csrc.nist.gov/pubs/fips/140-2/upd2/final)。
 
-不过，使用aws_lc_rs会增加一些编译难度，需要额外做以下操作：
+不过，使用 `aws_lc_rs` 会增加一些编译难度，需要额外做以下操作：
 
 | 依赖的包 | 是否必须 |安装方式 |
 | --- | --- | --- |
-| cmake | 必须 | `apt-get install cmake` |
-| clang | 非必需。仅在aws_lc_rs没有提供pre-generated bindings的target上需要，例如linux musl。详见：[the requirements for rust-bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html) |`apt-get install llvm-dev libclang-dev clang` 或 `apt-get install clang-13` |
+| `cmake` | 必须 | `apt-get install cmake` |
+| `clang` | 非必需。仅在 `aws_lc_rs` 没有提供pre-generated bindings的target上需要，例如 `linux musl` 。详见：[the requirements for rust-bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html) |`apt-get install llvm-dev libclang-dev clang` 或 `apt-get install clang-13` |
 
 激活方式：
 
