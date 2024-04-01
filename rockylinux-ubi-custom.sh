@@ -7,14 +7,15 @@ micromount=$(buildah mount $microcontainer)
 dnf install \
 --installroot $micromount \
 --releasever=9 \
+--config /etc/dnf/dnf.conf \
 --setopt install_weak_deps=false \
 --setopt=reposdir=/etc/yum.repos.d/ \
 --nodocs -y \
-net-tools
+gawk net-tools 
 dnf clean all \
 --installroot $micromount
 buildah umount $microcontainer
 buildah commit $microcontainer docker.io/arloor/ubi-micro-net-tools:latest
-podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest netstat -tulnp
+podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest /bin/sh
 podman login docker.io
 podman push docker.io/arloor/ubi-micro-net-tools:latest
