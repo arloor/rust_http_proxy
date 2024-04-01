@@ -83,7 +83,7 @@ curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7
 
 ### linux amd64 可执行文件
 
-> 通过Github Action自动更新release，永远是最新版，可放心使用
+> v0.1.2可能不是最新版本，请在release页面查看最新版本
 
 ```shell
 curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/v0.1.2/rust_http_proxy
