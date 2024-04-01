@@ -11,7 +11,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  USE_MUSL: false
+  USE_MUSL: true
 
 jobs:
   all:
@@ -30,7 +30,7 @@ jobs:
         with:
           musl_version: 1.2.5
           use_musl: ${{ env.USE_MUSL }}
-          extra_deps: cmake
+          extra_deps: cmake clang-13
           args: --no-default-features --features aws_lc_rs
       - name: docker build and push
         run: |
