@@ -20,5 +20,6 @@ buildah umount $microcontainer
 buildah commit $microcontainer docker.io/arloor/ubi-micro-net-tools:latest
 podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest netstat -tulnp
 podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest awk
+podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime&&echo "Asia/Shanghai" > /etc/timezone
 podman login docker.io
 podman push docker.io/arloor/ubi-micro-net-tools:latest
