@@ -290,22 +290,28 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io
 }
 
 fn _count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(r#"
-        netstat -ntp|grep -E "ESTABLISHED|CLOSE_WAIT"|awk -F "[ :]+"  -v OFS="" '$5<10000 && $5!="22" && $7>1024 {printf("%15s   => %15s:%-5s %s\n",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn
-        "#)
-        .output()
-        .expect("error call netstat");
+    match Command::new("sh")
+            .arg("-c")
+            .arg(r#"
+            netstat -ntp|grep -E "ESTABLISHED|CLOSE_WAIT"|awk -F "[ :]+"  -v OFS="" '$5<10000 && $5!="22" && $7>1024 {printf("%15s   => %15s:%-5s %s\n",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn
+            "#)
+            .output() {
+        Ok(output) => {
+            Response::builder()
+            .status(StatusCode::OK)
+            .header(http::header::SERVER, SERVER_NAME)
+            .header(http::header::REFRESH, "3")
+            .body(full_body(
+                String::from_utf8(output.stdout).unwrap_or("".to_string())
+                    + (&*String::from_utf8(output.stderr).unwrap_or("".to_string())),
+            ))
+        },
+        Err(_) => {
+            Ok(build_500_resp())
+        },
+    }
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(http::header::SERVER, SERVER_NAME)
-        .header(http::header::REFRESH, "3")
-        .body(full_body(
-            String::from_utf8(output.stdout).unwrap_or("".to_string())
-                + (&*String::from_utf8(output.stderr).unwrap_or("".to_string())),
-        ))
+    
 }
 
 fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
