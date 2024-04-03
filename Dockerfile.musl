@@ -1,10 +1,10 @@
-FROM alpine:latest as builder
+FROM alpine as builder
 RUN apk add --no-cache tzdata; \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
     echo "Asia/Shanghai" > /etc/timezone; \
     apk del tzdata
 
-FROM scratch AS final
+FROM scratch
 COPY --from=builder /etc/timezone /etc/timezone
 COPY --from=builder /etc/localtime /etc/localtime
 COPY target/x86_64-unknown-linux-musl/release/rust_http_proxy /
