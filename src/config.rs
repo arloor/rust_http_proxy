@@ -175,19 +175,24 @@ fn log_config(config: &Config) {
 #[cfg(unix)]
 fn get_hostname() -> String {
     use std::process::Command;
-    let output = Command::new("sh")
+    let result = Command::new("sh")
         .arg("-c")
         .arg(
             r#"
                 hostname
                 "#,
         )
-        .output()
-        .expect("error calling hostname");
-    String::from_utf8(output.stdout)
-        .unwrap_or("unknown".to_string())
-        .trim()
-        .to_owned()
+        .output();
+    match result {
+        Ok(output) => String::from_utf8(output.stdout)
+            .unwrap_or("unknown".to_string())
+            .trim()
+            .to_owned(),
+        Err(e) => {
+            warn!("get hostname error: {}",e);
+            "unknown".to_string()
+        }
+    }
 }
 
 #[cfg(windows)]
