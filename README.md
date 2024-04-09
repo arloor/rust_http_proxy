@@ -154,12 +154,23 @@ cargo build --features jemalloc
 | 依赖的包 | 是否必须 |安装方式 |
 | --- | --- | --- |
 | `cmake` | 必须 | `apt-get install cmake` |
-| `clang` | 非必需。仅在 `aws_lc_rs` 没有提供pre-generated bindings的target上需要，例如 `linux musl` 。详见：[the requirements for rust-bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html) |`apt-get install clang` |
+| `clang` | 非必需。仅在 `aws_lc_rs` 没有提供pre-generated bindings的target上需要，详见：[the requirements for rust-bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html)。另外还需要激活 `aws-lc-rs/bindgen`（见备注）。 |`apt-get install clang` |
 
 激活方式：
 
 ```bash
 cargo build --no-default-features --features aws_lc_rs
+```
+
+**备注**：激活 `aws-lc-rs/bindgen`:
+
+```toml
+[target.'cfg(target_env = "musl")'.dependencies]
+aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
+
+[features]
+# aws_lc_rs = ["tokio-rustls/aws-lc-rs"]
+aws_lc_rs = ["tokio-rustls/aws-lc-rs","aws-lc-rs/bindgen"]
 ```
 
 ## 高匿实现
