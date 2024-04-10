@@ -14,6 +14,7 @@
 8. 支持多端口，多用户。
 9. 连接空闲（2分钟没有IO）自动关闭。
 10. 可选feature：jemalloc内存分配器。使用`cargo build --features jemalloc`命令编译以激活
+11. 支持Accept-Ranges以支持断点续传（备注：暂不支持多range，例如 `Range: bytes=0-100,100-` ）
 
 提及的参数详见[命令行参数](#命令行参数)
 
