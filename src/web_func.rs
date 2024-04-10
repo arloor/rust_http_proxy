@@ -21,6 +21,7 @@ use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
+use regex::Regex;
 use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
@@ -30,7 +31,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
-use tokio::io::BufStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 
@@ -213,6 +214,7 @@ async fn serve_path(
     let mut builder = Response::builder()
         .header(http::header::CONTENT_TYPE, content_type.clone())
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
+        .header(http::header::ACCEPT_RANGES, "bytes")
         .header(http::header::SERVER, SERVER_NAME);
 
     // 判断客户端是否支持gzip
@@ -237,18 +239,104 @@ async fn serve_path(
         return builder.body(empty_body());
     }
 
-    let file = match File::open(path).await {
+    let mut file = match File::open(path).await {
         Ok(file) => file,
         Err(_) => return not_found(),
     };
+
+    let file_size = meta.len();
+    let mut start = 0;
+    let mut end = file_size - 1;
+    if let Some(range_header) = req.headers().get(http::header::RANGE) {
+        let range_value = range_header.to_str().unwrap();
+        // 仅支持单个range，不支持多个range
+        let re = Regex::new(r"^bytes=(\d*)-(\d*)$").unwrap();
+        // 使用正则表达式匹配字符串并捕获组
+        let caps = re.captures(range_value);
+        match caps {
+            Some(caps) => {
+                // 捕获组可以通过索引访问，索引0是整个匹配，索引1开始是捕获的组
+                let left = caps.get(1).map_or("", |m| m.as_str());
+                let right = caps.get(2).map_or("", |m| m.as_str());
+
+                info!("fetch {} range: {}-{}", url_path, left, right);
+                if left.is_empty() {
+                    if !right.is_empty() {
+                        // suffix-length格式，例如bytes=-100
+                        let right = right.parse::<u64>().unwrap();
+                        if right < file_size {
+                            start = file_size - right;
+                        } else {
+                            let msg = "suffix-length bigger than file size";
+                            warn!("{}:{}", msg,range_value);
+                            return Response::builder()
+                                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                                .header(http::header::SERVER, SERVER_NAME)
+                                .body(full_body(msg));
+                        }
+                    }
+                } else {
+                    // start-end格式，例如bytes=100-200或bytes=100-
+                    start = left.parse::<u64>().unwrap();
+                    if !right.is_empty() {
+                        end = right.parse::<u64>().unwrap();
+                    }
+                }
+            }
+            None => {
+                let msg = "invalid range";
+                warn!("fetch {} error: {}: {}", url_path,msg, range_value);
+                return Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(http::header::SERVER, SERVER_NAME)
+                    .body(full_body(msg));
+            }
+        }
+
+        builder = builder
+            .header(
+                http::header::CONTENT_RANGE,
+                format!("bytes {}-{}/{}", start, end, file_size),
+            )
+            .status(http::StatusCode::PARTIAL_CONTENT);
+    }
+    if end < start {
+        let msg = "end must be greater than or equal to start";
+        warn!("{}:{}-{}/{}", msg,start,end,file_size);
+        return Response::builder()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(http::header::SERVER, SERVER_NAME)
+            .body(full_body(msg));
+    }
+    if end >= file_size {
+        let msg = "end must be less than file length";
+        warn!("{}:{}-{}/{}", msg,start,end,file_size);
+        return Response::builder()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(http::header::SERVER, SERVER_NAME)
+            .body(full_body(msg));
+    }
+
+    if start != 0 {
+        if let Err(e) = file.seek(io::SeekFrom::Start(start)).await {
+            warn!("seek file error: {}", e);
+            return Ok(build_500_resp());
+        };
+    }
+    let dyn_async_read: Box<dyn AsyncRead + Unpin + Send + Sync> = if end != file_size - 1 {
+        Box::new(file.take(end - start + 1))
+    } else {
+        Box::new(file)
+    };
+
     if need_gzip {
-        let buf_stream = BufStream::new(file);
+        let buf_stream = BufReader::new(dyn_async_read);
         let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
-        let reader_stream = ReaderStream::new(encoder);
+        let reader_stream: ReaderStream<GzipEncoder<_>> = ReaderStream::new(encoder);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
     } else {
-        let reader_stream = ReaderStream::new(file);
+        let reader_stream = ReaderStream::new(dyn_async_read);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
     }
@@ -310,8 +398,6 @@ fn _count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
             Ok(build_500_resp())
         },
     }
-
-    
 }
 
 fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
