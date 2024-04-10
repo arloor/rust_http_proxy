@@ -17,7 +17,6 @@ use hyper::header::{CONTENT_ENCODING, REFERER};
 use hyper::{http, Method, Request, Response, StatusCode};
 use log::{info, warn};
 use mime_guess::from_path;
-use pin_project_lite::pin_project;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
@@ -27,13 +26,11 @@ use std::io;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::process::Command;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader, Take};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 
@@ -241,7 +238,7 @@ async fn serve_path(
         return builder.body(empty_body());
     }
 
-    let file = match File::open(path).await {
+    let mut file = match File::open(path).await {
         Ok(file) => file,
         Err(_) => return not_found(),
     };
@@ -266,72 +263,40 @@ async fn serve_path(
             )
             .status(http::StatusCode::PARTIAL_CONTENT);
     }
-
-    match RangeFile::new(file, start, end, file_size).await {
-        Ok(range_file) => {
-            if need_gzip {
-                let buf_stream = BufReader::new(range_file);
-                let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
-                let reader_stream: ReaderStream<GzipEncoder<_>> = ReaderStream::new(encoder);
-                let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-                builder.body(stream_body.boxed())
-            } else {
-                let reader_stream = ReaderStream::new(range_file);
-                let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-                builder.body(stream_body.boxed())
-            }
-        }
-        Err(e) => {
-            warn!("range file error: {}", e);
-            Ok(build_500_resp())
-        }
+    if end < start {
+        let msg = "end must be greater than or equal to start";
+        warn!("{}", msg);
+        return Response::builder()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(http::header::SERVER, SERVER_NAME)
+            .body(full_body(msg));
     }
-}
+    if end >= file_size {
+        let msg = "end must be less than file length";
+        warn!("{}", msg);
+        return Response::builder()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(http::header::SERVER, SERVER_NAME)
+            .body(full_body(msg));
+    }
 
-pin_project! {
-struct RangeFile {
-    #[pin]
-    file: Take<File>,
-    start: u64,
-    current: u64, // 当前读取位置
-    end: u64,
-}
-}
-
-impl RangeFile {
-    async fn new(mut file: File, start: u64, end: u64, len: u64) -> io::Result<RangeFile> {
-        if end < start {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "end must be greater than or equal to start",
-            ));
-        }
-        if end >= len {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "end must be less than  file length",
-            ));
-        }
-
-        file.seek(io::SeekFrom::Start(start)).await?;
-        let take = file.take(end - start + 1);
-        let range_file = RangeFile {
-            file: take,
-            start,
-            current: start,
-            end,
+    if start != 0 {
+        if let Err(e) = file.seek(io::SeekFrom::Start(start)).await {
+            warn!("seek file error: {}", e);
+            return Ok(build_500_resp());
         };
-        Ok(range_file)
     }
-}
-
-impl AsyncRead for RangeFile {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<Result<(), io::Error>> {
-        self.project().file.poll_read(cx, buf)
+    let take = file.take(end - start + 1);
+    if need_gzip {
+        let buf_stream = BufReader::new(take);
+        let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
+        let reader_stream: ReaderStream<GzipEncoder<_>> = ReaderStream::new(encoder);
+        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+        builder.body(stream_body.boxed())
+    } else {
+        let reader_stream = ReaderStream::new(take);
+        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+        builder.body(stream_body.boxed())
     }
 }
 
