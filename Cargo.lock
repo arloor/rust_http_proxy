@@ -1073,6 +1073,7 @@ dependencies = [
  "pin-project-lite",
  "prometheus-client",
  "rand",
+ "regex",
  "rustls-pemfile",
  "socket2",
  "tokio",

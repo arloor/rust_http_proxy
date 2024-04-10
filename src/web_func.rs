@@ -21,6 +21,7 @@ use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
+use regex::Regex;
 use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
@@ -257,15 +258,48 @@ async fn serve_path(
                 .header(http::header::SERVER, SERVER_NAME)
                 .body(full_body(msg));
         }
-        // 假设Range头部格式为"bytes=start-end"
-        let parts: Vec<&str> = range_value
-            .trim_start_matches("bytes=")
-            .split('-')
-            .collect();
-        start = parts
-            .first()
-            .map_or(start, |e| e.parse::<u64>().unwrap_or(start));
-        end = parts.get(1).map_or(end, |e| e.parse().unwrap_or(end));
+        // 编译正则表达式，并处理可能的错误
+        let re = Regex::new(r"bytes=(\d*)-(\d*)").unwrap();
+
+        // 使用正则表达式匹配字符串并捕获组
+        let caps = re.captures(range_value);
+        match caps {
+            Some(caps) => {
+                // 捕获组可以通过索引访问，索引0是整个匹配，索引1开始是捕获的组
+                let left = caps.get(1).map_or("", |m| m.as_str());
+                let right = caps.get(2).map_or("", |m| m.as_str());
+
+                println!("range_value: {}-{}", left, right);
+                if left.is_empty() {
+                    if !right.is_empty() { // suffix-length格式，例如bytes=-100
+                        let right = right.parse::<u64>().unwrap();
+                        if right < file_size {
+                            start = file_size - right;
+                        } else {
+                            let msg = "suffix-length bigger than file size";
+                            warn!("{}", msg);
+                            return Response::builder()
+                                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                                .header(http::header::SERVER, SERVER_NAME)
+                                .body(full_body(msg));
+                        }
+                    }
+                } else { // start-end格式，例如bytes=100-200或bytes=100-
+                    start = left.parse::<u64>().unwrap();
+                    if !right.is_empty() {
+                        end = right.parse::<u64>().unwrap();
+                    }
+                }
+            }
+            None => {
+                let msg = "invalid range";
+                warn!("{}", msg);
+                return Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(http::header::SERVER, SERVER_NAME)
+                    .body(full_body(msg));
+            }
+        }
 
         builder = builder
             .header(
