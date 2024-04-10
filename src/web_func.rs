@@ -30,7 +30,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 
@@ -253,8 +253,10 @@ async fn serve_path(
             .trim_start_matches("bytes=")
             .split('-')
             .collect();
-        start = parts.first().map_or(0, |e| e.parse().unwrap());
-        end = parts.get(1).map_or(file_size - 1, |e| e.parse().unwrap());
+        start = parts
+            .first()
+            .map_or(start, |e| e.parse::<u64>().unwrap_or(start));
+        end = parts.get(1).map_or(end, |e| e.parse().unwrap_or(end));
 
         builder = builder
             .header(
@@ -286,15 +288,20 @@ async fn serve_path(
             return Ok(build_500_resp());
         };
     }
-    let take = file.take(end - start + 1);
+    let dyn_async_read: Box<dyn AsyncRead + Unpin + Send + Sync> = if end != file_size - 1 {
+        Box::new(file.take(end - start + 1))
+    } else {
+        Box::new(file)
+    };
+
     if need_gzip {
-        let buf_stream = BufReader::new(take);
+        let buf_stream = BufReader::new(dyn_async_read);
         let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
         let reader_stream: ReaderStream<GzipEncoder<_>> = ReaderStream::new(encoder);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
     } else {
-        let reader_stream = ReaderStream::new(take);
+        let reader_stream = ReaderStream::new(dyn_async_read);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
     }
