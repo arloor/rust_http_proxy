@@ -59,8 +59,8 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    // 使用ring作为rustls的默认加密库
-    #[cfg(feature = "ring")]
+    // 没有激活aws_lc_rs时，使用ring作为rustls的默认加密库
+    #[cfg(not(feature = "aws_lc_rs"))]
     let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
     let proxy_config: &'static Config = load_config();
     handle_signal()?;
