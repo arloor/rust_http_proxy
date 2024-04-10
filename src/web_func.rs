@@ -17,6 +17,7 @@ use hyper::header::{CONTENT_ENCODING, REFERER};
 use hyper::{http, Method, Request, Response, StatusCode};
 use log::{info, warn};
 use mime_guess::from_path;
+use pin_project_lite::pin_project;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
@@ -26,11 +27,13 @@ use std::io;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process::Command;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
-use tokio::io::BufStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader, Take};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 
@@ -213,6 +216,7 @@ async fn serve_path(
     let mut builder = Response::builder()
         .header(http::header::CONTENT_TYPE, content_type.clone())
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
+        .header(http::header::ACCEPT_RANGES, "bytes")
         .header(http::header::SERVER, SERVER_NAME);
 
     // 判断客户端是否支持gzip
@@ -241,16 +245,93 @@ async fn serve_path(
         Ok(file) => file,
         Err(_) => return not_found(),
     };
-    if need_gzip {
-        let buf_stream = BufStream::new(file);
-        let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
-        let reader_stream = ReaderStream::new(encoder);
-        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-        builder.body(stream_body.boxed())
-    } else {
-        let reader_stream = ReaderStream::new(file);
-        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-        builder.body(stream_body.boxed())
+
+    let file_size = meta.len();
+    let mut start = 0;
+    let mut end = file_size - 1;
+    if let Some(range_header) = req.headers().get(http::header::RANGE) {
+        let range_value = range_header.to_str().unwrap();
+        // 假设Range头部格式为"bytes=start-end"
+        let parts: Vec<&str> = range_value
+            .trim_start_matches("bytes=")
+            .split('-')
+            .collect();
+        start = parts.first().map_or(0, |e| e.parse().unwrap());
+        end = parts.get(1).map_or(file_size - 1, |e| e.parse().unwrap());
+
+        builder = builder
+            .header(
+                "Content-Range",
+                format!("bytes {}-{}/{}", start, end, file_size),
+            )
+            .status(http::StatusCode::PARTIAL_CONTENT);
+    }
+
+    match RangeFile::new(file, start, end, file_size).await {
+        Ok(range_file) => {
+            if need_gzip {
+                let buf_stream = BufReader::new(range_file);
+                let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
+                let reader_stream: ReaderStream<GzipEncoder<_>> = ReaderStream::new(encoder);
+                let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+                builder.body(stream_body.boxed())
+            } else {
+                let reader_stream = ReaderStream::new(range_file);
+                let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+                builder.body(stream_body.boxed())
+            }
+        }
+        Err(e) => {
+            warn!("range file error: {}", e);
+            Ok(build_500_resp())
+        }
+    }
+}
+
+pin_project! {
+struct RangeFile {
+    #[pin]
+    file: Take<File>,
+    start: u64,
+    current: u64, // 当前读取位置
+    end: u64,
+}
+}
+
+impl RangeFile {
+    async fn new(mut file: File, start: u64, end: u64, len: u64) -> io::Result<RangeFile> {
+        if end < start {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "end must be greater than or equal to start",
+            ));
+        }
+        if end >= len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "end must be less than  file length",
+            ));
+        }
+
+        file.seek(io::SeekFrom::Start(start)).await?;
+        let take = file.take(end - start + 1);
+        let range_file = RangeFile {
+            file: take,
+            start,
+            current: start,
+            end,
+        };
+        Ok(range_file)
+    }
+}
+
+impl AsyncRead for RangeFile {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        self.project().file.poll_read(cx, buf)
     }
 }
 
@@ -310,8 +391,6 @@ fn _count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
             Ok(build_500_resp())
         },
     }
-
-    
 }
 
 fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {

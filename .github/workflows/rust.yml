@@ -2,7 +2,7 @@ name: auto_release
 
 on:
   push:
-    branches: [ "master", "test-idle" ]
+    branches: [ "master"]
   pull_request:
     branches: [ "master" ]
 
