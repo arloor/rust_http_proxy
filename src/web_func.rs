@@ -249,18 +249,8 @@ async fn serve_path(
     let mut end = file_size - 1;
     if let Some(range_header) = req.headers().get(http::header::RANGE) {
         let range_value = range_header.to_str().unwrap();
-        // 如果range_value中的 '-' 个数不等于1，则报错
-        if range_value.matches('-').count() != 1 {
-            let msg = "limitation: do not support multiple range";
-            warn!("{}", msg);
-            return Response::builder()
-                .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                .header(http::header::SERVER, SERVER_NAME)
-                .body(full_body(msg));
-        }
-        // 编译正则表达式，并处理可能的错误
-        let re = Regex::new(r"bytes=(\d*)-(\d*)").unwrap();
-
+        // 仅支持单个range，不支持多个range
+        let re = Regex::new(r"^bytes=(\d*)-(\d*)$").unwrap();
         // 使用正则表达式匹配字符串并捕获组
         let caps = re.captures(range_value);
         match caps {
@@ -269,22 +259,24 @@ async fn serve_path(
                 let left = caps.get(1).map_or("", |m| m.as_str());
                 let right = caps.get(2).map_or("", |m| m.as_str());
 
-                println!("range_value: {}-{}", left, right);
+                info!("fetch {} range: {}-{}", url_path, left, right);
                 if left.is_empty() {
-                    if !right.is_empty() { // suffix-length格式，例如bytes=-100
+                    if !right.is_empty() {
+                        // suffix-length格式，例如bytes=-100
                         let right = right.parse::<u64>().unwrap();
                         if right < file_size {
                             start = file_size - right;
                         } else {
                             let msg = "suffix-length bigger than file size";
-                            warn!("{}", msg);
+                            warn!("{}:{}", msg,range_value);
                             return Response::builder()
                                 .status(StatusCode::RANGE_NOT_SATISFIABLE)
                                 .header(http::header::SERVER, SERVER_NAME)
                                 .body(full_body(msg));
                         }
                     }
-                } else { // start-end格式，例如bytes=100-200或bytes=100-
+                } else {
+                    // start-end格式，例如bytes=100-200或bytes=100-
                     start = left.parse::<u64>().unwrap();
                     if !right.is_empty() {
                         end = right.parse::<u64>().unwrap();
@@ -293,7 +285,7 @@ async fn serve_path(
             }
             None => {
                 let msg = "invalid range";
-                warn!("{}", msg);
+                warn!("fetch {} error: {}: {}", url_path,msg, range_value);
                 return Response::builder()
                     .status(StatusCode::RANGE_NOT_SATISFIABLE)
                     .header(http::header::SERVER, SERVER_NAME)
@@ -303,14 +295,14 @@ async fn serve_path(
 
         builder = builder
             .header(
-                "Content-Range",
+                http::header::CONTENT_RANGE,
                 format!("bytes {}-{}/{}", start, end, file_size),
             )
             .status(http::StatusCode::PARTIAL_CONTENT);
     }
     if end < start {
         let msg = "end must be greater than or equal to start";
-        warn!("{}", msg);
+        warn!("{}:{}-{}/{}", msg,start,end,file_size);
         return Response::builder()
             .status(StatusCode::RANGE_NOT_SATISFIABLE)
             .header(http::header::SERVER, SERVER_NAME)
@@ -318,7 +310,7 @@ async fn serve_path(
     }
     if end >= file_size {
         let msg = "end must be less than file length";
-        warn!("{}", msg);
+        warn!("{}:{}-{}/{}", msg,start,end,file_size);
         return Response::builder()
             .status(StatusCode::RANGE_NOT_SATISFIABLE)
             .header(http::header::SERVER, SERVER_NAME)
