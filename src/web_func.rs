@@ -248,6 +248,15 @@ async fn serve_path(
     let mut end = file_size - 1;
     if let Some(range_header) = req.headers().get(http::header::RANGE) {
         let range_value = range_header.to_str().unwrap();
+        // 如果range_value中的 '-' 个数不等于1，则报错
+        if range_value.matches('-').count() != 1 {
+            let msg = "limitation: do not support multiple range";
+            warn!("{}", msg);
+            return Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(http::header::SERVER, SERVER_NAME)
+                .body(full_body(msg));
+        }
         // 假设Range头部格式为"bytes=start-end"
         let parts: Vec<&str> = range_value
             .trim_start_matches("bytes=")
