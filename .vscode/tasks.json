@@ -9,7 +9,8 @@
 			],
 			"args": [
 				// "--features","jemalloc"
-				// "--features","aws_lc_rs"
+				// "--no-default-features",
+				"--features","aws_lc_rs"
 			],
 			"group": {
 				"kind": "build",
