@@ -160,10 +160,7 @@ pub(crate) fn load_config() -> &'static Config {
     info!("hostname seems to be {}", config.hostname);
     let config = Config::from(config);
     log_config(&config);
-    info!(
-        "auto close connection after idle for {} seconds",
-        IDLE_SECONDS
-    );
+    info!("auto close connection after idle for {IDLE_SECONDS} seconds",);
     return Box::leak(Box::new(config));
 }
 
