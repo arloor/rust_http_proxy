@@ -23,3 +23,5 @@ podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest a
 podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime&&echo "Asia/Shanghai" > /etc/timezone
 podman login docker.io
 podman push docker.io/arloor/ubi-micro-net-tools:latest
+buildah rm -a
+buildah prune -a
