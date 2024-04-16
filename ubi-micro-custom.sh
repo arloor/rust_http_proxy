@@ -24,8 +24,8 @@ buildah umount $microcontainer
 buildah commit $microcontainer ${out_image}
 podman run --rm -it --network host ${out_image} netstat -tulnp
 podman run --rm -it --network host ${out_image} awk
-podman run --rm -it --network host ${out_image} cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime&&echo "Asia/Shanghai" > /etc/timezone
+podman run --rm -it --network host ${out_image} cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime&&echo "Asia/Shanghai" > /etc/timezone&&date
 podman login docker.io
 podman push ${out_image}
 buildah rm -a
-buildah prune -a
+buildah prune -a 2>/dev/null
