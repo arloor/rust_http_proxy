@@ -398,7 +398,8 @@ fn _count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
                     + (&*String::from_utf8(output.stderr).unwrap_or("".to_string())),
             ))
         },
-        Err(_) => {
+        Err(e) => {
+            warn!("sh -c error: {}", e);
             Ok(build_500_resp())
         },
     }
