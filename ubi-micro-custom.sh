@@ -2,9 +2,13 @@
 # 从ubi-micro镜像构建一个只有net-tools的镜像
 # https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html-single/building_running_and_managing_containers/index#proc_using-the-ubi-micro-images_assembly_adding-software-to-a-ubi-container
 
+# base_image="docker.io/redhat/ubi9-micro:latest"
+base_image="docker.io/rockylinux/rockylinux:9-ubi-micro"
+out_tag="latest"
+out_image="docker.io/arloor/ubi-micro-net-tools:${out_tag}"
+
 yum install -y container-tools
-# microcontainer=$(buildah from docker.io/rockylinux/rockylinux:9-ubi-micro)
-microcontainer=$(buildah from docker.io/redhat/ubi9-micro:latest)
+microcontainer=$(buildah from ${base_image})
 micromount=$(buildah mount $microcontainer)
 dnf install \
 --installroot $micromount \
@@ -17,11 +21,11 @@ gawk net-tools tzdata
 dnf clean all \
 --installroot $micromount
 buildah umount $microcontainer
-buildah commit $microcontainer docker.io/arloor/ubi-micro-net-tools:latest
-podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest netstat -tulnp
-podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest awk
-podman run --rm -it --network host docker.io/arloor/ubi-micro-net-tools:latest cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime&&echo "Asia/Shanghai" > /etc/timezone
+buildah commit $microcontainer ${out_image}
+podman run --rm -it --network host ${out_image} netstat -tulnp
+podman run --rm -it --network host ${out_image} awk
+podman run --rm -it --network host ${out_image} cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime&&echo "Asia/Shanghai" > /etc/timezone
 podman login docker.io
-podman push docker.io/arloor/ubi-micro-net-tools:latest
+podman push ${out_image}
 buildah rm -a
 buildah prune -a
