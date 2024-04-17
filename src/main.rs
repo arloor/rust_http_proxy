@@ -165,8 +165,6 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     client_socket_addr: SocketAddr,
 ) {
     let binding = auto::Builder::new(TokioExecutor::new());
-    // let context = Arc::new(RwLock::new(Context::default()));
-    // let context_c = context.clone();
     let timed_io = TimeoutIO::new(io, Duration::from_secs(IDLE_SECONDS));
     let timed_io = Box::pin(timed_io);
     let connection = binding.serve_connection_with_upgrades(
@@ -177,43 +175,12 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
                 config,
                 client_socket_addr,
                 proxy_handler.clone(),
-                // context.clone(),
             )
         }),
     );
     if let Err(err) = connection.await {
         handle_hyper_error(client_socket_addr, err);
     }
-    // tokio::pin!(connection);
-    // loop {
-    //     let (last_instant, upgraded) = context_c.read().unwrap().snapshot();
-    //     if upgraded {
-    //         if let Err(err) = connection.as_mut().await {
-    //             handle_hyper_error(client_socket_addr, err);
-    //         }
-    //     } else {
-    //         tokio::select! {
-    //             res = connection.as_mut() => {
-    //                 if let Err(err)=res{
-    //                     handle_hyper_error(client_socket_addr,err);
-    //                 }
-    //                 break;
-    //             }
-    //             _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
-    //                 let (instant,upgraded) = context_c.read().unwrap().snapshot();
-    //                 if upgraded {
-    //                     info!("upgraded from {}",client_socket_addr);
-    //                     continue;
-    //                 }else if instant <= last_instant {
-    //                     let formatted_client_addr = format_socket_addr(&client_socket_addr," ");
-    //                     info!("idle for {} seconds, graceful shutdown [{}]",IDLE_SECONDS,formatted_client_addr);
-    //                     connection.as_mut().graceful_shutdown();
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 /// 代理请求
@@ -229,12 +196,9 @@ async fn proxy(
     config: &'static Config,
     client_socket_addr: SocketAddr,
     proxy_handler: ProxyHandler,
-    // context: Arc<RwLock<Context>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler
-        .proxy(req, config, client_socket_addr, 
-            // context
-        )
+        .proxy(req, config, client_socket_addr)
         .await
 }
 
