@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, web_func, Config, Context, LOCAL_IP
+    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, timeout_io::TimeoutIO, web_func, Config, Context, LOCAL_IP
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
@@ -24,7 +24,6 @@ use prometheus_client::{
 };
 use rand::Rng;
 use tokio::{net::TcpStream, pin};
-use tokio_io_timeout::TimeoutStream;
 
 #[derive(Clone)]
 pub struct ProxyHandler {
@@ -263,22 +262,21 @@ impl ProxyHandler {
     }
 }
 
-const TUNNEL_TIMEOUT: Duration = Duration::from_secs(600);
+const TUNNEL_TIMEOUT: Duration = Duration::from_secs(120);
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
 async fn tunnel(
     upgraded: Upgraded,
-    mut target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+    target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
 ) -> io::Result<()> {
-    let mut upgraded = TokioIo::new(upgraded);
+    let upgraded = TokioIo::new(upgraded);
     // Proxying data
-   let mut timed_target_io= TimeoutStream::new(&mut target_io);
-   timed_target_io.set_read_timeout(Some(TUNNEL_TIMEOUT));
+   let timed_target_io= TimeoutIO::new(target_io,TUNNEL_TIMEOUT);
    pin!(timed_target_io);
-   let mut timed_upgraded= TimeoutStream::new(&mut upgraded);
-   timed_upgraded.set_read_timeout(Some(TUNNEL_TIMEOUT));
+   let timed_upgraded= TimeoutIO::new(upgraded,TUNNEL_TIMEOUT);
+   pin!(timed_upgraded);
     let (_from_client, _from_server) =
-        tokio::io::copy_bidirectional(&mut upgraded, &mut timed_target_io).await?;
+        tokio::io::copy_bidirectional(&mut timed_upgraded, &mut timed_target_io).await?;
     Ok(())
 }
 /// Returns the host and port of the given URI.

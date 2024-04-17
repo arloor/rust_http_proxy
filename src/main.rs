@@ -12,6 +12,7 @@ mod web_func;
 mod macros;
 mod config;
 mod context;
+mod timeout_io;
 
 use crate::config::Config;
 
