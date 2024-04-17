@@ -3,11 +3,13 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
-    sync::{Arc, RwLock}, time::Duration,
+    sync::Arc,
+    time::Duration,
 };
 
 use crate::{
-    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, timeout_io::TimeoutIO, web_func, Config, Context, LOCAL_IP
+    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, timeout_io::TimeoutIO,
+    web_func, Config, LOCAL_IP,
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
@@ -58,9 +60,9 @@ impl ProxyHandler {
         mut req: Request<hyper::body::Incoming>,
         proxy_config: &'static Config,
         client_socket_addr: SocketAddr,
-        context: Arc<RwLock<Context>>,
+        // context: Arc<RwLock<Context>>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        context.write().unwrap().refresh();
+        // context.write().unwrap().refresh();
         let basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
         if Method::CONNECT != req.method() {
@@ -149,7 +151,7 @@ impl ProxyHandler {
             };
         }
         if Method::CONNECT == req.method() {
-            context.write().unwrap().set_upgraded(true);
+            // context.write().unwrap().set_upgraded(true);
             // Received an HTTP request like:
             // ```
             // CONNECT www.domain.com:443 HTTP/1.1
@@ -184,7 +186,7 @@ impl ProxyHandler {
                                     );
                                     if let Err(e) = tunnel(upgraded, target_stream).await {
                                         // if e.kind() != ErrorKind::TimedOut {
-                                            warn!("[tunnel io error] [{}] : {} ", access_tag, e);
+                                        warn!("[tunnel io error] [{}] : {} ", access_tag, e);
                                         // }
                                     };
                                 }
@@ -262,21 +264,17 @@ impl ProxyHandler {
     }
 }
 
-const TUNNEL_TIMEOUT: Duration = Duration::from_secs(120);
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
 async fn tunnel(
     upgraded: Upgraded,
     target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
 ) -> io::Result<()> {
-    let upgraded = TokioIo::new(upgraded);
-    // Proxying data
-   let timed_target_io= TimeoutIO::new(target_io,TUNNEL_TIMEOUT);
-   pin!(timed_target_io);
-   let timed_upgraded= TimeoutIO::new(upgraded,TUNNEL_TIMEOUT);
-   pin!(timed_upgraded);
+    let mut upgraded = TokioIo::new(upgraded);
+    let timed_target_io = TimeoutIO::new(target_io, Duration::from_secs(crate::IDLE_SECONDS));
+    pin!(timed_target_io);
     let (_from_client, _from_server) =
-        tokio::io::copy_bidirectional(&mut timed_upgraded, &mut timed_target_io).await?;
+        tokio::io::copy_bidirectional(&mut upgraded, &mut timed_target_io).await?;
     Ok(())
 }
 /// Returns the host and port of the given URI.

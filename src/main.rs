@@ -11,12 +11,12 @@ mod web_func;
 #[macro_use]
 mod macros;
 mod config;
-mod context;
 mod timeout_io;
 
 use crate::config::Config;
 
 use crate::ip_x::local_ip;
+use crate::timeout_io::TimeoutIO;
 use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
 
@@ -25,7 +25,6 @@ use futures_util::future::select_all;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 // use hyper::server::conn::http1;
-use context::Context;
 use hyper::service::service_fn;
 use hyper::{Error, Request, Response};
 use hyper_util::rt::tokio::{TokioExecutor, TokioIo};
@@ -38,13 +37,12 @@ use std::error::Error as stdError;
 use std::io;
 use std::net::SocketAddr;
 
-use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
 const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
-const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 120 } else { 5 }; // 3 minutes
+pub(crate) const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 180 } else { 5 }; // 3 minutes
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
@@ -135,10 +133,9 @@ async fn bootstrap(
                 conn = acceptor.accept() => {
                     match conn {
                         Ok((conn,client_socket_addr)) => {
-                            let io = TokioIo::new(conn);
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
-                                serve(io, proxy_handler, config, client_socket_addr).await;
+                                serve(conn, proxy_handler, config, client_socket_addr).await;
                             });
                         }
                         Err(err) => {
@@ -152,10 +149,9 @@ async fn bootstrap(
         let tcp_listener = create_dual_stack_listener(port).await?;
         loop {
             if let Ok((tcp_stream, client_socket_addr)) = tcp_listener.accept().await {
-                let io = TokioIo::new(tcp_stream);
                 let proxy_handler = proxy_handler.clone();
                 tokio::task::spawn(async move {
-                    serve(io, proxy_handler, config, client_socket_addr).await;
+                    serve(tcp_stream, proxy_handler, config, client_socket_addr).await;
                 });
             }
         }
@@ -163,56 +159,61 @@ async fn bootstrap(
 }
 
 async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
-    io: TokioIo<T>,
+    io: T,
     proxy_handler: ProxyHandler,
     config: &'static Config,
     client_socket_addr: SocketAddr,
 ) {
     let binding = auto::Builder::new(TokioExecutor::new());
-    let context = Arc::new(RwLock::new(Context::default()));
-    let context_c = context.clone();
+    // let context = Arc::new(RwLock::new(Context::default()));
+    // let context_c = context.clone();
+    let timed_io = TimeoutIO::new(io, Duration::from_secs(IDLE_SECONDS));
+    let timed_io = Box::pin(timed_io);
     let connection = binding.serve_connection_with_upgrades(
-        io,
+        TokioIo::new(timed_io),
         service_fn(move |req| {
             proxy(
                 req,
                 config,
                 client_socket_addr,
                 proxy_handler.clone(),
-                context.clone(),
+                // context.clone(),
             )
         }),
     );
-    tokio::pin!(connection);
-    loop {
-        let (last_instant, upgraded) = context_c.read().unwrap().snapshot();
-        if upgraded {
-            if let Err(err) = connection.as_mut().await {
-                handle_hyper_error(client_socket_addr, err);
-            }
-        } else {
-            tokio::select! {
-                res = connection.as_mut() => {
-                    if let Err(err)=res{
-                        handle_hyper_error(client_socket_addr,err);
-                    }
-                    break;
-                }
-                _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
-                    let (instant,upgraded) = context_c.read().unwrap().snapshot();
-                    if upgraded {
-                        info!("upgraded from {}",client_socket_addr);
-                        continue;
-                    }else if instant <= last_instant {
-                        let formatted_client_addr = format_socket_addr(&client_socket_addr," ");
-                        info!("idle for {} seconds, graceful shutdown [{}]",IDLE_SECONDS,formatted_client_addr);
-                        connection.as_mut().graceful_shutdown();
-                        break;
-                    }
-                }
-            }
-        }
+    if let Err(err) = connection.await {
+        handle_hyper_error(client_socket_addr, err);
     }
+    // tokio::pin!(connection);
+    // loop {
+    //     let (last_instant, upgraded) = context_c.read().unwrap().snapshot();
+    //     if upgraded {
+    //         if let Err(err) = connection.as_mut().await {
+    //             handle_hyper_error(client_socket_addr, err);
+    //         }
+    //     } else {
+    //         tokio::select! {
+    //             res = connection.as_mut() => {
+    //                 if let Err(err)=res{
+    //                     handle_hyper_error(client_socket_addr,err);
+    //                 }
+    //                 break;
+    //             }
+    //             _ = tokio::time::sleep_until(last_instant+Duration::from_secs(IDLE_SECONDS)) => {
+    //                 let (instant,upgraded) = context_c.read().unwrap().snapshot();
+    //                 if upgraded {
+    //                     info!("upgraded from {}",client_socket_addr);
+    //                     continue;
+    //                 }else if instant <= last_instant {
+    //                     let formatted_client_addr = format_socket_addr(&client_socket_addr," ");
+    //                     info!("idle for {} seconds, graceful shutdown [{}]",IDLE_SECONDS,formatted_client_addr);
+    //                     connection.as_mut().graceful_shutdown();
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 /// 代理请求
@@ -228,10 +229,12 @@ async fn proxy(
     config: &'static Config,
     client_socket_addr: SocketAddr,
     proxy_handler: ProxyHandler,
-    context: Arc<RwLock<Context>>,
+    // context: Arc<RwLock<Context>>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler
-        .proxy(req, config, client_socket_addr, context)
+        .proxy(req, config, client_socket_addr, 
+            // context
+        )
         .await
 }
 
@@ -242,7 +245,7 @@ async fn proxy(
 /// # Returns
 /// * `()` - 无返回值
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
-    let formatted_client_addr = format_socket_addr(&client_socket_addr," ");
+    let formatted_client_addr = format_socket_addr(&client_socket_addr, " ");
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         // 转换为hyper::Error
         let cause = match http_err.source() {
