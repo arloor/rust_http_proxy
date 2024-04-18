@@ -35,6 +35,11 @@ where
             idle_future: sleep(timeout),
         }
     }
+    /// set timeout
+    pub fn _set_timeout_pinned(mut self: Pin<&mut Self>, timeout: Duration) {
+        *self.as_mut().project().timeout = timeout;
+        self.project().idle_future.as_mut().reset(Instant::now() + timeout);
+    }
 }
 
 impl<T> AsyncRead for TimeoutIO<T>
@@ -47,12 +52,12 @@ where
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         let pro = self.project();
-        let mut idle_feature = pro.idle_future;
+        let idle_feature = pro.idle_future;
         let timeout: &mut Duration = pro.timeout;
         let read_poll = pro.inner.poll_read(cx, buf);
         if read_poll.is_ready(){
             // 读到内容或者读到EOF等等,重置计时
-            idle_feature.as_mut().reset(Instant::now() + *timeout);
+            idle_feature.reset(Instant::now() + *timeout);
         }else if idle_feature.poll(cx).is_ready(){ 
             // 没有读到内容，且已经timeout，则返回错误
             return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("idle for {:?}",timeout))));

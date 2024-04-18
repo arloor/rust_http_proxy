@@ -270,6 +270,9 @@ async fn tunnel(
     let mut upgraded = TokioIo::new(upgraded);
     let timed_target_io = TimeoutIO::new(target_io, Duration::from_secs(crate::IDLE_SECONDS));
     pin!(timed_target_io);
+    // https://github.com/sfackler/tokio-io-timeout/issues/12
+    // timed_target_io.as_mut() // 一定要as_mut()，否则会move所有权
+    // ._set_timeout_pinned(Duration::from_secs(crate::IDLE_SECONDS));
     let (_from_client, _from_server) =
         tokio::io::copy_bidirectional(&mut upgraded, &mut timed_target_io).await?;
     Ok(())
