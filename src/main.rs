@@ -224,7 +224,7 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
     } else if let Some(io_err) = http_err.downcast_ref::<io::Error>() {
         // 转换为io::Error
         warn!(
-            "[hyper io error[{}]]: {} from {}",
+            "[hyper io error]: [{}] {} from {}",
             io_err.kind(),
             io_err,
             formatted_client_addr
