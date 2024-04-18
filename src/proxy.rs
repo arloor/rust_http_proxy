@@ -183,12 +183,12 @@ impl ProxyHandler {
                                     );
                                     if let Err(e) = tunnel(upgraded, target_stream).await {
                                         // if e.kind() != ErrorKind::TimedOut {
-                                        warn!("[tunnel io error] [{}] : {} ", access_tag, e);
+                                        warn!("[tunnel io error] [{}]: [{}] {} ", access_tag,e.kind(), e);
                                         // }
                                     };
                                 }
                                 Err(e) => {
-                                    warn!("[tunnel establish error] [{}] : {} ", access_label, e)
+                                    warn!("[tunnel establish error] [{}]: {} ", access_label, e)
                                 }
                             }
                         }
