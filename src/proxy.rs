@@ -188,7 +188,7 @@ impl ProxyHandler {
                                     };
                                 }
                                 Err(e) => {
-                                    warn!("[tunnel establish error] [{}]: {} ", access_label, e)
+                                    warn!("[tunnel establish error] [{}]: [{}] {} ", access_label,e.kind(), e)
                                 }
                             }
                         }
