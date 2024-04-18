@@ -169,14 +169,7 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     let timed_io = Box::pin(timed_io);
     let connection = binding.serve_connection_with_upgrades(
         TokioIo::new(timed_io),
-        service_fn(move |req| {
-            proxy(
-                req,
-                config,
-                client_socket_addr,
-                proxy_handler.clone(),
-            )
-        }),
+        service_fn(move |req| proxy(req, config, client_socket_addr, proxy_handler.clone())),
     );
     if let Err(err) = connection.await {
         handle_hyper_error(client_socket_addr, err);
@@ -197,9 +190,7 @@ async fn proxy(
     client_socket_addr: SocketAddr,
     proxy_handler: ProxyHandler,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    proxy_handler
-        .proxy(req, config, client_socket_addr)
-        .await
+    proxy_handler.proxy(req, config, client_socket_addr).await
 }
 
 /// 处理hyper错误
@@ -230,6 +221,14 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
                 formatted_client_addr
             );
         }
+    } else if let Some(io_err) = http_err.downcast_ref::<io::Error>() {
+        // 转换为io::Error
+        warn!(
+            "[hyper io error[{}]]: {} from {}",
+            io_err.kind(),
+            io_err,
+            formatted_client_addr
+        );
     } else {
         warn!(
             "[hyper other error]: {} from {}",

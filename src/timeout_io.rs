@@ -55,7 +55,7 @@ where
             idle_feature.as_mut().reset(Instant::now() + *timeout);
         }else if idle_feature.poll(cx).is_ready(){ 
             // 没有读到内容，且已经timeout，则返回错误
-            return Poll::Ready(Err(io::Error::from(io::ErrorKind::TimedOut)));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("idle for {:?}",timeout))));
         }
         read_poll
     }
