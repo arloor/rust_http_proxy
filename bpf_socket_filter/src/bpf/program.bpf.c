@@ -26,7 +26,7 @@ int bpf_program(struct __sk_buff *skb) {
     // Only outgoing packets
     if (skb->pkt_type != PACKET_OUTGOING) return 0;
 
-    __u32 proto = IPPROTO_ICMP;
+    __u32 proto = IPPROTO_IP;
     // __u32 dest = 0;
 
     // Only ICMP and UDP packets

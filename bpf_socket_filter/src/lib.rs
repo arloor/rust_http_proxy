@@ -86,7 +86,7 @@ pub fn get_value(skel: &ProgramSkel<'static>) -> u64 {
     let maps = skel.maps();
     let map = maps.map();
 
-    let key = unsafe { plain::as_bytes(&(libc::IPPROTO_ICMP as u32)) };
+    let key = unsafe { plain::as_bytes(&(libc::IPPROTO_IP as u32)) };
     let mut value: u64 = 0;
     if let Ok(Some(buf)) = map.lookup(key, MapFlags::ANY) {
         plain::copy_from_bytes(&mut value, &buf).expect("Invalid buffer");
