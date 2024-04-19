@@ -23,15 +23,16 @@ use bpf_socket_filter::SocketFilter;
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
     #[cfg(feature = "bpf")]
-    socket_filter:Arc<SocketFilter>,
+    socket_filter: Arc<SocketFilter>,
 }
 
+const INTERVAL: u64 = 3;
 impl NetMonitor {
     pub fn new() -> NetMonitor {
         NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
             #[cfg(feature = "bpf")]
-            socket_filter:Arc::new(SocketFilter::default()),
+            socket_filter: Arc::new(SocketFilter::default()),
         }
     }
 
@@ -57,7 +58,7 @@ impl NetMonitor {
                             let mut buffer = to_move.write().await;
                             buffer.push_back(TimeValue::new(
                                 datetime.format("%H:%M:%S").to_string(),
-                                (new - last) * 8,
+                                (new - last) * 8 / INTERVAL,
                             ));
                             if buffer.len() > MAX_NUM {
                                 buffer.pop_front();
@@ -65,7 +66,7 @@ impl NetMonitor {
                         }
                         last = new;
                     }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::time::sleep(Duration::from_secs(INTERVAL)).await;
                 }
             });
         }
@@ -73,8 +74,6 @@ impl NetMonitor {
 }
 
 const MAX_NUM: usize = 300;
-
-
 
 // Inter-|   Receive                                                |  Transmit
 //      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
