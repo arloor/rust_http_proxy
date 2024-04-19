@@ -14,16 +14,13 @@ env:
   USE_MUSL: true
 
 jobs:
-  all:
+  docker_image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Set outputs
         id: vars
         run: echo "sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
-      # - name: build gnu
-      #   run: |
-      #     cargo build --release
       - name: build musl
         id: build_musl
         uses: arloor/rust_musl_action@latest
@@ -32,6 +29,7 @@ jobs:
           use_musl: ${{ env.USE_MUSL }}
           extra_deps: cmake
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc
+          debug: true
       - name: docker build and push
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         run: |
@@ -44,6 +42,19 @@ jobs:
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
           podman push docker.io/arloor/rust_http_proxy:latest
+  github_release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build bpf
+        id: build_bpf
+        uses: arloor/rust_musl_action@latest
+        with:
+          musl_version: 1.2.5
+          use_musl: false
+          extra_deps: cmake libbpf-dev libz-dev libelf-dev pkg-config clang
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc,bpf
+          debug: true
       - name: gihub release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         env:
@@ -58,14 +69,4 @@ jobs:
           fi
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
-          gh release create v${version} ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
-          
-#    - name: install ssh keys
-#      run: |
-#        install -m 600 -D /dev/null ~/.ssh/id_rsa
-#        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-#        ssh-keyscan -H ${{ secrets.SSH_HOST }} > ~/.ssh/known_hosts
-#    - name: connect and pull
-#      run: ssh root@${{ secrets.SSH_HOST }} "kubectl set image ds proxy proxy=docker.io/arloor/rust_http_proxy:${{ github.sha }}"
-#    - name: cleanup
-#      run: rm -rf ~/.ssh
+          gh release create v${version} ${{ steps.build_bpf.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"

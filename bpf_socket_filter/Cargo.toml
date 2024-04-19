@@ -15,6 +15,8 @@ path = "examples/example1.rs"
 libc = "0.2.98"           # Raw FFI bindings to platform libraries like libc
 libbpf-rs = "0.23.0"      # libbpf-rs is a safe, idiomatic, and opinionated wrapper around libbpf-sys
 plain = "0.2.3"           # A small Rust library that allows users to reinterpret data of certain types safely
+pnet="0.34"             # Rust library for low level networking using the pcap library
+log="0.4"               # A lightweight logging facade for Rust
 
 [build-dependencies]
 libbpf-cargo = "0.23.0"   # Cargo plugin to build bpf programs
