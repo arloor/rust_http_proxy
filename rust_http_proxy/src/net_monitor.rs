@@ -26,7 +26,7 @@ pub struct NetMonitor {
     socket_filter: Arc<SocketFilter>,
 }
 
-const INTERVAL: u64 = 3;
+const INTERVAL: u64 = 5;
 impl NetMonitor {
     pub fn new() -> NetMonitor {
         NetMonitor {
