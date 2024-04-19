@@ -1,0 +1,20 @@
+[package]
+name = "bpf_socket_filter"
+version = "0.1.0"
+authors = ["arloor <admin@arloor.com>"]
+edition = "2021"
+
+[lib]
+path = "src/lib.rs" # 库文件的路径
+
+[[example]]
+name = "example1"
+path = "examples/example1.rs"
+
+[dependencies]
+libc = "0.2.98"           # Raw FFI bindings to platform libraries like libc
+libbpf-rs = "0.23.0"      # libbpf-rs is a safe, idiomatic, and opinionated wrapper around libbpf-sys
+plain = "0.2.3"           # A small Rust library that allows users to reinterpret data of certain types safely
+
+[build-dependencies]
+libbpf-cargo = "0.23.0"   # Cargo plugin to build bpf programs

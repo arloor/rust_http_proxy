@@ -30,6 +30,61 @@
             "env": {
                 "HOSTNAME": "test"
             }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example",
+                    "example1"
+                ],
+                "filter": {
+                    "name": "example1",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'socket_filter'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=socket_filter",
+                    "--package=socket_filter"
+                ],
+                "filter": {
+                    "name": "socket_filter",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'socket_filter'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=socket_filter",
+                    "--package=socket_filter"
+                ],
+                "filter": {
+                    "name": "socket_filter",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
