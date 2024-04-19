@@ -17,7 +17,7 @@ dnf install \
 --setopt install_weak_deps=false \
 --setopt=reposdir=/etc/yum.repos.d/ \
 --nodocs -y \
-gawk net-tools tzdata
+gawk net-tools tzdata zlib-devel elfutils-libelf-devel libbpf
 dnf clean all \
 --installroot $micromount
 buildah umount $microcontainer

@@ -14,7 +14,7 @@ fn main() {
     .join("program.skel.rs");
     let mut builder = SkeletonBuilder::new();
     let builder = builder.source(SRC);
-    builder.clang_args(["-I."]);
+    builder.clang_args(["-I.","-I/usr/include/x86_64-linux-gnu/bits"]);
     builder.build_and_generate(&out).unwrap();
     println!("cargo:rerun-if-changed={SRC}");
 }

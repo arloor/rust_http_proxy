@@ -14,7 +14,7 @@ use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::MapFlags;
 use pnet::datalink;
 use std::mem::size_of_val;
-use log::info;
+use log::{info, warn};
 
 pub struct SocketFilter {
     skel: ProgramSkel<'static>,
@@ -28,6 +28,7 @@ impl SocketFilter {
 
 impl Default for SocketFilter {
     fn default() -> Self {
+        bump_memlock_rlimit().expect("Failed to increase rlimit");
         let skel = open_and_load_socket_filter_prog();
         let all_interfaces = datalink::interfaces();
         // 遍历接口列表
@@ -47,6 +48,19 @@ pub fn open_and_load_socket_filter_prog() -> ProgramSkel<'static> {
 
     let open_skel = builder.open().expect("Failed to open BPF program");
     open_skel.load().expect("Failed to load BPF program")
+}
+type DynError = Box<dyn std::error::Error>;
+fn bump_memlock_rlimit() -> Result<(),DynError> {
+    let rlimit = libc::rlimit {
+        rlim_cur: 128 << 20,
+        rlim_max: 128 << 20,
+    };
+
+    if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlimit) } != 0 {
+        warn!("Failed to increase rlimit");
+    }
+
+    Ok(())
 }
 
 pub fn set_socket_opt_bpf(skel: &ProgramSkel<'static>, name: &str) {
