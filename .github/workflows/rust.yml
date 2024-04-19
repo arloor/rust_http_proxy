@@ -42,6 +42,21 @@ jobs:
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
           podman push docker.io/arloor/rust_http_proxy:latest
+      - name: gihub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 从Cargo.toml中提取版本号
+          version=$(grep -E ^version rust_http_proxy/Cargo.toml|awk -F "[\"]" '{print $2}')
+          if [ -z "$version" ]; then echo "version not found"; exit 1; fi
+          if $(gh release delete v${version} -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
+          git config --local user.email "admin@arloor.com"
+          git config --local user.name "arloor"
+          gh release create v${version} ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
   github_release:
     runs-on: ubuntu-latest
     steps:
@@ -60,9 +75,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 从Cargo.toml中提取版本号
-          version=$(grep -E ^version rust_http_proxy/Cargo.toml|awk -F "[\"]" '{print $2}')
-          if [ -z "$version" ]; then echo "version not found"; exit 1; fi
+          version='ebpf'
           if $(gh release delete v${version} -y --cleanup-tag); 
             then echo "delete old release"; 
             else echo "no old release";
