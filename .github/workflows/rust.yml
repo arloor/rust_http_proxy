@@ -30,8 +30,9 @@ jobs:
         with:
           musl_version: 1.2.5
           use_musl: ${{ env.USE_MUSL }}
-          extra_deps: cmake libbpf-dev libz-dev libelf-dev pkg-config clang
+          extra_deps: cmake libbpf-dev libz-dev libelf-dev pkg-config clang libc6-dev
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc,bpf
+          debug: true
       - name: docker build and push
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         run: |
