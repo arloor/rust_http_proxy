@@ -50,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # 从Cargo.toml中提取版本号
-          version=$(grep -E ^version Cargo.toml|awk -F "[\"]" '{print $2}')
+          version=$(grep -E ^version rust_http_proxy/Cargo.toml|awk -F "[\"]" '{print $2}')
           if [ -z "$version" ]; then echo "version not found"; exit 1; fi
           if $(gh release delete v${version} -y --cleanup-tag); 
             then echo "delete old release"; 
