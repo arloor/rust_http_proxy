@@ -13,7 +13,7 @@
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__uint(max_entries, 32);
+	__uint(max_entries, 1);
 	__type(key, u32);
 	__type(value, u64);
 } map SEC(".maps");
