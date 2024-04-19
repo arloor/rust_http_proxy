@@ -25,8 +25,9 @@ pub struct NetMonitor {
     #[cfg(feature = "bpf")]
     socket_filter: Arc<SocketFilter>,
 }
-
-const INTERVAL: u64 = 5;
+const TOTAL_SECONDS: u64 = 900;
+const INTERVAL_SECONDS: u64 = 5;
+const SIZE: usize = TOTAL_SECONDS as usize / INTERVAL_SECONDS as usize;
 impl NetMonitor {
     pub fn new() -> NetMonitor {
         NetMonitor {
@@ -58,22 +59,20 @@ impl NetMonitor {
                             let mut buffer = to_move.write().await;
                             buffer.push_back(TimeValue::new(
                                 datetime.format("%H:%M:%S").to_string(),
-                                (new - last) * 8 / INTERVAL,
+                                (new - last) * 8 / INTERVAL_SECONDS,
                             ));
-                            if buffer.len() > MAX_NUM {
+                            if buffer.len() > SIZE {
                                 buffer.pop_front();
                             }
                         }
                         last = new;
                     }
-                    tokio::time::sleep(Duration::from_secs(INTERVAL)).await;
+                    tokio::time::sleep(Duration::from_secs(INTERVAL_SECONDS)).await;
                 }
             });
         }
     }
 }
-
-const MAX_NUM: usize = 300;
 
 // Inter-|   Receive                                                |  Transmit
 //      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
