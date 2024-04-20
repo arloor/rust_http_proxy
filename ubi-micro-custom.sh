@@ -5,7 +5,7 @@
 # base_image="docker.io/redhat/ubi9-micro:latest"
 base_image="docker.io/rockylinux/rockylinux:9-ubi-micro"
 out_tag="latest"
-out_image="docker.io/arloor/ubi-micro-net-tools:${out_tag}"
+out_image="docker.io/arloor/ubi-micro:${out_tag}"
 
 yum install -y container-tools
 microcontainer=$(buildah from ${base_image})
@@ -17,7 +17,7 @@ dnf install \
 --setopt install_weak_deps=false \
 --setopt=reposdir=/etc/yum.repos.d/ \
 --nodocs -y \
-gawk net-tools tzdata
+gawk net-tools tzdata zlib-devel elfutils-libelf-devel
 dnf clean all \
 --installroot $micromount
 buildah umount $microcontainer

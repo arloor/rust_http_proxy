@@ -70,6 +70,14 @@ jobs:
           extra_deps: cmake libbpf-dev zlib1g-dev libelf-dev pkg-config clang
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc,bpf
           debug: true
+      - name: docker build and push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        run: |
+          ls -lh ${{ steps.build_bpf.outputs.release_dir }}
+          dockerfile="Dockerfile.gnu"
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf
+          podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
+          podman push docker.io/arloor/rust_http_proxy:bpf
       - name: gihub release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         env:
