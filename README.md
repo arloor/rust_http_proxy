@@ -111,7 +111,7 @@ mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_pr
 rust_http_proxy -h
 ```
 
-在build.rs中使用了libbpf-bootstrap项目提供的vmlinux.h，详见build-dependencies。想要查看和跳转vmlinux.h定义的类型可以用如下命令生成。
+在build.rs中使用了libbpf-bootstrap项目提供的vmlinux.h（感谢libbpf强大的CO-RE特性），详见build-dependencies。想要查看和跳转vmlinux.h定义的类型可以用如下命令生成。
 
 ```bash
 cd bpf_socket_filter
