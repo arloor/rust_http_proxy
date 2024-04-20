@@ -67,7 +67,7 @@ jobs:
         with:
           musl_version: 1.2.5
           use_musl: false
-          extra_deps: cmake libbpf-dev libz-dev libelf-dev pkg-config clang
+          extra_deps: cmake libbpf-dev zlib1g-dev libelf-dev pkg-config clang
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc,bpf
           debug: true
       - name: gihub release
