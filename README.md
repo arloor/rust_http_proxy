@@ -111,6 +111,13 @@ mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_pr
 rust_http_proxy -h
 ```
 
+在build.rs中使用了libbpf-bootstrap项目提供的vmlinux.h，详见build-dependencies。想要查看和跳转vmlinux.h定义的类型可以用如下命令生成。
+
+```bash
+cd bpf_socket_filter
+bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+```
+
 ## 可观测
 
 ### Linux运行时的网速监控
