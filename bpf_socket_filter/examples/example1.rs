@@ -1,6 +1,6 @@
 use std::{thread::sleep, time::Duration};
 
-extern crate bpf_socket_filter as socket_filter;
+use bpf_socket_filter as socket_filter;
 
 fn main() {
     let socket_filter = socket_filter::SocketFilter::default();
