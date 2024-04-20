@@ -207,6 +207,7 @@ dependencies = [
  "log",
  "plain",
  "pnet",
+ "vmlinux",
 ]
 
 [[package]]
@@ -1774,6 +1775,11 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "vmlinux"
+version = "0.0.0"
+source = "git+https://github.com/libbpf/libbpf-rs.git?branch=master#b84583e533d923edddacca987456a99113623ca4"
 
 [[package]]
 name = "vsprintf"

@@ -20,3 +20,4 @@ log="0.4"               # A lightweight logging facade for Rust
 
 [build-dependencies]
 libbpf-cargo = "0.23.0"   # Cargo plugin to build bpf programs
+vmlinux = { git = "https://github.com/libbpf/libbpf-rs.git", branch = "master" }

@@ -14,7 +14,17 @@ fn main() {
     .join("program.skel.rs");
     let mut builder = SkeletonBuilder::new();
     let builder = builder.source(SRC);
-    builder.clang_args(["-I."]);
+    // 不依赖本地的vmlinux.h，而是使用libbpf-bootstrap项目提供的vmlinux.h，详见build-dependencies
+    // builder.clang_args(["-I."]);
+    {
+        use std::ffi::OsStr;
+        let arch = env::var("CARGO_CFG_TARGET_ARCH")
+        .expect("CARGO_CFG_TARGET_ARCH must be set in build script");
+        builder.clang_args([
+            OsStr::new("-I"),
+            vmlinux::include_path_root().join(arch).as_os_str(),
+        ]);
+    }
     builder.build_and_generate(&out).unwrap();
     println!("cargo:rerun-if-changed={SRC}");
 }
