@@ -1,4 +1,4 @@
-name: cicd
+name: auto_release
 on:
   push:
     branches: [ "**"]
