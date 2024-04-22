@@ -50,7 +50,7 @@ impl NetMonitor {
                 loop {
                     {
                         #[cfg(feature = "bpf")]
-                        let new = socket_filter.get_value();
+                        let new = socket_filter.get_current_outbound_bytes();
                         #[cfg(not(feature = "bpf"))]
                         let new = fetch_current_value();
                         if last != 0 {
