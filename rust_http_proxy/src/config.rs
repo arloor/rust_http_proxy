@@ -191,10 +191,17 @@ fn get_hostname() -> String {
         )
         .output();
     match result {
-        Ok(output) => String::from_utf8(output.stdout)
-            .unwrap_or("unknown".to_string())
-            .trim()
-            .to_owned(),
+        Ok(output) => {
+            let hostname = String::from_utf8(output.stdout)
+                .unwrap_or("unknown".to_string())
+                .trim()
+                .to_owned();
+            if hostname.is_empty() {
+                get_hostname_from_env()
+            } else {
+                hostname
+            }
+        }
         Err(e) => {
             warn!("get hostname error: {}", e);
             "unknown".to_string()
@@ -204,6 +211,10 @@ fn get_hostname() -> String {
 
 #[cfg(windows)]
 fn get_hostname() -> String {
+    get_hostname_from_env()
+}
+
+fn get_hostname_from_env() -> String {
     use std::env;
     env::var("HOSTNAME").unwrap_or("unknown".to_string())
 }
