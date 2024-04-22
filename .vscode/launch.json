@@ -29,7 +29,8 @@
             "preLaunchTask": "rust: cargo build",
             "env": {
                 "HOSTNAME": "test"
-            }
+            },
+            "sourceLanguages": ["rust"]
         },
         {
             "type": "lldb",
@@ -47,44 +48,8 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug executable 'socket_filter'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=socket_filter",
-                    "--package=socket_filter"
-                ],
-                "filter": {
-                    "name": "socket_filter",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in executable 'socket_filter'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--bin=socket_filter",
-                    "--package=socket_filter"
-                ],
-                "filter": {
-                    "name": "socket_filter",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": ["rust"]
         }
     ]
 }

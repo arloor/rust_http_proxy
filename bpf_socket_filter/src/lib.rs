@@ -21,7 +21,7 @@ pub struct SocketFilter {
 }
 
 impl SocketFilter {
-    pub fn get_value(&self) -> u64 {
+    pub fn get_current_outbound_bytes(&self) -> u64 {
         get_value(&self.skel)
     }
 }
