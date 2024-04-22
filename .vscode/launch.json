@@ -3,6 +3,7 @@
     // 悬停以查看现有属性的描述。
     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
+    // https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md#rust-language-support
     "configurations": [
         {
             "type": "lldb",
@@ -35,12 +36,12 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug example",
+            "name": "Debug example 'example1'",
             "cargo": {
                 "args": [
                     "build",
-                    "--example",
-                    "example1"
+                    "--example=example1",
+                    "--package=bpf_socket_filter"
                 ],
                 "filter": {
                     "name": "example1",
