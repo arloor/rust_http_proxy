@@ -26,7 +26,7 @@
                 "-r=arloor"
             ],
             "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
+            "terminal": "console",
             "preLaunchTask": "rust: cargo build",
             "env": {
                 "HOSTNAME": "test"
@@ -50,7 +50,8 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}",
-            "sourceLanguages": ["rust"]
+            "sourceLanguages": ["rust"],
+            "terminal": "console",
         }
     ]
 }
