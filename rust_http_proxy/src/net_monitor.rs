@@ -18,7 +18,7 @@ impl TimeValue {
 }
 
 #[cfg(feature = "bpf")]
-use bpf_socket_filter::SocketFilter;
+use socket_filter::SocketFilter;
 #[derive(Clone)]
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,

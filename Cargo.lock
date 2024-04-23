@@ -198,19 +198,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf4b9d6a944f767f8e5e0db018570623c85f3d925ac718db4e06d0187adb21c1"
 
 [[package]]
-name = "bpf_socket_filter"
-version = "0.1.0"
-dependencies = [
- "libbpf-cargo",
- "libbpf-rs",
- "libc",
- "log",
- "plain",
- "pnet",
- "vmlinux",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1353,7 +1340,6 @@ version = "0.1.3"
 dependencies = [
  "async-compression",
  "base64",
- "bpf_socket_filter",
  "chrono",
  "clap",
  "flexi_logger",
@@ -1373,6 +1359,7 @@ dependencies = [
  "regex",
  "rustls-pemfile",
  "socket2",
+ "socket_filter",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -1560,6 +1547,20 @@ checksum = "05ffd9c0a93b7543e062e759284fcf5f5e3b098501104bfbdde4d404db792871"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "socket_filter"
+version = "0.1.0"
+source = "git+https://github.com/arloor/bpf_rs_hub.git#63750a0026f9b3e5219f238dbc4d0d48780e74bc"
+dependencies = [
+ "libbpf-cargo",
+ "libbpf-rs",
+ "libc",
+ "log",
+ "plain",
+ "pnet",
+ "vmlinux",
 ]
 
 [[package]]

@@ -33,26 +33,6 @@
                 "HOSTNAME": "test"
             },
             "sourceLanguages": ["rust"]
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug example1",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--example=example1",
-                    "--package=bpf_socket_filter"
-                ],
-                "filter": {
-                    "name": "example1",
-                    "kind": "example"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}",
-            "sourceLanguages": ["rust"],
-            "terminal": "console",
         }
     ]
 }
