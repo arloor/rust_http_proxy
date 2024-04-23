@@ -187,7 +187,7 @@ aws_lc_rs = ["tokio-rustls/aws-lc-rs","aws-lc-rs/bindgen"]
 
 ### bpf
 
-使用ebpf来统计网卡出流量，仅在 `x86_64-unknown-linux-gnu` 上测试通过。激活方式:
+使用ebpf来统计网卡出流量，仅在 `x86_64-unknown-linux-gnu` 上测试过。激活方式:
 
 ```bash
 cargo build --features bpf
