@@ -147,12 +147,12 @@ pub(crate) fn load_config() -> &'static Config {
         std::process::exit(1);
     }
     info!("log is output to {}/{}", config.log_dir, config.log_file);
-    #[cfg(not(feature = "aws_lc_rs"))]
+    #[cfg(all(feature = "ring", not(feature = "aws_lc_rs")))]
     {
         info!("use ring as default crypto provider");
         let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
     }
-    #[cfg(feature = "aws_lc_rs")]
+    #[cfg(all(feature = "aws_lc_rs", not(feature = "ring")))]
     {
         info!("use aws_lc_rs as default crypto provider");
         let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
