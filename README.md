@@ -148,7 +148,7 @@ req_from_out_total{referer="all",path="all"} 4
 
 ### jemalloc
 
-激活方式
+拥有更高的并发分配能力和减少内存碎片，不过会buffer更多的内存，因此top中RES数值会有上升。激活方式：
 
 ```bash
 cargo build --features jemalloc
@@ -183,6 +183,14 @@ aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
 [features]
 # aws_lc_rs = ["tokio-rustls/aws-lc-rs"]
 aws_lc_rs = ["tokio-rustls/aws-lc-rs","aws-lc-rs/bindgen"]
+```
+
+### bpf
+
+使用ebpf来统计网卡出流量，仅在 `x86_64-unknown-linux-gnu` 上测试通过。激活方式:
+
+```bash
+cargo build --features bpf
 ```
 
 ## 高匿实现
