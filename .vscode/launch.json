@@ -9,6 +9,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "Debug rust_http_proxy",
+            // https://code.visualstudio.com/docs/editor/variables-reference
             "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
             "args": [
                 "-p",
