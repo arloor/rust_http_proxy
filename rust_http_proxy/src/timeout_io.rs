@@ -60,7 +60,7 @@ where
             idle_feature.reset(Instant::now() + *timeout);
         }else if idle_feature.poll(cx).is_ready(){ 
             // 没有读到内容，且已经timeout，则返回错误
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("idle for {:?}",timeout))));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("read idle for {:?}",timeout))));
         }
         read_poll
     }
@@ -76,18 +76,44 @@ where
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
         let pro = self.project();
-        pro.inner.poll_write(cx, buf)
+        let idle_feature = pro.idle_future;
+        let timeout: &mut Duration = pro.timeout;
+        let write_poll = pro.inner.poll_write(cx, buf);
+        if write_poll.is_ready(){
+            idle_feature.reset(Instant::now() + *timeout);
+        }else if idle_feature.poll(cx).is_ready(){ 
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("write idle for {:?}",timeout))));
+        }
+        write_poll
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        self.project().inner.poll_flush(cx)
+        let pro = self.project();
+        let idle_feature = pro.idle_future;
+        let timeout: &mut Duration = pro.timeout;
+        let write_poll = pro.inner.poll_flush(cx);
+        if write_poll.is_ready(){
+            idle_feature.reset(Instant::now() + *timeout);
+        }else if idle_feature.poll(cx).is_ready(){ 
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("write idle for {:?}",timeout))));
+        }
+        write_poll
     }
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        self.project().inner.poll_shutdown(cx)
+        let pro = self.project();
+        let idle_feature = pro.idle_future;
+        let timeout: &mut Duration = pro.timeout;
+        let write_poll = pro.inner.poll_shutdown(cx);
+        if write_poll.is_ready(){
+            idle_feature.reset(Instant::now() + *timeout);
+        }else if idle_feature.poll(cx).is_ready(){ 
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("write idle for {:?}",timeout))));
+        }
+        write_poll
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -100,6 +126,14 @@ where
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
         let pro = self.project();
-        pro.inner.poll_write_vectored(cx, bufs)
+        let idle_feature = pro.idle_future;
+        let timeout: &mut Duration = pro.timeout;
+        let write_poll = pro.inner.poll_write_vectored(cx, bufs);
+        if write_poll.is_ready(){
+            idle_feature.reset(Instant::now() + *timeout);
+        }else if idle_feature.poll(cx).is_ready(){ 
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("write idle for {:?}",timeout))));
+        }
+        write_poll
     }
 }
