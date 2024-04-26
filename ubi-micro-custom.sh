@@ -2,8 +2,8 @@
 # 从ubi-micro镜像构建一个只有net-tools的镜像
 # https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html-single/building_running_and_managing_containers/index#proc_using-the-ubi-micro-images_assembly_adding-software-to-a-ubi-container
 
-# base_image="docker.io/redhat/ubi9-micro:latest"
-base_image="docker.io/rockylinux/rockylinux:9-ubi-micro"
+base_image="docker.io/redhat/ubi9-micro:latest"
+# base_image="docker.io/rockylinux/rockylinux:9-ubi-micro"
 out_tag="latest"
 out_image="docker.io/arloor/ubi-micro:${out_tag}"
 
