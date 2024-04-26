@@ -90,7 +90,7 @@ curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7
 ```shell
 curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/v0.1.3/rust_http_proxy
 mv rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
-rust_http_proxy -h
+rust_http_proxy -p 8888
 ```
 
 ### Docker 安装 
@@ -98,7 +98,7 @@ rust_http_proxy -h
 > 通过Github Action自动更新release，永远是最新版，可放心使用
 
 ```shell
-docker run --rm -it --net host docker.io/arloor/rust_http_proxy
+docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 8888
 ```
 
 ### ebpf版本安装
@@ -108,13 +108,13 @@ docker run --rm -it --net host docker.io/arloor/rust_http_proxy
 ```bash
 curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/vebpf/rust_http_proxy -o /tmp/rust_http_proxy
 mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
-rust_http_proxy -h
+rust_http_proxy -p 8888
 ```
 
 或者
 
 ```bash
-docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf
+docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf -p 8888
 ```
 
 ## 可观测
