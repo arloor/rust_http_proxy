@@ -111,6 +111,12 @@ mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_pr
 rust_http_proxy -h
 ```
 
+或者
+
+```bash
+docker run --rm -it --name proxy --net host docker.io/arloor/rust_http_proxy:bpf
+```
+
 ## 可观测
 
 ### Linux运行时的网速监控
