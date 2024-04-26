@@ -98,7 +98,7 @@ rust_http_proxy -h
 > 通过Github Action自动更新release，永远是最新版，可放心使用
 
 ```shell
-docker run --rm -it --name proxy --net host docker.io/arloor/rust_http_proxy
+docker run --rm -it --net host docker.io/arloor/rust_http_proxy
 ```
 
 ### ebpf版本安装
@@ -114,7 +114,7 @@ rust_http_proxy -h
 或者
 
 ```bash
-docker run --rm -it --name proxy --net host docker.io/arloor/rust_http_proxy:bpf
+docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf
 ```
 
 ## 可观测
