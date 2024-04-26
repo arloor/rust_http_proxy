@@ -23,7 +23,7 @@ jobs:
         with:
           use_musl: ${{ env.USE_MUSL }}
           extra_deps: cmake
-          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs
           apt_mirror: mirrors.mit.edu
       - name: docker build and push
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
