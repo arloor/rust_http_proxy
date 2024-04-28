@@ -250,20 +250,17 @@ async fn serve_path(
     };
 
     let file_size = meta.len();
-    let (start, end,builder) = match parse_range(
-        req.headers().get(http::header::RANGE),
-        file_size,
-        builder,
-    ) {
-        Ok((start, end,builder)) => (start, end,builder),
-        Err(e) => {
-            return Response::builder()
-                .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                .header(http::header::SERVER, SERVER_NAME)
-                .body(full_body(e.to_string()));
-        }
-    };
-    
+    let (start, end, builder) =
+        match parse_range(req.headers().get(http::header::RANGE), file_size, builder) {
+            Ok((start, end, builder)) => (start, end, builder),
+            Err(e) => {
+                return Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(http::header::SERVER, SERVER_NAME)
+                    .body(full_body(e.to_string()));
+            }
+        };
+
     if start != 0 {
         if let Err(e) = file.seek(io::SeekFrom::Start(start)).await {
             warn!("seek file error: {}", e);
@@ -292,8 +289,8 @@ async fn serve_path(
 fn parse_range(
     range_header: Option<&HeaderValue>,
     file_size: u64,
-    mut builder:  Builder,
-) -> io::Result<(u64, u64,Builder)> {
+    mut builder: Builder,
+) -> io::Result<(u64, u64, Builder)> {
     let mut start = 0;
     let mut end = file_size - 1;
     if let Some(range_value) = range_header {
@@ -326,7 +323,7 @@ fn parse_range(
                         end = right.parse::<u64>().unwrap();
                     }
                 }
-                builder=builder
+                builder = builder
                     .header(
                         http::header::CONTENT_RANGE,
                         format!("bytes {}-{}/{}", start, end, file_size),
@@ -347,7 +344,7 @@ fn parse_range(
         let msg = "end must be less than file length";
         return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
     }
-    Ok((start, end,builder))
+    Ok((start, end, builder))
 }
 
 fn serve_favico(
