@@ -21,7 +21,6 @@ use mime_guess::from_path;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
-use prometheus_client::metrics::info;
 use prometheus_client::registry::Registry;
 use regex::Regex;
 use std::collections::VecDeque;
