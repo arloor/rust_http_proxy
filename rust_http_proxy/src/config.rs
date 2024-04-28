@@ -146,7 +146,6 @@ pub(crate) fn load_config() -> &'static Config {
         println!("init log error:{}", log_init_error);
         std::process::exit(1);
     }
-    info!("log is output to {}/{}", config.log_dir, config.log_file);
     #[cfg(all(feature = "ring", not(feature = "aws_lc_rs")))]
     {
         info!("use ring as default crypto provider");
