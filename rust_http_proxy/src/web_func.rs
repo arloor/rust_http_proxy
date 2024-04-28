@@ -170,7 +170,6 @@ async fn serve_path(
         return not_found();
     }
     // 禁止访问.git目录
-    info!("{} {}",String::from(url_path).starts_with("/.git/"),url_path);
     if String::from(url_path).starts_with("/.git/") {
         return not_found();
     }
