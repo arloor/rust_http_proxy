@@ -168,6 +168,10 @@ async fn serve_path(
     if String::from(url_path).contains("/..") {
         return not_found();
     }
+    // 禁止访问.git目录
+    if String::from(url_path).starts_with("/.git/") {
+        return not_found();
+    }
     let mut path = PathBuf::from(if String::from(url_path).ends_with('/') {
         format!("{}{}index.html", web_content_path, url_path)
     } else {
