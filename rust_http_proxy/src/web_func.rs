@@ -21,6 +21,7 @@ use mime_guess::from_path;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
+use prometheus_client::metrics::info;
 use prometheus_client::registry::Registry;
 use regex::Regex;
 use std::collections::VecDeque;
@@ -166,6 +167,10 @@ async fn serve_path(
     need_body: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     if String::from(url_path).contains("/..") {
+        return not_found();
+    }
+    // 禁止访问.git目录
+    if String::from(url_path).starts_with("/.git/") {
         return not_found();
     }
     let mut path = PathBuf::from(if String::from(url_path).ends_with('/') {
