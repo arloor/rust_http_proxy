@@ -24,7 +24,8 @@
                 ".",
                 "-o",
                 "--never-ask-for-auth",
-                "-r=arloor"
+                "-r=arloor",
+                // "--log-dir=tmp"
             ],
             "cwd": "${workspaceFolder}",
             "terminal": "integrated",

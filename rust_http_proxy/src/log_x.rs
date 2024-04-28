@@ -1,3 +1,5 @@
+use std::{io, path::PathBuf};
+
 use flexi_logger::{
     Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, FlexiLoggerError, Logger, LoggerHandle,
     Naming,
@@ -5,6 +7,12 @@ use flexi_logger::{
 use log::Record;
 
 pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLoggerError> {
+    // 转换成绝对路径
+    let log_dir_path = PathBuf::from(log_dir).canonicalize()?;
+    let log_dir = log_dir_path
+        .as_path()
+        .to_str()
+        .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "error parse absolute path of log dir"))?;
     let logger = if cfg!(debug_assertions) {
         Logger::try_with_env_or_str("debug,rustls=error")?
     } else {
@@ -25,11 +33,7 @@ pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLogg
         )
         .append()
         .format(my_format)
-        .create_symlink(if log_dir.starts_with('/'){
-            format!("{}/{}", log_dir, log_file)
-        }else{
-            log_file.to_string()
-        })
+        .create_symlink(format!("{}/{}", log_dir, log_file))
         .start()
 }
 
