@@ -33,9 +33,9 @@ jobs:
           if [ "${{ env.USE_MUSL }}" = "true" ]; then
             dockerfile="Dockerfile.musl"
           fi
-          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }} -t docker.io/arloor/rust_http_proxy:latest
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
-          podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
+          # podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
           podman push docker.io/arloor/rust_http_proxy:latest
       - name: gihub release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
