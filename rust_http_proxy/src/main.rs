@@ -58,9 +58,9 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
+    let proxy_config: &'static Config = load_config();
     #[cfg(feature = "jemalloc")]
     info!("jemalloc is enabled");
-    let proxy_config: &'static Config = load_config();
     handle_signal()?;
 
     let futures = proxy_config
@@ -88,7 +88,7 @@ async fn create_dual_stack_listener(port: u16) -> io::Result<TcpListener> {
     // 绑定socket到地址和端口
     let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
     socket.bind(&addr.into())?;
-    socket.listen(1024)?; // 监听，128为backlog的大小
+    socket.listen(1024)?; // 监听，1024为backlog的大小
 
     // 将socket2::Socket转换为std::net::TcpListener
     let std_listener = std::net::TcpListener::from(socket);
