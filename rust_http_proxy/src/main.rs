@@ -58,6 +58,8 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
+    #[cfg(feature = "jemalloc")]
+    info!("jemalloc is enabled");
     let proxy_config: &'static Config = load_config();
     handle_signal()?;
 
