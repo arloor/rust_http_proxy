@@ -233,3 +233,6 @@ https://access.redhat.com/articles/4348511
 subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
 yum install -y glibc-static
 https://github.com/libbpf/libbpf-rs/pull/498
+
+https://centos.pkgs.org/
+https://packages.ubuntu.com/
