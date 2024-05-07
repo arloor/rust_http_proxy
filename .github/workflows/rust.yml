@@ -61,8 +61,8 @@ jobs:
         uses: arloor/rust_musl_action@latest
         with:
           use_musl: false
-          extra_deps: cmake libbpf-dev zlib1g-dev libelf-dev pkg-config clang
-          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc,bpf
+          extra_deps: cmake libbpf-dev zlib1g-dev libelf-dev pkg-config clang autoconf autopoint flex bison gawk make
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc,bpf_vendored
           apt_mirror: mirrors.mit.edu
       - name: docker build and push
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 

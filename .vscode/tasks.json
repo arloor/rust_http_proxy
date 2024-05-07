@@ -9,7 +9,7 @@
 			],
 			"args": [
 				"-p","rust_http_proxy",
-				// "--features","bpf",
+				"--features","bpf_vendored",
 				"--features","jemalloc"
 				// "--no-default-features",
 				// "--features","aws_lc_rs",

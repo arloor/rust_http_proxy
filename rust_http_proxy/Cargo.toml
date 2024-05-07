@@ -34,7 +34,7 @@ lazy_static = "1.4"
 socket2 = "0.5"
 jemallocator = { version = "0.5", optional = true }
 regex = "1"
-socket_filter = { workspace=true, optional = true }
+socket_filter = { workspace = true, optional = true }
 
 # [target.'cfg(target_env = "musl")'.dependencies]
 # aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
@@ -43,6 +43,7 @@ socket_filter = { workspace=true, optional = true }
 default = ["ring"]
 jemalloc = ["jemallocator"]
 bpf = ["socket_filter"]
+bpf_vendored = ["socket_filter/vendored"]
 aws_lc_rs = ["tokio-rustls/aws-lc-rs"]
 # aws_lc_rs = ["tokio-rustls/aws-lc-rs","aws-lc-rs/bindgen"]
 ring = ["tokio-rustls/ring"]
