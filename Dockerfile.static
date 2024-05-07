@@ -17,5 +17,6 @@ ENTRYPOINT ["/rust_http_proxy"]
 #     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
 #     echo "Asia/Shanghai" > /etc/timezone; \
 #     apk del tzdata
-# COPY target/x86_64-unknown-linux-musl/release/rust_http_proxy /
+# ARG TARGET_PATH=/x86_64-unknown-linux-musl
+# COPY target${TARGET_PATH}/release/rust_http_proxy /
 # ENTRYPOINT ["/rust_http_proxy"]
