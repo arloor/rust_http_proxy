@@ -1,5 +1,4 @@
 FROM alpine as builder
-ARG TARGET_PATH=/x86_64-unknown-linux-musl
 RUN apk add --no-cache tzdata; \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
     echo "Asia/Shanghai" > /etc/timezone; \
@@ -8,8 +7,9 @@ RUN apk add --no-cache tzdata; \
 FROM scratch
 COPY --from=builder /etc/timezone /etc/timezone
 COPY --from=builder /etc/localtime /etc/localtime
-COPY target/*/release/rust_http_proxy /
-ENTRYPOINT ["/target${TARGET_PATH}/release/rust_http_proxy"]
+ARG TARGET_PATH=/x86_64-unknown-linux-musl
+COPY target${TARGET_PATH}/release/rust_http_proxy /
+ENTRYPOINT ["/rust_http_proxy"]
 
 # FROM alpine:latest
 # RUN apk add --no-cache net-tools; \
