@@ -29,9 +29,9 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         run: |
           ls -lh ${{ steps.build_musl.outputs.release_dir }}
-          dockerfile="Dockerfile.gnu"
+          dockerfile="Dockerfile.dyn"
           if [ "${{ env.USE_MUSL }}" = "true" ]; then
-            dockerfile="Dockerfile.musl"
+            dockerfile="Dockerfile.static"
           fi
           podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
@@ -69,8 +69,8 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         run: |
           ls -lh ${{ steps.build_bpf.outputs.release_dir }}
-          dockerfile="Dockerfile.gnu"
-          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf
+          dockerfile="Dockerfile.static"
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf --build-arg TARGET_PATH=/x86_64-unknown-linux-gnu
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           podman push docker.io/arloor/rust_http_proxy:bpf
       - name: gihub release
