@@ -8,8 +8,8 @@ RUN apk add --no-cache tzdata; \
 FROM scratch
 COPY --from=builder /etc/timezone /etc/timezone
 COPY --from=builder /etc/localtime /etc/localtime
-COPY target${TARGET_PATH}/release/rust_http_proxy /
-ENTRYPOINT ["/rust_http_proxy"]
+COPY target/*/release/rust_http_proxy /
+ENTRYPOINT ["/target${TARGET_PATH}/release/rust_http_proxy"]
 
 # FROM alpine:latest
 # RUN apk add --no-cache net-tools; \
