@@ -98,7 +98,7 @@ rust_http_proxy -p 8888
 > 通过Github Action自动更新release，永远是最新版，可放心使用
 
 ```shell
-docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 8888
+docker run --rm --rmi --pull=newer -it --net host docker.io/arloor/rust_http_proxy -p 8888
 ```
 
 ### ebpf版本安装
@@ -114,7 +114,7 @@ rust_http_proxy -p 8888
 或者
 
 ```bash
-docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf -p 8888
+docker run --rm --rmi --pull=newer -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf -p 8888
 ```
 
 ## 可观测
