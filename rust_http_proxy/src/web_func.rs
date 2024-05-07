@@ -49,7 +49,7 @@ pub async fn serve_http_request(
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter, fn() -> Counter>,
     prom_registry: Arc<Registry>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let _hostname = &proxy_config.hostname;
+    
     let web_content_path = &proxy_config.web_content_path;
     let refer = &proxy_config.referer;
     let referer_header = req
@@ -69,6 +69,11 @@ pub async fn serve_http_request(
             return Ok(build_500_resp());
         }
     }
+    let _hostname = &proxy_config.hostname;
+    let _hostname = req
+        .uri()
+        .authority()
+        .map_or(_hostname.as_str(), |authority| authority.host());
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         #[cfg(target_os = "linux")]
@@ -435,7 +440,7 @@ lazy_static! {
 
 async fn _speed(
     net_monitor: NetMonitor,
-    hostname: &String,
+    hostname: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let r = _fetch_all(net_monitor._get_data()).await;
     let mut scales = vec![];
