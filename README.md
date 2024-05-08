@@ -103,7 +103,7 @@ docker run --rm --rmi --pull=newer -it --net host docker.io/arloor/rust_http_pro
 
 ### ebpf版本安装
 
-> 注意：ebpf版本并没有什么新特性，只是为了学习下新技术的自嗨。运行此版本需要zlib (libz-dev or zlib-devel ) 和 libelf (libelf-dev or elfutils-libelf-devel )，yum和apt的linux发行版可以通过 `yum install zlib-devel elfutils-libelf-devel` 或 `apt-get install libz-dev libelf-dev` 安装
+> 注意：ebpf版本并没有什么新特性，只是为了学习下新技术的自嗨。
 
 ```bash
 curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/vebpf/rust_http_proxy -o /tmp/rust_http_proxy
