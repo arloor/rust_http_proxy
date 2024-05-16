@@ -16,7 +16,7 @@ use crate::{IDLE_SECONDS, REFRESH_SECONDS};
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
 #[derive(Parser)]
 #[command(author, version=None, about, long_about = None)]
-pub struct ProxyConfig {
+pub struct Param {
     #[arg(long, value_name = "LOG_DIR", default_value = "/tmp")]
     log_dir: String,
     #[arg(long, value_name = "LOG_FILE", default_value = "proxy.log")]
@@ -91,10 +91,10 @@ pub(crate) struct Config {
     pub(crate) tls_config_broadcast: Option<broadcast::Sender<Arc<ServerConfig>>>,
 }
 
-impl From<ProxyConfig> for Config {
-    fn from(config: ProxyConfig) -> Self {
+impl From<Param> for Config {
+    fn from(param: Param) -> Self {
         let mut basic_auth = HashMap::new();
-        for raw_user in config.users {
+        for raw_user in param.users {
             let mut user = raw_user.split(':');
             let username = user.next().unwrap_or("").to_string();
             let password = user.next().unwrap_or("").to_string();
@@ -103,11 +103,11 @@ impl From<ProxyConfig> for Config {
                 basic_auth.insert(format!("Basic {}", base64), username);
             }
         }
-        let tls_config_broadcast = if config.over_tls {
+        let tls_config_broadcast = if param.over_tls {
             let (tx, _rx) = broadcast::channel::<Arc<ServerConfig>>(10);
             let tx_clone = tx.clone();
-            let key_clone = config.key.clone();
-            let cert_clone = config.cert.clone();
+            let key_clone = param.key.clone();
+            let cert_clone = param.cert.clone();
             tokio::spawn(async move {
                 info!("update tls config every {} seconds", REFRESH_SECONDS);
                 loop {
@@ -125,24 +125,24 @@ impl From<ProxyConfig> for Config {
             None
         };
         Config {
-            cert: config.cert,
-            key: config.key,
+            cert: param.cert,
+            key: param.key,
             basic_auth,
-            web_content_path: config.web_content_path,
-            referer: config.referer,
-            never_ask_for_auth: config.never_ask_for_auth,
-            over_tls: config.over_tls,
-            hostname: config.hostname,
-            port: config.port,
+            web_content_path: param.web_content_path,
+            referer: param.referer,
+            never_ask_for_auth: param.never_ask_for_auth,
+            over_tls: param.over_tls,
+            hostname: param.hostname,
+            port: param.port,
             tls_config_broadcast,
         }
     }
 }
 
 pub(crate) fn load_config() -> &'static Config {
-    let mut config = ProxyConfig::parse();
-    config.hostname = get_hostname();
-    if let Err(log_init_error) = init_log(&config.log_dir, &config.log_file) {
+    let mut param = Param::parse();
+    param.hostname = get_hostname();
+    if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
         println!("init log error:{}", log_init_error);
         std::process::exit(1);
     }
@@ -156,8 +156,8 @@ pub(crate) fn load_config() -> &'static Config {
         info!("use aws_lc_rs as default crypto provider");
         let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
     }
-    info!("hostname seems to be {}", config.hostname);
-    let config = Config::from(config);
+    info!("hostname seems to be {}", param.hostname);
+    let config = Config::from(param);
     log_config(&config);
     info!("auto close connection after idle for {IDLE_SECONDS} seconds",);
     return Box::leak(Box::new(config));
