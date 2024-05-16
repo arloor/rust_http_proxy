@@ -1,8 +1,6 @@
 [workspace]
-members = [
-    "rust_http_proxy",
-]
+members = ["rust_http_proxy"]
 resolver = "2"
 
 [workspace.dependencies]
-socket_filter={git="https://github.com/arloor/bpf_rs_hub.git"}
+socket_filter = { git = "https://github.com/arloor/bpf_rs_hub.git" }
