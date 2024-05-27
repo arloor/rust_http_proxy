@@ -1,5 +1,5 @@
 [workspace]
-members = ["rust_http_proxy"]
+members = ["rust_http_proxy","log_x"]
 resolver = "2"
 
 [workspace.dependencies]

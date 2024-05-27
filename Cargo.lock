@@ -880,6 +880,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 
 [[package]]
+name = "log_x"
+version = "0.1.0"
+dependencies = [
+ "flexi_logger",
+ "log",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1341,7 +1349,6 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
- "flexi_logger",
  "futures-util",
  "http-body-util",
  "httpdate",
@@ -1350,6 +1357,7 @@ dependencies = [
  "jemallocator",
  "lazy_static",
  "log",
+ "log_x",
  "mime_guess",
  "percent-encoding",
  "pin-project-lite",

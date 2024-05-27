@@ -1,4 +1,4 @@
-use crate::log_x::init_log;
+use log_x::init_log;
 use base64::engine::general_purpose;
 use base64::Engine;
 use clap::Parser;

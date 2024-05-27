@@ -2,7 +2,6 @@
 mod acceptor;
 mod counter_io;
 mod ip_x;
-mod log_x;
 mod net_monitor;
 mod prom_label;
 mod proxy;
