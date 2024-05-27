@@ -704,6 +704,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "io_x"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "pin-project-lite",
+ "prom_label",
+ "prometheus-client",
+ "tokio",
+]
+
+[[package]]
 name = "ipnetwork"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1227,6 +1238,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "prom_label"
+version = "0.1.0"
+dependencies = [
+ "prometheus-client",
+]
+
+[[package]]
 name = "prometheus-client"
 version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1354,6 +1372,7 @@ dependencies = [
  "httpdate",
  "hyper",
  "hyper-util",
+ "io_x",
  "jemallocator",
  "lazy_static",
  "log",
@@ -1361,6 +1380,7 @@ dependencies = [
  "mime_guess",
  "percent-encoding",
  "pin-project-lite",
+ "prom_label",
  "prometheus-client",
  "rand",
  "regex",

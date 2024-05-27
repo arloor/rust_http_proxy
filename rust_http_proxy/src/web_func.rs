@@ -1,5 +1,5 @@
 use crate::net_monitor::{NetMonitor, TimeValue};
-use crate::prom_label::LabelImpl;
+use prom_label::LabelImpl;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ReqLabels;
@@ -129,13 +129,13 @@ fn incr_counter_if_need(
     if let Ok(ref res) = *r {
         if is_outer_view_html && (res.status().is_success() || res.status().is_redirection()) {
             http_req_counter
-                .get_or_create(&LabelImpl::from(ReqLabels {
+                .get_or_create(&LabelImpl::new(ReqLabels {
                     referer: referer_header.to_string(),
                     path: path.to_string(),
                 }))
                 .inc();
             http_req_counter
-                .get_or_create(&LabelImpl::from(ReqLabels {
+                .get_or_create(&LabelImpl::new(ReqLabels {
                     referer: "all".to_string(),
                     path: "all".to_string(),
                 }))

@@ -1,21 +1,18 @@
 #![deny(warnings)]
 mod acceptor;
-mod counter_io;
 mod ip_x;
 mod net_monitor;
-mod prom_label;
 mod proxy;
 mod tls_helper;
 mod web_func;
 #[macro_use]
 mod macros;
 mod config;
-mod timeout_io;
 
 use crate::config::Config;
 
 use crate::ip_x::local_ip;
-use crate::timeout_io::TimeoutIO;
+use io_x::TimeoutIO;
 use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
 

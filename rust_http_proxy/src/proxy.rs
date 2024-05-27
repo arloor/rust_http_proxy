@@ -7,10 +7,9 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    counter_io::CounterIO, net_monitor::NetMonitor, prom_label::LabelImpl, timeout_io::TimeoutIO,
-    web_func, Config, LOCAL_IP,
-};
+use crate::{net_monitor::NetMonitor, web_func, Config, LOCAL_IP};
+use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
+
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::client::conn::http1::Builder;
 use hyper::{
@@ -179,16 +178,26 @@ impl ProxyHandler {
                                     let target_stream = CounterIO::new(
                                         target_stream,
                                         proxy_traffic,
-                                        LabelImpl::from(access_label),
+                                        LabelImpl::new(access_label),
                                     );
                                     if let Err(e) = tunnel(upgraded, target_stream).await {
                                         // if e.kind() != ErrorKind::TimedOut {
-                                        warn!("[tunnel io error] [{}]: [{}] {} ", access_tag,e.kind(), e);
+                                        warn!(
+                                            "[tunnel io error] [{}]: [{}] {} ",
+                                            access_tag,
+                                            e.kind(),
+                                            e
+                                        );
                                         // }
                                     };
                                 }
                                 Err(e) => {
-                                    warn!("[tunnel establish error] [{}]: [{}] {} ", access_label,e.kind(), e)
+                                    warn!(
+                                        "[tunnel establish error] [{}]: [{}] {} ",
+                                        access_label,
+                                        e.kind(),
+                                        e
+                                    )
                                 }
                             }
                         }
@@ -223,7 +232,7 @@ impl ProxyHandler {
             let server_mod: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
                 stream,
                 self.proxy_traffic.clone(),
-                LabelImpl::from(AccessLabel {
+                LabelImpl::new(AccessLabel {
                     client: client_socket_addr.ip().to_canonical().to_string(),
                     target: format!("{}:{}", host, port),
                     username,
