@@ -143,8 +143,7 @@ pub(crate) fn load_config() -> &'static Config {
     let mut param = Param::parse();
     param.hostname = get_hostname();
     if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
-        println!("init log error:{}", log_init_error);
-        std::process::exit(1);
+        panic!("init log error:{}", log_init_error);
     }
     #[cfg(all(feature = "ring", not(feature = "aws_lc_rs")))]
     {
