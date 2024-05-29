@@ -15,8 +15,8 @@ tokio-rustls = { version = "0.26", features = [
     "logging",
     "tls12",
 ], default-features = false }
-futures-util.workspace=true
-log = "0.4"
+futures-util.workspace = true
+log.workspace = true
 
 rand = "0.8"
 tokio-util = "0.7"

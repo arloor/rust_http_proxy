@@ -11,4 +11,4 @@ path = "src/lib.rs" # 库文件的路径
 
 [dependencies]
 flexi_logger = { version = "0.28", features = ["async"] }
-log= "0.4"
+log.workspace = true
