@@ -6,6 +6,7 @@ use crate::proxy::ReqLabels;
 use crate::Config;
 use http::response::Builder;
 use lazy_static::lazy_static;
+use crate::ip_x;
 
 use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
@@ -62,8 +63,8 @@ pub async fn serve_http_request(
         // 拒绝图片盗链
         if !referer_header.contains(refer) {
             warn!(
-                "{} wrong Referer Header \"{}\" from {}",
-                path, referer_header, client_socket_addr
+                "{} wrong Referer Header \"{}\" from [{}]",
+                path, referer_header, ip_x::format_socket_addr(&client_socket_addr, " ")
             );
             return not_found();
         }
