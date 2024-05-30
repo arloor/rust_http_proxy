@@ -65,7 +65,7 @@ pub async fn serve_http_request(
                 "{} wrong Referer Header \"{}\" from {}",
                 path, referer_header, client_socket_addr
             );
-            return Ok(build_500_resp());
+            return not_found();
         }
     }
     let _hostname = &proxy_config.hostname;
