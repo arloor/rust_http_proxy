@@ -37,7 +37,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
-const REFRESH_SECONDS: u64 = 60 * 60; // 1 hour
+const REFRESH_SECONDS: u64 = 24 * 60 * 60; // 24 hour
 pub(crate) const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 600 } else { 10 }; // 3 minutes
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
