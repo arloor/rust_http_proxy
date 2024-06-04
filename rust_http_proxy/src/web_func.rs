@@ -69,19 +69,19 @@ pub async fn serve_http_request(
             return not_found();
         }
     }
-    let hostname = &proxy_config.hostname;
-    let hostname = req
+    let _hostname = &proxy_config.hostname;
+    let _hostname = req
         .uri()
         .authority()
-        .map_or(hostname.as_str(), |authority| authority.host());
+        .map_or(_hostname.as_str(), |authority| authority.host());
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         #[cfg(target_os = "linux")]
         (_, "/nt") => _count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/speed") => _speed(_net_monitor, hostname).await,
+        (_, "/speed") => _speed(_net_monitor, _hostname).await,
         #[cfg(target_os = "linux")]
-        (_, "/net") => _speed(_net_monitor, hostname).await,
+        (_, "/net") => _speed(_net_monitor, _hostname).await,
         (_, "/metrics") => metrics(prom_registry.clone()).await,
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
