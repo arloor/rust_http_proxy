@@ -42,14 +42,15 @@ const SERVER_NAME: &str = "arloor's creation";
 
 static GZIP: &str = "gzip";
 
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_http_request(
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
     proxy_config: &'static Config,
     path: &str,
     _net_monitor: NetMonitor,
-    http_req_counter: Family<LabelImpl<ReqLabels>, Counter, fn() -> Counter>,
-    _host_transmit_bytes: Family<LabelImpl<HostLabel>, Counter, fn() -> Counter>,
+    http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
+    _host_transmit_bytes: Family<LabelImpl<HostLabel>, Counter>,
     prom_registry: Arc<Registry>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let web_content_path = &proxy_config.web_content_path;
