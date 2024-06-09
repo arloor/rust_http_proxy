@@ -1,12 +1,13 @@
+use crate::ip_x;
 use crate::net_monitor::{NetMonitor, TimeValue};
-use prom_label::LabelImpl;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
+use crate::proxy::HostLabel;
 use crate::proxy::ReqLabels;
 use crate::Config;
 use http::response::Builder;
 use lazy_static::lazy_static;
-use crate::ip_x;
+use prom_label::LabelImpl;
 
 use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
@@ -48,6 +49,7 @@ pub async fn serve_http_request(
     path: &str,
     _net_monitor: NetMonitor,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter, fn() -> Counter>,
+    _host_transmit_bytes: Family<LabelImpl<HostLabel>, Counter, fn() -> Counter>,
     prom_registry: Arc<Registry>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let web_content_path = &proxy_config.web_content_path;
@@ -64,7 +66,9 @@ pub async fn serve_http_request(
         if !referer_header.contains(refer) {
             warn!(
                 "{} wrong Referer Header \"{}\" from [{}]",
-                path, referer_header, ip_x::format_socket_addr(&client_socket_addr, " ")
+                path,
+                referer_header,
+                ip_x::format_socket_addr(&client_socket_addr, " ")
             );
             return not_found();
         }
@@ -82,7 +86,17 @@ pub async fn serve_http_request(
         (_, "/speed") => _speed(_net_monitor, _hostname).await,
         #[cfg(target_os = "linux")]
         (_, "/net") => _speed(_net_monitor, _hostname).await,
-        (_, "/metrics") => metrics(prom_registry.clone()).await,
+        (_, "/metrics") => {
+            #[cfg(feature = "bpf")]
+            {
+                let val = _net_monitor.fetch_current_value();
+                _host_transmit_bytes
+                    .get_or_create(&LabelImpl::new(HostLabel {}))
+                    .inner()
+                    .store(val, std::sync::atomic::Ordering::Relaxed);
+            }
+            metrics(prom_registry.clone()).await
+        }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
                 && !referer_header.is_empty()
@@ -174,10 +188,10 @@ async fn serve_path(
         return not_found();
     }
     let path = if String::from(url_path).ends_with('/') {
-            format!("{}{}index.html", web_content_path, url_path)
-        } else {
-            format!("{}{}", web_content_path, url_path)
-        };
+        format!("{}{}index.html", web_content_path, url_path)
+    } else {
+        format!("{}{}", web_content_path, url_path)
+    };
     let mut path = PathBuf::from(path);
     let meta = match metadata(&path).await {
         Ok(meta) => {

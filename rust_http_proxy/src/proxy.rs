@@ -31,26 +31,26 @@ pub struct ProxyHandler {
     prom_registry: Arc<Registry>,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
+    host_transmit_bytes: Family<LabelImpl<HostLabel>, Counter>,
     net_monitor: NetMonitor,
 }
 
 impl ProxyHandler {
     pub fn new() -> ProxyHandler {
-        let monitor: NetMonitor = NetMonitor::new();
-        monitor.start();
         let mut registry = <Registry>::default();
-        let http_requests = Family::<LabelImpl<ReqLabels>, Counter>::default();
-        registry.register(
-            "req_from_out",
-            "Number of HTTP requests received",
-            http_requests.clone(),
-        );
+        let http_req_counter = Family::<LabelImpl<ReqLabels>, Counter>::default();
+        registry.register("req_from_out", "Number of HTTP requests received", http_req_counter.clone());
         let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
         registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
+        let host_transmit_bytes = Family::<LabelImpl<HostLabel>, Counter>::default();
+        registry.register("host_transmit_bytes", "num host_transmit_bytes", host_transmit_bytes.clone());
+        let monitor: NetMonitor = NetMonitor::new();
+        monitor.start();
         ProxyHandler {
             prom_registry: Arc::new(registry),
-            http_req_counter: http_requests,
+            http_req_counter,
             proxy_traffic,
+            host_transmit_bytes,
             net_monitor: monitor,
         }
     }
@@ -83,6 +83,7 @@ impl ProxyHandler {
                     path,
                     self.net_monitor.clone(),
                     self.http_req_counter.clone(),
+                    self.host_transmit_bytes.clone(),
                     self.prom_registry.clone(),
                 )
                 .await
@@ -304,6 +305,10 @@ pub struct AccessLabel {
     pub client: String,
     pub target: String,
     pub username: String,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct HostLabel{
 }
 
 impl Display for AccessLabel {

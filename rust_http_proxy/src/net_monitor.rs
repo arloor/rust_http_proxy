@@ -19,6 +19,7 @@ impl TimeValue {
 
 #[cfg(feature = "bpf")]
 use socket_filter::SocketFilter;
+
 #[derive(Clone)]
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
@@ -42,17 +43,13 @@ impl NetMonitor {
     }
     pub fn start(&self) {
         if cfg!(target_os = "linux") {
+            let self_clone = self.clone();
             let to_move = self.buffer.clone();
-            #[cfg(feature = "bpf")]
-            let socket_filter = self.socket_filter.clone();
             tokio::spawn(async move {
                 let mut last: u64 = 0;
                 loop {
                     {
-                        #[cfg(feature = "bpf")]
-                        let new = socket_filter.get_current_outbound_bytes();
-                        #[cfg(not(feature = "bpf"))]
-                        let new = fetch_current_value();
+                        let new = self_clone.fetch_current_value();
                         if last != 0 {
                             let system_time = SystemTime::now();
                             let datetime: DateTime<Local> = system_time.into();
@@ -72,43 +69,48 @@ impl NetMonitor {
             });
         }
     }
-}
 
-// Inter-|   Receive                                                |  Transmit
-//      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
-//         lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
-//       ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
-#[cfg(not(feature = "bpf"))]
-fn fetch_current_value() -> u64 {
-    use std::fs;
-    if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
-        content = content.replace("\r\n", "\n");
-        let strs = content.split('\n');
-        let mut new: u64 = 0;
-        for str in strs {
-            let array: Vec<&str> = str.split_whitespace().collect();
+    #[cfg(feature = "bpf")]
+    pub fn fetch_current_value(&self) -> u64 {
+        self.socket_filter.get_current_outbound_bytes()
+    }
 
-            if array.len() == 17 {
-                if *array.first().unwrap_or(&"") == "lo:" {
-                    continue;
+    // Inter-|   Receive                                                |  Transmit
+    //      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    //         lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
+    //       ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
+    #[cfg(not(feature = "bpf"))]
+    pub fn fetch_current_value(&self) -> u64 {
+        use std::fs;
+        if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
+            content = content.replace("\r\n", "\n");
+            let strs = content.split('\n');
+            let mut new: u64 = 0;
+            for str in strs {
+                let array: Vec<&str> = str.split_whitespace().collect();
+
+                if array.len() == 17 {
+                    if *array.first().unwrap_or(&"") == "lo:" {
+                        continue;
+                    }
+                    if array.first().unwrap_or(&"").starts_with("veth") {
+                        continue;
+                    }
+                    if array.first().unwrap_or(&"").starts_with("flannel") {
+                        continue;
+                    }
+                    if array.first().unwrap_or(&"").starts_with("cni0") {
+                        continue;
+                    }
+                    if array.first().unwrap_or(&"").starts_with("utun") {
+                        continue;
+                    }
+                    new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
                 }
-                if array.first().unwrap_or(&"").starts_with("veth") {
-                    continue;
-                }
-                if array.first().unwrap_or(&"").starts_with("flannel") {
-                    continue;
-                }
-                if array.first().unwrap_or(&"").starts_with("cni0") {
-                    continue;
-                }
-                if array.first().unwrap_or(&"").starts_with("utun") {
-                    continue;
-                }
-                new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
             }
+            new
+        } else {
+            0
         }
-        new
-    } else {
-        0
     }
 }
