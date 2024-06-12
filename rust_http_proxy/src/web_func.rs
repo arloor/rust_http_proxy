@@ -235,7 +235,7 @@ async fn serve_path(
         String::from(content_type)
     };
     let mut builder = Response::builder()
-        .header(http::header::CONTENT_TYPE, content_type.clone())
+        .header(http::header::CONTENT_TYPE, content_type.as_str())
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::ACCEPT_RANGES, "bytes")
         .header(http::header::SERVER, SERVER_NAME);

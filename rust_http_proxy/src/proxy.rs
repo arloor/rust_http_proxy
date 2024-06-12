@@ -172,7 +172,7 @@ impl ProxyHandler {
                                 username,
                             };
                             // Connect to remote server
-                            match TcpStream::connect(addr.clone()).await {
+                            match TcpStream::connect(addr.as_str()).await {
                                 Ok(target_stream) => {
                                     let access_tag = access_label.to_string();
                                     let target_stream = CounterIO::new(
