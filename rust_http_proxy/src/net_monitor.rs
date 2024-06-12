@@ -44,7 +44,6 @@ impl NetMonitor {
     pub fn start(&self) {
         if cfg!(target_os = "linux") {
             let self_clone = self.clone();
-            let to_move = self.buffer.clone();
             tokio::spawn(async move {
                 let mut last: u64 = 0;
                 loop {
@@ -53,7 +52,7 @@ impl NetMonitor {
                         if last != 0 {
                             let system_time = SystemTime::now();
                             let datetime: DateTime<Local> = system_time.into();
-                            let mut buffer = to_move.write().await;
+                            let mut buffer = self_clone.buffer.write().await;
                             buffer.push_back(TimeValue::new(
                                 datetime.format("%H:%M:%S").to_string(),
                                 (new - last) * 8 / INTERVAL_SECONDS,

@@ -3,7 +3,6 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
-    sync::Arc,
     time::Duration,
 };
 
@@ -26,9 +25,9 @@ use prometheus_client::{
 use rand::Rng;
 use tokio::{net::TcpStream, pin};
 
-#[derive(Clone)]
+// #[derive(Clone)]
 pub struct ProxyHandler {
-    prom_registry: Arc<Registry>,
+    prom_registry: Registry,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     host_transmit_bytes: Family<LabelImpl<HostLabel>, Counter>,
@@ -47,7 +46,7 @@ impl ProxyHandler {
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
         ProxyHandler {
-            prom_registry: Arc::new(registry),
+            prom_registry: registry,
             http_req_counter,
             proxy_traffic,
             host_transmit_bytes,

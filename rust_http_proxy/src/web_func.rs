@@ -28,7 +28,6 @@ use regex::Regex;
 use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -51,7 +50,7 @@ pub async fn serve_http_request(
     _net_monitor: &NetMonitor,
     http_req_counter: &Family<LabelImpl<ReqLabels>, Counter>,
     _host_transmit_bytes: &Family<LabelImpl<HostLabel>, Counter>,
-    prom_registry: &Arc<Registry>,
+    prom_registry: &Registry,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let web_content_path = &proxy_config.web_content_path;
     let refer = &proxy_config.referer;
@@ -151,7 +150,7 @@ fn incr_counter_if_need(
 }
 
 async fn metrics(
-    registry: &Arc<Registry>,
+    registry: &Registry,
     _net_monitor: &NetMonitor,
     _host_transmit_bytes: &Family<LabelImpl<HostLabel>, Counter>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
@@ -164,7 +163,7 @@ async fn metrics(
             .store(val, std::sync::atomic::Ordering::Relaxed);
     }
     let mut buffer = String::new();
-    if let Err(e) = encode(&mut buffer, registry.deref()) {
+    if let Err(e) = encode(&mut buffer, registry) {
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .header(http::header::SERVER, SERVER_NAME)

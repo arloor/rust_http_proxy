@@ -33,6 +33,7 @@ use std::error::Error as stdError;
 use std::io;
 use std::net::SocketAddr;
 
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
@@ -48,7 +49,7 @@ type DynError = Box<dyn stdError>; // wrapper for dyn Error
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 lazy_static! {
-    static ref PROXY_HANDLER: ProxyHandler = ProxyHandler::new();
+    static ref PROXY_HANDLER: Arc<ProxyHandler> =Arc::new(ProxyHandler::new());
     static ref LOCAL_IP: String = local_ip().unwrap_or("0.0.0.0".to_string());
 }
 
@@ -96,7 +97,7 @@ async fn create_dual_stack_listener(port: u16) -> io::Result<TcpListener> {
 async fn bootstrap(
     config: &'static Config,
     port: u16,
-    proxy_handler: ProxyHandler,
+    proxy_handler: Arc<ProxyHandler>,
 ) -> Result<(), DynError> {
     info!(
         "Listening on http{}://{}:{}",
@@ -158,7 +159,7 @@ async fn bootstrap(
 
 async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     io: T,
-    proxy_handler: ProxyHandler,
+    proxy_handler: Arc<ProxyHandler>,
     config: &'static Config,
     client_socket_addr: SocketAddr,
 ) {
@@ -192,7 +193,7 @@ async fn _proxy(
     req: Request<hyper::body::Incoming>,
     config: &'static Config,
     client_socket_addr: SocketAddr,
-    proxy_handler: ProxyHandler,
+    proxy_handler: Arc<ProxyHandler>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     proxy_handler.proxy(req, config, client_socket_addr).await
 }
