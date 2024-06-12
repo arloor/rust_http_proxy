@@ -167,7 +167,13 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     let timed_io = Box::pin(timed_io);
     let connection = binding.serve_connection_with_upgrades(
         TokioIo::new(timed_io),
-        service_fn(move |req| proxy(req, config, client_socket_addr, proxy_handler.clone())),
+        // service_fn(|req| _proxy(req, config, client_socket_addr, proxy_handler.clone())), // 与下面注释的方法相同，可以注意一下
+        service_fn(|req| {
+            let proxy_handler = proxy_handler.clone();
+            async move {
+                proxy_handler.proxy(req, config, client_socket_addr).await
+            }
+        }),
     );
     if let Err(err) = connection.await {
         handle_hyper_error(client_socket_addr, err);
@@ -182,7 +188,7 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
 /// * `proxy_handler` - 代理处理器
 /// # Returns
 /// * `Result<Response<BoxBody<Bytes, io::Error>>, io::Error>` - hyper::Response
-async fn proxy(
+async fn _proxy(
     req: Request<hyper::body::Incoming>,
     config: &'static Config,
     client_socket_addr: SocketAddr,
