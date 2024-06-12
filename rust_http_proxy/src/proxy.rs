@@ -81,10 +81,10 @@ impl ProxyHandler {
                     client_socket_addr,
                     proxy_config,
                     path,
-                    self.net_monitor.clone(),
-                    self.http_req_counter.clone(),
-                    self.host_transmit_bytes.clone(),
-                    self.prom_registry.clone(),
+                    &self.net_monitor,
+                    &self.http_req_counter,
+                    &self.host_transmit_bytes,
+                    &self.prom_registry,
                 )
                 .await
                 .map_err(|e| io::Error::new(ErrorKind::InvalidData, e));

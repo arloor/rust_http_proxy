@@ -48,10 +48,10 @@ pub async fn serve_http_request(
     client_socket_addr: SocketAddr,
     proxy_config: &'static Config,
     path: &str,
-    _net_monitor: NetMonitor,
-    http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
-    _host_transmit_bytes: Family<LabelImpl<HostLabel>, Counter>,
-    prom_registry: Arc<Registry>,
+    _net_monitor: &NetMonitor,
+    http_req_counter: &Family<LabelImpl<ReqLabels>, Counter>,
+    _host_transmit_bytes: &Family<LabelImpl<HostLabel>, Counter>,
+    prom_registry: &Arc<Registry>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let web_content_path = &proxy_config.web_content_path;
     let refer = &proxy_config.referer;
@@ -87,17 +87,7 @@ pub async fn serve_http_request(
         (_, "/speed") => _speed(_net_monitor, _hostname).await,
         #[cfg(target_os = "linux")]
         (_, "/net") => _speed(_net_monitor, _hostname).await,
-        (_, "/metrics") => {
-            #[cfg(feature = "bpf")]
-            {
-                let val = _net_monitor.fetch_current_value();
-                _host_transmit_bytes
-                    .get_or_create(&LabelImpl::new(HostLabel {}))
-                    .inner()
-                    .store(val, std::sync::atomic::Ordering::Relaxed);
-            }
-            metrics(prom_registry.clone()).await
-        }
+        (_, "/metrics") => metrics(prom_registry, _net_monitor,_host_transmit_bytes).await,
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
                 && !referer_header.is_empty()
@@ -138,7 +128,7 @@ fn incr_counter_if_need(
     r: &Result<Response<BoxBody<Bytes, io::Error>>, Error>,
     is_outer_view_html: bool,
     _is_shell: bool,
-    http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
+    http_req_counter: &Family<LabelImpl<ReqLabels>, Counter>,
     referer_header: &str,
     path: &str,
 ) {
@@ -160,7 +150,19 @@ fn incr_counter_if_need(
     }
 }
 
-async fn metrics(registry: Arc<Registry>) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+async fn metrics(
+    registry: &Arc<Registry>,
+    _net_monitor: &NetMonitor,
+    _host_transmit_bytes: &Family<LabelImpl<HostLabel>, Counter>,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+    #[cfg(feature = "bpf")]
+    {
+        let val = _net_monitor.fetch_current_value();
+        _host_transmit_bytes
+            .get_or_create(&LabelImpl::new(HostLabel {}))
+            .inner()
+            .store(val, std::sync::atomic::Ordering::Relaxed);
+    }
     let mut buffer = String::new();
     if let Err(e) = encode(&mut buffer, registry.deref()) {
         Response::builder()
@@ -451,7 +453,7 @@ lazy_static! {
 }
 
 async fn _speed(
-    net_monitor: NetMonitor,
+    net_monitor: &NetMonitor,
     hostname: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let r = _fetch_all(net_monitor._get_data()).await;
