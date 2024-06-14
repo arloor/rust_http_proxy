@@ -39,7 +39,7 @@ impl NetMonitor {
         }
     }
 
-    pub async fn fetch_all(&self) -> Vec<TimeValue> {
+    pub async fn _fetch_all(&self) -> Vec<TimeValue> {
         let buffer = self.buffer.read().await;
         let x = buffer.as_slices();
         let mut r = vec![];
