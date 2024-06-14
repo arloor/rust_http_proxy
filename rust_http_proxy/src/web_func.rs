@@ -1,5 +1,4 @@
 use crate::ip_x;
-use crate::net_monitor;
 use crate::net_monitor::NetMonitor;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
@@ -154,7 +153,7 @@ async fn metrics(
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     #[cfg(feature = "bpf")]
     {
-        let val = net_monitor::fetch_current_value();
+        let val = crate::net_monitor::fetch_current_value();
         _host_transmit_bytes
             .get_or_create(&LabelImpl::new(HostLabel {}))
             .inner()
