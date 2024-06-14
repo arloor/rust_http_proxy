@@ -38,7 +38,7 @@ impl NetMonitor {
         }
     }
 
-    pub async fn _fetch_all(&self) -> Vec<TimeValue> {
+    pub async fn fetch_all(&self) -> Vec<TimeValue> {
         let buffer = self.buffer.clone();
         let buffer = buffer.read().await;
         let x = buffer.as_slices();

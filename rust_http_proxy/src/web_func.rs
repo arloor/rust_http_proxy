@@ -83,7 +83,7 @@ pub async fn serve_http_request(
         (_, "/speed") => _speed(_net_monitor, _hostname).await,
         #[cfg(target_os = "linux")]
         (_, "/net") => _speed(_net_monitor, _hostname).await,
-        (_, "/metrics") => metrics(prom_registry, _net_monitor,_host_transmit_bytes).await,
+        (_, "/metrics") => metrics(prom_registry, _net_monitor, _host_transmit_bytes).await,
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
                 && !referer_header.is_empty()
@@ -452,7 +452,7 @@ async fn _speed(
     net_monitor: &NetMonitor,
     hostname: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let r = net_monitor._fetch_all().await;
+    let r = net_monitor.fetch_all().await;
     let mut scales = vec![];
     let mut series_up = vec![];
     let mut max_up = 0;
@@ -479,7 +479,6 @@ async fn _speed(
             _PART0, hostname, _PART1, scales, _PART2, interval, _PART3, series_up, _PART4
         )))
 }
-
 
 fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     let mut resp = Response::new(full_body("Internal Server Error"));
