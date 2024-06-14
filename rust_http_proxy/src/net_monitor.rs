@@ -38,9 +38,16 @@ impl NetMonitor {
         }
     }
 
-    pub fn _get_data(&self) -> Arc<RwLock<VecDeque<TimeValue>>> {
-        self.buffer.clone()
+    pub async fn _fetch_all(&self) -> Vec<TimeValue> {
+        let buffer=self.buffer.clone();
+        let buffer = buffer.read().await;
+        let x = buffer.as_slices();
+        let mut r = vec![];
+        r.extend_from_slice(x.0);
+        r.extend_from_slice(x.1);
+        r
     }
+
     pub fn start(&self) {
         if cfg!(target_os = "linux") {
             let self_clone = self.clone();

@@ -1,5 +1,5 @@
 use crate::ip_x;
-use crate::net_monitor::{NetMonitor, TimeValue};
+use crate::net_monitor::NetMonitor;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::HostLabel;
@@ -25,16 +25,13 @@ use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
 use regex::Regex;
-use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader};
-use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 
 const SERVER_NAME: &str = "arloor's creation";
@@ -455,7 +452,7 @@ async fn _speed(
     net_monitor: &NetMonitor,
     hostname: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let r = _fetch_all(net_monitor._get_data()).await;
+    let r = net_monitor._fetch_all().await;
     let mut scales = vec![];
     let mut series_up = vec![];
     let mut max_up = 0;
@@ -483,14 +480,6 @@ async fn _speed(
         )))
 }
 
-async fn _fetch_all(buffer: Arc<RwLock<VecDeque<TimeValue>>>) -> Vec<TimeValue> {
-    let buffer = buffer.read().await;
-    let x = buffer.as_slices();
-    let mut r = vec![];
-    r.extend_from_slice(x.0);
-    r.extend_from_slice(x.1);
-    r
-}
 
 fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     let mut resp = Response::new(full_body("Internal Server Error"));
