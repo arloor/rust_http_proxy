@@ -17,14 +17,16 @@ impl TimeValue {
     }
 }
 
+const IGNORED_INTERFACES: [&str; 6] = ["lo", "podman", "veth", "flannel", "cni0", "utun"];
 #[cfg(feature = "bpf")]
 use lazy_static::lazy_static;
 #[cfg(feature = "bpf")]
 use socket_filter::SocketFilter;
 #[cfg(feature = "bpf")]
 lazy_static! {
-    static ref SOCKET_FILTER: Arc<SocketFilter> = Arc::new(SocketFilter::default());
+    static ref SOCKET_FILTER: Arc<SocketFilter> = Arc::new(SocketFilter::new(&IGNORED_INTERFACES));
 }
+
 
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
@@ -97,19 +99,8 @@ pub fn fetch_current_value() -> u64 {
             let array: Vec<&str> = str.split_whitespace().collect();
 
             if array.len() == 17 {
-                if *array.first().unwrap_or(&"") == "lo:" {
-                    continue;
-                }
-                if array.first().unwrap_or(&"").starts_with("veth") {
-                    continue;
-                }
-                if array.first().unwrap_or(&"").starts_with("flannel") {
-                    continue;
-                }
-                if array.first().unwrap_or(&"").starts_with("cni0") {
-                    continue;
-                }
-                if array.first().unwrap_or(&"").starts_with("utun") {
+                let interface = *array.first().unwrap_or(&"");
+                if IGNORED_INTERFACES.iter().any(|&ignored| interface.starts_with(ignored)) {
                     continue;
                 }
                 new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
