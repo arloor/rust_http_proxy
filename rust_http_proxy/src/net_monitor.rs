@@ -27,7 +27,6 @@ lazy_static! {
     static ref SOCKET_FILTER: Arc<SocketFilter> = Arc::new(SocketFilter::new(&IGNORED_INTERFACES));
 }
 
-
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
 }
@@ -100,7 +99,10 @@ pub fn fetch_current_value() -> u64 {
 
             if array.len() == 17 {
                 let interface = *array.first().unwrap_or(&"");
-                if IGNORED_INTERFACES.iter().any(|&ignored| interface.starts_with(ignored)) {
+                if IGNORED_INTERFACES
+                    .iter()
+                    .any(|&ignored| interface.starts_with(ignored))
+                {
                     continue;
                 }
                 new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
