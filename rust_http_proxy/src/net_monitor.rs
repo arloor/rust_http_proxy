@@ -21,10 +21,10 @@ const IGNORED_INTERFACES: [&str; 6] = ["lo", "podman", "veth", "flannel", "cni0"
 #[cfg(feature = "bpf")]
 use lazy_static::lazy_static;
 #[cfg(feature = "bpf")]
-use socket_filter::SocketFilter;
+use socket_filter::TransmitCounter;
 #[cfg(feature = "bpf")]
 lazy_static! {
-    static ref SOCKET_FILTER: Arc<SocketFilter> = Arc::new(SocketFilter::new(&IGNORED_INTERFACES));
+    static ref SOCKET_FILTER: Arc<TransmitCounter> = Arc::new(TransmitCounter::new(&IGNORED_INTERFACES));
 }
 
 pub struct NetMonitor {

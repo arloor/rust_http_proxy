@@ -1538,7 +1538,7 @@ dependencies = [
 [[package]]
 name = "socket_filter"
 version = "0.1.0"
-source = "git+https://github.com/arloor/bpf_rs_hub.git#968a633d0b1ce4c1783310f2827785f72c9a720d"
+source = "git+https://github.com/arloor/bpf_rs_hub.git#81baa5161c4a0efea1c0af8ecc7a62c96b2700fe"
 dependencies = [
  "libbpf-cargo",
  "libbpf-rs",
