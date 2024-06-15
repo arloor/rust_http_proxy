@@ -1,0 +1,34 @@
+{
+    // https://mcr.microsoft.com/en-us/catalog?search=devcontainers
+    //"image": "mcr.microsoft.com/devcontainers/rust:bookworm", // 自定义镜像
+    "postCreateCommand": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-host x86_64-unknown-linux-gnu -y;mkdir -p ~/.ssh;echo \"$SSH_PRIVATE\" > ~/.ssh/id_rsa;chmod 0400 ~/.ssh/id_rsa", // 容器创建后的初始化命令
+    "customizations": {
+        "codespaces": {
+            "openFiles": [
+                "/workspaces/rust_http_proxy/src/main.rs"
+            ]
+        }, // 打开的文件
+        "vscode": {
+            "extensions": [ // 定义要装哪些插件
+                "ms-ceintl.vscode-language-pack-zh-hans", // 中文语言包
+                "vadimcn.vscode-lldb", // 调试插件
+                "rust-lang.rust-analyzer", // rust语言支持
+                "github.copilot", // SSH_PRIVATE
+                "github.vscode-github-actions", // github actions
+                "redhat.vscode-yaml", // yaml语言支持
+                "ms-python.python", // python语言支持
+                "ms-python.vscode-pylance",
+                "foxundermoon.shell-format", // shell格式化
+                "tamasfe.even-better-toml", // toml格式化
+                "serayuzgur.crates", // crates.io插件
+                "waderyan.gitblame",
+                "donjayamanne.githistory"
+            ],
+            "settings": {
+                "files.watcherExclude": {
+                    "**/target/**": true
+                }
+            }
+        }
+    }
+}

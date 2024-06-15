@@ -1,0 +1,11 @@
+[package]
+name = "io_x"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+prometheus-client.workspace=true
+pin-project-lite.workspace=true
+tokio.workspace = true
+prom_label={path = "../prom_label"}
+futures-util.workspace=true

@@ -1,0 +1,88 @@
+name: auto_release
+on:
+  push:
+    branches: [ "**"]
+  pull_request:
+    branches: [ "master" ]
+permissions:
+  contents: write
+env:
+  CARGO_TERM_COLOR: always
+  USE_MUSL: true
+jobs:
+  general:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set outputs
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
+      - name: build musl
+        id: build_musl
+        uses: arloor/rust_musl_action@latest
+        with:
+          use_musl: ${{ env.USE_MUSL }}
+          extra_deps: cmake
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs
+          apt_mirror: mirrors.mit.edu
+      - name: docker build and push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        run: |
+          ls -lh ${{ steps.build_musl.outputs.release_dir }}
+          dockerfile="Dockerfile.dyn"
+          if [ "${{ env.USE_MUSL }}" = "true" ]; then
+            dockerfile="Dockerfile.static"
+          fi
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest
+          podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
+          # podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
+          podman push docker.io/arloor/rust_http_proxy:latest
+      - name: gihub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 从Cargo.toml中提取版本号
+          version=$(grep -E ^version rust_http_proxy/Cargo.toml|awk -F "[\"]" '{print $2}')
+          if [ -z "$version" ]; then echo "version not found"; exit 1; fi
+          if $(gh release delete v${version} -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
+          git config --local user.email "admin@arloor.com"
+          git config --local user.name "arloor"
+          gh release create v${version} ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
+  ebpf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build bpf
+        id: build_bpf
+        uses: arloor/rust_musl_action@latest
+        with:
+          use_musl: false
+          extra_deps: cmake libbpf-dev zlib1g-dev libelf-dev pkg-config clang autoconf autopoint flex bison gawk make
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,jemalloc,bpf_vendored
+          apt_mirror: mirrors.mit.edu
+          rust_flags: -C target-feature=+crt-static
+      - name: docker build and push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        run: |
+          ls -lh ${{ steps.build_bpf.outputs.release_dir }}
+          dockerfile="Dockerfile.static"
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf --build-arg TARGET_PATH=/x86_64-unknown-linux-gnu
+          podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
+          podman push docker.io/arloor/rust_http_proxy:bpf
+      - name: gihub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version='ebpf'
+          if $(gh release delete v${version} -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
+          git config --local user.email "admin@arloor.com"
+          git config --local user.name "arloor"
+          gh release create v${version} ${{ steps.build_bpf.outputs.release_dir }}rust_http_proxy -n "$version" -t "$version" --prerelease

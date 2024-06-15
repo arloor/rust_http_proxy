@@ -1,0 +1,8 @@
+port=3128
+log_dir=/tmp
+log_file=proxy.log
+cert=/usr/share/rust_http_proxy/cert.pem
+raw_key=/usr/share/rust_http_proxy/privkey.pem
+basic_auth=""
+ask_for_auth=false
+over_tls=false

@@ -1,0 +1,60 @@
+</title>
+    <meta http-equiv="refresh" content="5">
+    <script src="https://www.arloor.com/echarts.min.js"></script>
+</head>
+<body style="margin: 0;height:100%;">
+<div id="main" style="width: 100%;height: 100vh;"></div>
+<script type="text/javascript">
+    // 基于准备好的dom，初始化echarts实例
+    var myChart = echarts.init(document.getElementById('main'));
+    // 指定图表的配置项和数据
+    var option = {
+        title: {
+            text: ''
+        },
+        tooltip: {
+            trigger: 'axis',
+            formatter: function (value) {
+                //这里的value[0].value就是我需要每次显示在图上的数据
+                if (value[0].value <= 0) {
+                    value[0].value = '0b/s';
+                } else {
+                    var k = 1024;
+                    var sizes = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s', 'Pb/s', 'Eb/s', 'Zb/s', 'Yb/s'];
+                    //这里是取自然对数，也就是log（k）（value[0].value），求出以k为底的多少次方是value[0].value
+                    var c = Math.floor(Math.log(value[0].value) / Math.log(k));
+                    value[0].value = (value[0].value / Math.pow(k, c)).toPrecision(4) + ' ' + sizes[c];
+                }
+            
+                //这里的value[0].name就是每次显示的name
+                return value[0].name + "<br/>" + "上行网速: " + value[0].value ;
+            }
+        },
+        legend: {
+            data: ["上行网速"]
+        },
+        toolbox: {
+            feature: {
+                mark: {
+                    show: true
+                },
+                dataView: {
+                    show: true,
+                    readOnly: false
+                },
+                magicType: {
+                    show: true,
+                    type: ['line', 'bar']
+                },
+                restore: {
+                    show: true
+                },
+                saveAsImage: {
+                    show: true
+                }
+            }
+        },
+        xAxis: {
+            type: 'category',
+            boundaryGap: false,
+            data:
