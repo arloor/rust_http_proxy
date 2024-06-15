@@ -17,7 +17,7 @@ tokio-rustls = { version = "0.26", features = [
 ], default-features = false }
 futures-util.workspace = true
 log.workspace = true
-
+pnet = "0.35"  
 rand = "0.8"
 tokio-util = "0.7"
 mime_guess = "2.0"

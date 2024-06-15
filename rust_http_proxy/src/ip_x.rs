@@ -1,7 +1,9 @@
 use std::io;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
-use std::net::UdpSocket;
+// use std::net::UdpSocket;
+
+use crate::net_monitor;
 
 pub(crate) fn _ipv6_mapped_to_ipv4(addr: IpAddr) -> IpAddr {
     match addr {
@@ -33,12 +35,39 @@ pub(crate) fn _ipv6_mapped_to_ipv4(addr: IpAddr) -> IpAddr {
     }
 }
 
+// pub fn local_ip() -> io::Result<String> {
+//     let socket = UdpSocket::bind("0.0.0.0:0")?;
+//     socket.connect("8.8.8.8:80")?;
+//     socket
+//         .local_addr()
+//         .map(|local_addr| local_addr.ip().to_string())
+// }
+
 pub fn local_ip() -> io::Result<String> {
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("8.8.8.8:80")?;
-    socket
-        .local_addr()
-        .map(|local_addr| local_addr.ip().to_string())
+    let all_interfaces = pnet::datalink::interfaces();
+    let all_interfaces = all_interfaces
+        .iter()
+        .filter(|iface| {
+            !net_monitor::IGNORED_INTERFACES
+                .iter()
+                .any(|&ignored| iface.name.starts_with(ignored))
+        })
+        .collect::<Vec<_>>();
+
+    all_interfaces
+        .iter()
+        .find(|interface| {
+            interface.is_up() && !interface.is_loopback() && !interface.ips.is_empty()
+        })
+        .map(|interface| {
+            interface
+                .ips
+                .iter()
+                .find(|ip| ip.is_ipv4())
+                .map(|ip| ip.ip().to_string())
+                .unwrap()
+        })
+        .ok_or(io::Error::new(io::ErrorKind::NotFound, "No local ip found"))
 }
 
 pub fn format_socket_addr(socket_addr: &std::net::SocketAddr, linker: &'static str) -> String {
