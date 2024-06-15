@@ -49,7 +49,7 @@ type DynError = Box<dyn stdError>; // wrapper for dyn Error
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 lazy_static! {
-    static ref PROXY_HANDLER: Arc<ProxyHandler> =Arc::new(ProxyHandler::new());
+    static ref PROXY_HANDLER: Arc<ProxyHandler> = Arc::new(ProxyHandler::new());
     static ref LOCAL_IP: String = local_ip().unwrap_or("0.0.0.0".to_string());
 }
 
@@ -171,9 +171,7 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
         // service_fn(|req| _proxy(req, config, client_socket_addr, proxy_handler.clone())), // 与下面注释的方法相同，可以注意一下
         service_fn(|req| {
             let proxy_handler = proxy_handler.clone();
-            async move {
-                proxy_handler.proxy(req, config, client_socket_addr).await
-            }
+            async move { proxy_handler.proxy(req, config, client_socket_addr).await }
         }),
     );
     if let Err(err) = connection.await {
