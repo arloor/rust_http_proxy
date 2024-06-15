@@ -1,7 +1,0 @@
-/target
-.idea
-*.pem
-proxy.log*
-.DS_Store
-vmlinux.h
-.vscode/tasks.json
