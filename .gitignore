@@ -4,4 +4,4 @@
 proxy.log*
 .DS_Store
 vmlinux.h
-/.vscode
+/.vscode/tasks.json
