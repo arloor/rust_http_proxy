@@ -184,7 +184,7 @@ cargo build --features jemalloc
 激活方式：
 
 ```bash
-cargo build --features aws_lc_rs
+cargo build --no-default-features --features aws_lc_rs
 ```
 
 **备注**：激活 `aws-lc-rs/bindgen`:
