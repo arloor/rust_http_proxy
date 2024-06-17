@@ -17,7 +17,7 @@ impl TimeValue {
     }
 }
 
-pub(crate) const IGNORED_INTERFACES: [&str; 6] = ["lo", "podman", "veth", "flannel", "cni0", "utun"];
+pub(crate) const IGNORED_INTERFACES: [&str; 7] = ["lo", "podman", "veth", "flannel", "cni0", "utun","docker"];
 #[cfg(feature = "bpf")]
 use lazy_static::lazy_static;
 #[cfg(feature = "bpf")]
