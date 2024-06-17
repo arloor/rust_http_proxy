@@ -16,6 +16,7 @@
 				// "jemalloc",
 				// "--no-default-features",
 				// "--features","aws_lc_rs",
+				// "--features","pnet",
 			],
 			"group": {
 				"kind": "build",
