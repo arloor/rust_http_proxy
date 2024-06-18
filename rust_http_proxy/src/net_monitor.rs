@@ -18,14 +18,7 @@ impl TimeValue {
 }
 
 pub(crate) const IGNORED_INTERFACES: [&str; 7] = ["lo", "podman", "veth", "flannel", "cni0", "utun","docker"];
-#[cfg(feature = "bpf")]
-use lazy_static::lazy_static;
-#[cfg(feature = "bpf")]
-use socket_filter::TransmitCounter;
-#[cfg(feature = "bpf")]
-lazy_static! {
-    static ref SOCKET_FILTER: Arc<TransmitCounter> = Arc::new(TransmitCounter::new(&IGNORED_INTERFACES));
-}
+
 
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
@@ -78,6 +71,14 @@ impl NetMonitor {
     }
 }
 
+#[cfg(feature = "bpf")]
+use lazy_static::lazy_static;
+#[cfg(feature = "bpf")]
+use socket_filter::TransmitCounter;
+#[cfg(feature = "bpf")]
+lazy_static! {
+    static ref SOCKET_FILTER: Arc<TransmitCounter> = Arc::new(TransmitCounter::new(&IGNORED_INTERFACES));
+}
 #[cfg(feature = "bpf")]
 pub fn fetch_current_value() -> u64 {
     SOCKET_FILTER.get_current_outbound_bytes()
