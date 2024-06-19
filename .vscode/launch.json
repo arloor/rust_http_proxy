@@ -3,14 +3,14 @@
     // 悬停以查看现有属性的描述。
     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
-    // https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md#rust-language-support
     "configurations": [
         {
             "type": "lldb",
             "request": "launch",
             "name": "Debug rust_http_proxy",
             // https://code.visualstudio.com/docs/editor/variables-reference
-            "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
+            // "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
+            // "preLaunchTask": "rust: cargo build",
             "args": [
                 "-p",
                 "7788",
@@ -29,11 +29,31 @@
             ],
             "cwd": "${workspaceFolder}",
             "terminal": "integrated",
-            "preLaunchTask": "rust: cargo build",
+            // https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md#rust-language-support
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=rust_http_proxy",
+                    "--package=rust_http_proxy",
+                    // "--features",
+                    // "bpf",
+                    // "--features",
+                    // "jemalloc",
+                    // "--no-default-features",
+                    // "--features","aws_lc_rs",
+                    // "--features","pnet",
+                ],
+                "problemMatcher": "$rustc",                 // Problem matcher(s) to apply to cargo output.
+                "filter": {
+                    "kind": "bin"
+                }
+            },
             "env": {
                 "HOSTNAME": "test"
             },
-            "sourceLanguages": ["rust"]
+            "sourceLanguages": [
+                "rust"
+            ]
         }
     ]
 }
