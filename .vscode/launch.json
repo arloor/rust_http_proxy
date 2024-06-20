@@ -8,6 +8,34 @@
             "type": "lldb",
             "request": "launch",
             "name": "Debug rust_http_proxy",
+            "cwd": "${workspaceFolder}",
+            "terminal": "integrated",
+            // https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md#rust-language-support
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=rust_http_proxy",
+                    "--package=rust_http_proxy",
+                    // "--features",
+                    // "bpf",
+                    // "--features",
+                    // "jemalloc",
+                    // "--no-default-features",
+                    // "--features","aws_lc_rs",
+                    // "--features","pnet",
+                ],
+                "env": {
+                    "RUST_BACKTRACE": "1",
+                },
+                "problemMatcher": "$rustc", // Problem matcher(s) to apply to cargo output.
+                "filter": {
+                    "kind": "bin",
+                    "name": "rust_http_proxy"
+                }
+            },
+            "sourceLanguages": [
+                "rust"
+            ],
             // https://code.visualstudio.com/docs/editor/variables-reference
             // "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
             // "preLaunchTask": "rust: cargo build",
@@ -27,33 +55,9 @@
                 "-r=arloor",
                 // "--log-dir=tmp"
             ],
-            "cwd": "${workspaceFolder}",
-            "terminal": "integrated",
-            // https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md#rust-language-support
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=rust_http_proxy",
-                    "--package=rust_http_proxy",
-                    // "--features",
-                    // "bpf",
-                    // "--features",
-                    // "jemalloc",
-                    // "--no-default-features",
-                    // "--features","aws_lc_rs",
-                    // "--features","pnet",
-                ],
-                "problemMatcher": "$rustc",                 // Problem matcher(s) to apply to cargo output.
-                "filter": {
-                    "kind": "bin"
-                }
-            },
             "env": {
                 "HOSTNAME": "test"
             },
-            "sourceLanguages": [
-                "rust"
-            ]
         }
     ]
 }
