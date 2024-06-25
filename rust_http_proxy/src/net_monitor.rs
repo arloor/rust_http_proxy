@@ -7,18 +7,21 @@ use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
 pub struct TimeValue {
-    pub time: String,
-    pub value: u64,
+    pub _time: String,
+    pub _value: u64,
 }
 
 impl TimeValue {
     pub fn new(time: String, value: u64) -> TimeValue {
-        TimeValue { time, value }
+        TimeValue {
+            _time: time,
+            _value: value,
+        }
     }
 }
 
-pub(crate) const IGNORED_INTERFACES: [&str; 7] = ["lo", "podman", "veth", "flannel", "cni0", "utun","docker"];
-
+pub(crate) const IGNORED_INTERFACES: [&str; 7] =
+    ["lo", "podman", "veth", "flannel", "cni0", "utun", "docker"];
 
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
@@ -77,7 +80,8 @@ use lazy_static::lazy_static;
 use socket_filter::TransmitCounter;
 #[cfg(feature = "bpf")]
 lazy_static! {
-    static ref SOCKET_FILTER: Arc<TransmitCounter> = Arc::new(TransmitCounter::new(&IGNORED_INTERFACES));
+    static ref SOCKET_FILTER: Arc<TransmitCounter> =
+        Arc::new(TransmitCounter::new(&IGNORED_INTERFACES));
 }
 #[cfg(feature = "bpf")]
 pub fn fetch_current_value() -> u64 {

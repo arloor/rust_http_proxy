@@ -457,10 +457,10 @@ async fn _speed(
     let mut series_up = vec![];
     let mut max_up = 0;
     for x in r {
-        scales.push(x.time);
-        series_up.push(x.value);
-        if x.value > max_up {
-            max_up = x.value;
+        scales.push(x._time);
+        series_up.push(x._value);
+        if x._value > max_up {
+            max_up = x._value;
         }
     }
     let mut interval = if max_up > 1024 * 1024 * 8 {
