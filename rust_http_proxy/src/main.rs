@@ -25,7 +25,6 @@ use hyper::service::service_fn;
 use hyper::{Error, Request, Response};
 use hyper_util::rt::tokio::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
-use ip_x::format_socket_addr;
 use lazy_static::lazy_static;
 use log::{info, warn};
 use proxy::ProxyHandler;
@@ -203,7 +202,6 @@ async fn _proxy(
 /// # Returns
 /// * `()` - 无返回值
 fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
-    let formatted_client_addr = format_socket_addr(&client_socket_addr, " ");
     if let Some(http_err) = http_err.downcast_ref::<Error>() {
         // 转换为hyper::Error
         let cause = match http_err.source() {
@@ -214,14 +212,15 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
             // 判断是否是用户错误
             warn!(
                 "[hyper user error]: {:?} from {}",
-                cause, formatted_client_addr
+                cause,
+                ip_x::FormatAddr(&client_socket_addr)
             );
         } else {
             // 系统错误
             log::debug!(
                 "[hyper system error]: {:?} from {}",
                 cause,
-                formatted_client_addr
+                ip_x::FormatAddr(&client_socket_addr)
             );
         }
     } else if let Some(io_err) = http_err.downcast_ref::<io::Error>() {
@@ -230,12 +229,13 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
             "[hyper io error]: [{}] {} from {}",
             io_err.kind(),
             io_err,
-            formatted_client_addr
+            ip_x::FormatAddr(&client_socket_addr)
         );
     } else {
         warn!(
             "[hyper other error]: {} from {}",
-            http_err, formatted_client_addr
+            http_err,
+            ip_x::FormatAddr(&client_socket_addr)
         );
     }
 }

@@ -69,9 +69,15 @@ pub fn local_ip() -> io::Result<String> {
         .ok_or(io::Error::new(io::ErrorKind::NotFound, "No local ip found"))
 }
 
-pub fn format_socket_addr(socket_addr: &std::net::SocketAddr, linker: &'static str) -> String {
-    "https://ip.im/".to_owned()
-        + &socket_addr.ip().to_canonical().to_string()
-        + linker
-        + &socket_addr.port().to_string()
+pub struct FormatAddr<'a>(pub &'a std::net::SocketAddr);
+
+impl<'a> std::fmt::Display for FormatAddr<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "https://ip.im/{}  {}",
+            self.0.ip().to_canonical(),
+            self.0.port()
+        )
+    }
 }

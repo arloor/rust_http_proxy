@@ -65,7 +65,7 @@ pub async fn serve_http_request(
                 "{} wrong Referer Header \"{}\" from [{}]",
                 path,
                 referer_header,
-                ip_x::format_socket_addr(&client_socket_addr, " ")
+                ip_x::FormatAddr(&client_socket_addr)
             );
             return not_found();
         }
