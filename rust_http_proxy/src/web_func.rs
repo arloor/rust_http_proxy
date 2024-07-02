@@ -1,4 +1,4 @@
-use crate::ip_x;
+use crate::ip_x::SocketAddrFormat;
 use crate::net_monitor::NetMonitor;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
@@ -65,7 +65,7 @@ pub async fn serve_http_request(
                 "{} wrong Referer Header \"{}\" from [{}]",
                 path,
                 referer_header,
-                ip_x::FormatAddr(&client_socket_addr)
+                SocketAddrFormat(&client_socket_addr)
             );
             return not_found();
         }

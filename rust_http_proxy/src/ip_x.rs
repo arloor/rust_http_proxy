@@ -69,9 +69,9 @@ pub fn local_ip() -> io::Result<String> {
         .ok_or(io::Error::new(io::ErrorKind::NotFound, "No local ip found"))
 }
 
-pub struct FormatAddr<'a>(pub &'a std::net::SocketAddr);
+pub struct SocketAddrFormat<'a>(pub &'a std::net::SocketAddr);
 
-impl<'a> std::fmt::Display for FormatAddr<'a> {
+impl<'a> std::fmt::Display for SocketAddrFormat<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

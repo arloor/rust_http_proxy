@@ -15,7 +15,7 @@ use crate::ip_x::local_ip;
 use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
 use io_x::TimeoutIO;
-
+use ip_x::SocketAddrFormat;
 use config::load_config;
 use futures_util::future::select_all;
 use http_body_util::combinators::BoxBody;
@@ -213,14 +213,14 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
             warn!(
                 "[hyper user error]: {:?} from {}",
                 cause,
-                ip_x::FormatAddr(&client_socket_addr)
+                SocketAddrFormat(&client_socket_addr)
             );
         } else {
             // 系统错误
             log::debug!(
                 "[hyper system error]: {:?} from {}",
                 cause,
-                ip_x::FormatAddr(&client_socket_addr)
+                SocketAddrFormat(&client_socket_addr)
             );
         }
     } else if let Some(io_err) = http_err.downcast_ref::<io::Error>() {
@@ -229,13 +229,13 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
             "[hyper io error]: [{}] {} from {}",
             io_err.kind(),
             io_err,
-            ip_x::FormatAddr(&client_socket_addr)
+            SocketAddrFormat(&client_socket_addr)
         );
     } else {
         warn!(
             "[hyper other error]: {} from {}",
             http_err,
-            ip_x::FormatAddr(&client_socket_addr)
+            SocketAddrFormat(&client_socket_addr)
         );
     }
 }
