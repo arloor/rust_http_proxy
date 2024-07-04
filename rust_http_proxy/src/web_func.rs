@@ -1,5 +1,7 @@
 use crate::ip_x::SocketAddrFormat;
 use crate::net_monitor::NetMonitor;
+use crate::proxy::build_proxy_authenticate_resp;
+use crate::proxy::check_auth;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::HostLabel;
@@ -83,7 +85,17 @@ pub async fn serve_http_request(
         (_, "/speed") => _speed(_net_monitor, _hostname).await,
         #[cfg(target_os = "linux")]
         (_, "/net") => _speed(_net_monitor, _hostname).await,
-        (_, "/metrics") => metrics(prom_registry, _net_monitor, _host_transmit_bytes).await,
+        (_, "/metrics") => {
+            let (_,authed) = check_auth(&proxy_config.basic_auth, req, &client_socket_addr, hyper::header::AUTHORIZATION);
+            if !authed {
+                return if proxy_config.never_ask_for_auth {
+                    Ok(build_500_resp())
+                } else {
+                    Ok(build_proxy_authenticate_resp())
+                };
+            }
+            metrics(prom_registry, _net_monitor, _host_transmit_bytes).await
+        }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
                 && !referer_header.is_empty()

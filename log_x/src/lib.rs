@@ -8,7 +8,6 @@ use log::{info, Record};
 
 pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLoggerError> {
     // 转换成绝对路径
-    // 转换成绝对路径
     let log_dir_path = PathBuf::from(log_dir);
     if !log_dir_path.exists() {
         fs::create_dir_all(log_dir_path.clone())?;

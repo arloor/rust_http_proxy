@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::HashMap,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
@@ -10,7 +11,7 @@ use crate::{net_monitor::NetMonitor, web_func, Config, LOCAL_IP};
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-use hyper::client::conn::http1::Builder;
+use hyper::{body::Body, client::conn::http1::Builder, header::HeaderName};
 use hyper::{
     body::Bytes, header::HeaderValue, http, upgrade::Upgraded, Method, Request, Response, Version,
 };
@@ -38,11 +39,19 @@ impl ProxyHandler {
     pub fn new() -> ProxyHandler {
         let mut registry = <Registry>::default();
         let http_req_counter = Family::<LabelImpl<ReqLabels>, Counter>::default();
-        registry.register("req_from_out", "Number of HTTP requests received", http_req_counter.clone());
+        registry.register(
+            "req_from_out",
+            "Number of HTTP requests received",
+            http_req_counter.clone(),
+        );
         let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
         registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
         let host_transmit_bytes = Family::<LabelImpl<HostLabel>, Counter>::default();
-        registry.register("host_transmit_bytes", "num host_transmit_bytes", host_transmit_bytes.clone());
+        registry.register(
+            "host_transmit_bytes",
+            "num host_transmit_bytes",
+            host_transmit_bytes.clone(),
+        );
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
         ProxyHandler {
@@ -59,7 +68,7 @@ impl ProxyHandler {
         proxy_config: &'static Config,
         client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let basic_auth = &proxy_config.basic_auth;
+        let config_basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
         if Method::CONNECT != req.method() {
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
@@ -68,7 +77,7 @@ impl ProxyHandler {
                     .decode_utf8()
                     .unwrap_or(Cow::from(raw_path));
                 let path = path.as_ref();
-                if !basic_auth.is_empty() && !never_ask_for_auth {
+                if !config_basic_auth.is_empty() && !never_ask_for_auth {
                     // 存在嗅探风险时，不伪装成http服务
                     return Err(io::Error::new(
                         ErrorKind::PermissionDenied,
@@ -106,28 +115,12 @@ impl ProxyHandler {
             };
         }
 
-        let mut username = "unkonwn".to_string();
-        let mut authed: bool = true;
-        if !basic_auth.is_empty() {
-            //需要检验鉴权
-            authed = false;
-            match req.headers().get(http::header::PROXY_AUTHORIZATION) {
-                None => warn!("no PROXY_AUTHORIZATION from {:?}", client_socket_addr),
-                Some(header) => match header.to_str() {
-                    Err(e) => warn!("解header失败，{:?} {:?}", header, e),
-                    Ok(request_auth) => match basic_auth.get(request_auth) {
-                        Some(_username) => {
-                            authed = true;
-                            username = _username.to_string();
-                        }
-                        None => warn!(
-                            "wrong PROXY_AUTHORIZATION from {:?}, wrong:{:?},right:{:?}",
-                            client_socket_addr, request_auth, basic_auth
-                        ),
-                    },
-                },
-            }
-        }
+        let (username, authed) = check_auth(
+            config_basic_auth,
+            &req,
+            &client_socket_addr,
+            http::header::PROXY_AUTHORIZATION,
+        );
         info!(
             "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
             "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
@@ -270,6 +263,38 @@ impl ProxyHandler {
     }
 }
 
+pub(crate) fn check_auth(
+    config_basic_auth: &HashMap<String, String>,
+    req: &Request<impl Body>,
+    client_socket_addr: &SocketAddr,
+    header_name: HeaderName,
+) -> (String, bool) {
+    let mut username = "unkonwn".to_string();
+    let mut authed: bool = true;
+    if !config_basic_auth.is_empty() {
+        //需要检验鉴权
+        authed = false;
+        let header_name_clone = header_name.clone();
+        let header_name_str = header_name_clone.as_str();
+        match req.headers().get(header_name) {
+            None => warn!("no {} from {:?}", header_name_str, client_socket_addr),
+            Some(header) => match header.to_str() {
+                Err(e) => warn!("解header失败，{:?} {:?}", header, e),
+                Ok(request_auth) => match config_basic_auth.get(request_auth) {
+                    Some(_username) => {
+                        authed = true;
+                        username = _username.to_string();
+                    }
+                    None => warn!(
+                        "wrong {} from {:?}, wrong:{:?},right:{:?}",
+                        header_name_str, client_socket_addr, request_auth, config_basic_auth
+                    ),
+                },
+            },
+        }
+    }
+    (username, authed)
+}
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
 async fn tunnel(
@@ -307,8 +332,7 @@ pub struct AccessLabel {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub struct HostLabel{
-}
+pub struct HostLabel {}
 
 impl Display for AccessLabel {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -316,7 +340,7 @@ impl Display for AccessLabel {
     }
 }
 
-fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, io::Error>> {
+pub(crate) fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, io::Error>> {
     let mut resp = Response::new(full_body("auth need"));
     resp.headers_mut().append(
         http::header::PROXY_AUTHENTICATE,
