@@ -31,7 +31,7 @@ pub struct ProxyHandler {
     prom_registry: Registry,
     http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
-    host_transmit_bytes: Family<LabelImpl<HostLabel>, Counter>,
+    net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
     net_monitor: NetMonitor,
 }
 
@@ -46,11 +46,11 @@ impl ProxyHandler {
         );
         let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
         registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
-        let host_transmit_bytes = Family::<LabelImpl<HostLabel>, Counter>::default();
+        let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
         registry.register(
-            "host_transmit_bytes",
-            "num host_transmit_bytes",
-            host_transmit_bytes.clone(),
+            "net_bytes",
+            "num net_bytes",
+            net_bytes.clone(),
         );
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
@@ -58,7 +58,7 @@ impl ProxyHandler {
             prom_registry: registry,
             http_req_counter,
             proxy_traffic,
-            host_transmit_bytes,
+            net_bytes,
             net_monitor: monitor,
         }
     }
@@ -91,7 +91,7 @@ impl ProxyHandler {
                     path,
                     &self.net_monitor,
                     &self.http_req_counter,
-                    &self.host_transmit_bytes,
+                    &self.net_bytes,
                     &self.prom_registry,
                 )
                 .await
@@ -277,7 +277,11 @@ pub(crate) fn check_auth(
         let header_name_clone = header_name.clone();
         let header_name_str = header_name_clone.as_str();
         match req.headers().get(header_name) {
-            None => warn!("no {} from {}", header_name_str, SocketAddrFormat(client_socket_addr)),
+            None => warn!(
+                "no {} from {}",
+                header_name_str,
+                SocketAddrFormat(client_socket_addr)
+            ),
             Some(header) => match header.to_str() {
                 Err(e) => warn!("解header失败，{:?} {:?}", header, e),
                 Ok(request_auth) => match config_basic_auth.get(request_auth) {
@@ -287,7 +291,10 @@ pub(crate) fn check_auth(
                     }
                     None => warn!(
                         "wrong {} from {}, wrong:{:?},right:{:?}",
-                        header_name_str, SocketAddrFormat(client_socket_addr), request_auth, config_basic_auth
+                        header_name_str,
+                        SocketAddrFormat(client_socket_addr),
+                        request_auth,
+                        config_basic_auth
                     ),
                 },
             },
@@ -332,7 +339,9 @@ pub struct AccessLabel {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub struct HostLabel {}
+pub struct NetDirectionLabel {
+    pub direction: &'static str,
+}
 
 impl Display for AccessLabel {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -350,9 +359,9 @@ pub(crate) fn build_authenticate_resp(proxy: bool) -> Response<BoxBody<Bytes, io
         },
         HeaderValue::from_static("Basic realm=\"are you kidding me\""),
     );
-    if proxy{
+    if proxy {
         *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
-    }else {
+    } else {
         *resp.status_mut() = http::StatusCode::UNAUTHORIZED;
     }
     resp

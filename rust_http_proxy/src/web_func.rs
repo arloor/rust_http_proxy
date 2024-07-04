@@ -4,7 +4,7 @@ use crate::proxy::build_authenticate_resp;
 use crate::proxy::check_auth;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
-use crate::proxy::HostLabel;
+use crate::proxy::NetDirectionLabel;
 use crate::proxy::ReqLabels;
 use crate::Config;
 use http::response::Builder;
@@ -48,7 +48,7 @@ pub async fn serve_http_request(
     path: &str,
     _net_monitor: &NetMonitor,
     http_req_counter: &Family<LabelImpl<ReqLabels>, Counter>,
-    _host_transmit_bytes: &Family<LabelImpl<HostLabel>, Counter>,
+    _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
     prom_registry: &Registry,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let web_content_path = &proxy_config.web_content_path;
@@ -100,7 +100,7 @@ pub async fn serve_http_request(
                 // };
                 return Ok(build_authenticate_resp(false));
             }
-            metrics(prom_registry, _net_monitor, _host_transmit_bytes).await
+            metrics(prom_registry, _net_monitor, _net_bytes).await
         }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
@@ -167,15 +167,28 @@ fn incr_counter_if_need(
 async fn metrics(
     registry: &Registry,
     _net_monitor: &NetMonitor,
-    _host_transmit_bytes: &Family<LabelImpl<HostLabel>, Counter>,
+    _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     #[cfg(feature = "bpf")]
     {
-        let val = crate::net_monitor::fetch_current_value();
-        _host_transmit_bytes
-            .get_or_create(&LabelImpl::new(HostLabel {}))
+        _net_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel {
+                direction: "egress",
+            }))
             .inner()
-            .store(val, std::sync::atomic::Ordering::Relaxed);
+            .store(
+                crate::net_monitor::get_egress(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        _net_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel {
+                direction: "ingress",
+            }))
+            .inner()
+            .store(
+                crate::net_monitor::get_ingress(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
     }
     let mut buffer = String::new();
     if let Err(e) = encode(&mut buffer, registry) {

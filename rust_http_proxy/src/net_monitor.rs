@@ -52,7 +52,7 @@ impl NetMonitor {
                 let mut last: u64 = 0;
                 loop {
                     {
-                        let new = fetch_current_value();
+                        let new = get_egress();
                         if last != 0 {
                             let system_time = SystemTime::now();
                             let datetime: DateTime<Local> = system_time.into();
@@ -84,8 +84,12 @@ lazy_static! {
         Arc::new(TransmitCounter::new(&IGNORED_INTERFACES));
 }
 #[cfg(feature = "bpf")]
-pub fn fetch_current_value() -> u64 {
-    SOCKET_FILTER.get_current_outbound_bytes()
+pub fn get_egress() -> u64 {
+    SOCKET_FILTER.get_egress()
+}
+#[cfg(feature = "bpf")]
+pub fn get_ingress() -> u64 {
+    SOCKET_FILTER.get_ingress()
 }
 
 // Inter-|   Receive                                                |  Transmit
@@ -93,7 +97,7 @@ pub fn fetch_current_value() -> u64 {
 //         lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
 //       ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
 #[cfg(not(feature = "bpf"))]
-pub fn fetch_current_value() -> u64 {
+pub fn get_egress() -> u64 {
     use std::fs;
     if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
         content = content.replace("\r\n", "\n");
