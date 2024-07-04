@@ -350,7 +350,11 @@ pub(crate) fn build_authenticate_resp(proxy: bool) -> Response<BoxBody<Bytes, io
         },
         HeaderValue::from_static("Basic realm=\"are you kidding me\""),
     );
-    *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+    if proxy{
+        *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+    }else {
+        *resp.status_mut() = http::StatusCode::UNAUTHORIZED;
+    }
     resp
 }
 

@@ -50,7 +50,7 @@
                 "username:password",
                 "-w",
                 ".",
-                "-o",
+                // "-o",
                 "--never-ask-for-auth",
                 "-r=arloor",
                 // "--log-dir=tmp"
