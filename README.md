@@ -127,7 +127,7 @@ docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf
 
 ### Prometheus Exporter
 
-提供了Prometheus的Exporter
+提供了Prometheus的Exporter。如果设置了`--users`参数，则需要在header中设置authorization，否则会返回`401 UNAUTHORIZED`。
 
 ```text
 # HELP req_from_out Number of HTTP requests received.
