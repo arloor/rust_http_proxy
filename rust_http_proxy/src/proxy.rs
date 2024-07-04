@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{net_monitor::NetMonitor, web_func, Config, LOCAL_IP};
+use crate::{ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, LOCAL_IP};
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -277,7 +277,7 @@ pub(crate) fn check_auth(
         let header_name_clone = header_name.clone();
         let header_name_str = header_name_clone.as_str();
         match req.headers().get(header_name) {
-            None => warn!("no {} from {:?}", header_name_str, client_socket_addr),
+            None => warn!("no {} from {}", header_name_str, SocketAddrFormat(client_socket_addr)),
             Some(header) => match header.to_str() {
                 Err(e) => warn!("解header失败，{:?} {:?}", header, e),
                 Ok(request_auth) => match config_basic_auth.get(request_auth) {
@@ -286,8 +286,8 @@ pub(crate) fn check_auth(
                         username = _username.to_string();
                     }
                     None => warn!(
-                        "wrong {} from {:?}, wrong:{:?},right:{:?}",
-                        header_name_str, client_socket_addr, request_auth, config_basic_auth
+                        "wrong {} from {}, wrong:{:?},right:{:?}",
+                        header_name_str, SocketAddrFormat(client_socket_addr), request_auth, config_basic_auth
                     ),
                 },
             },
