@@ -137,7 +137,7 @@ impl ProxyHandler {
                     "wrong basic auth, closing socket...",
                 ))
             } else {
-                Ok(build_proxy_authenticate_resp())
+                Ok(build_authenticate_resp(true))
             };
         }
         if Method::CONNECT == req.method() {
@@ -340,10 +340,14 @@ impl Display for AccessLabel {
     }
 }
 
-pub(crate) fn build_proxy_authenticate_resp() -> Response<BoxBody<Bytes, io::Error>> {
+pub(crate) fn build_authenticate_resp(proxy: bool) -> Response<BoxBody<Bytes, io::Error>> {
     let mut resp = Response::new(full_body("auth need"));
     resp.headers_mut().append(
-        http::header::PROXY_AUTHENTICATE,
+        if proxy {
+            http::header::PROXY_AUTHENTICATE
+        } else {
+            http::header::WWW_AUTHENTICATE
+        },
         HeaderValue::from_static("Basic realm=\"are you kidding me\""),
     );
     *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
