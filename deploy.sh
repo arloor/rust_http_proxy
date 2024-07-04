@@ -1,5 +1,5 @@
 #! /bin/bash
-hosts="hk.arloor.dev sg.arloor.dev us.arloor.dev bwg.arloor.dev gg.arloor.dev pl.arloor.com ti.arloor.com li.arloor.dev hi.arloor.dev"
+hosts="hk.arloor.dev hkk.arloor.dev sg.arloor.dev us.arloor.dev bwg.arloor.dev gg.arloor.dev pl.arloor.com ti.arloor.com li.arloor.dev hi.arloor.dev"
 for i in ${hosts}; do
     ssh -o StrictHostKeyChecking=no root@${i} '
             hostname;
