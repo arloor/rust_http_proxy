@@ -355,17 +355,17 @@ impl Display for AccessLabel {
     }
 }
 
-pub(crate) fn build_authenticate_resp(proxy: bool) -> Response<BoxBody<Bytes, io::Error>> {
+pub(crate) fn build_authenticate_resp(for_proxy: bool) -> Response<BoxBody<Bytes, io::Error>> {
     let mut resp = Response::new(full_body("auth need"));
     resp.headers_mut().append(
-        if proxy {
+        if for_proxy {
             http::header::PROXY_AUTHENTICATE
         } else {
             http::header::WWW_AUTHENTICATE
         },
         HeaderValue::from_static("Basic realm=\"are you kidding me\""),
     );
-    if proxy {
+    if for_proxy {
         *resp.status_mut() = http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
     } else {
         *resp.status_mut() = http::StatusCode::UNAUTHORIZED;

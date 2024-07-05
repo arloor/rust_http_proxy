@@ -93,11 +93,6 @@ pub async fn serve_http_request(
                 hyper::header::AUTHORIZATION,
             );
             if !authed {
-                // return if proxy_config.never_ask_for_auth {
-                //     Ok(build_500_resp())
-                // } else {
-                //     Ok(build_proxy_authenticate_resp())
-                // };
                 return Ok(build_authenticate_resp(false));
             }
             serve_metrics(prom_registry, _net_monitor, &metrics.net_bytes).await
