@@ -140,7 +140,8 @@ req_from_out_total{referer="all",path="all"} 4
 
 可以使用[此Grafana大盘Template](https://grafana.com/grafana/dashboards/20185-rust-http-proxy/)来创建Grafana大盘，效果如下
 
-![Alt text](grafana-template.png)
+![alt text](grafana-template1.png)
+![alt text](grafana-template2.png)
 
 ## 客户端
  
