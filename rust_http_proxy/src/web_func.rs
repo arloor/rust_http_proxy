@@ -4,6 +4,7 @@ use crate::proxy::build_authenticate_resp;
 use crate::proxy::check_auth;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
+use crate::proxy::Metrics;
 use crate::proxy::NetDirectionLabel;
 use crate::proxy::ReqLabels;
 use crate::Config;
@@ -47,8 +48,7 @@ pub async fn serve_http_request(
     proxy_config: &'static Config,
     path: &str,
     _net_monitor: &NetMonitor,
-    http_req_counter: &Family<LabelImpl<ReqLabels>, Counter>,
-    _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
+    metrics: &Metrics,
     prom_registry: &Registry,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let web_content_path = &proxy_config.web_content_path;
@@ -100,7 +100,7 @@ pub async fn serve_http_request(
                 // };
                 return Ok(build_authenticate_resp(false));
             }
-            metrics(prom_registry, _net_monitor, _net_bytes).await
+            serve_metrics(prom_registry, _net_monitor, &metrics.net_bytes).await
         }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
@@ -127,7 +127,7 @@ pub async fn serve_http_request(
                 &r,
                 is_outer_view_html,
                 is_shell,
-                http_req_counter,
+                &metrics.http_req_counter,
                 referer_header,
                 path,
             );
@@ -164,7 +164,7 @@ fn incr_counter_if_need(
     }
 }
 
-async fn metrics(
+async fn serve_metrics(
     registry: &Registry,
     _net_monitor: &NetMonitor,
     _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,

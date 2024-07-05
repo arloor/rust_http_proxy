@@ -26,39 +26,27 @@ use prometheus_client::{
 use rand::Rng;
 use tokio::{net::TcpStream, pin};
 
-// #[derive(Clone)]
 pub struct ProxyHandler {
     prom_registry: Registry,
-    http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
-    proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
-    net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
+    metrics: Metrics,
     net_monitor: NetMonitor,
+}
+
+pub(crate) struct Metrics {
+    pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
+    pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
+    pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
 
 impl ProxyHandler {
     pub fn new() -> ProxyHandler {
-        let mut registry = <Registry>::default();
-        let http_req_counter = Family::<LabelImpl<ReqLabels>, Counter>::default();
-        registry.register(
-            "req_from_out",
-            "Number of HTTP requests received",
-            http_req_counter.clone(),
-        );
-        let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
-        registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
-        let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
-        registry.register(
-            "net_bytes",
-            "num net_bytes",
-            net_bytes.clone(),
-        );
+        let mut registry = Registry::default();
+        let metrics = register_metrics(&mut registry);
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
         ProxyHandler {
             prom_registry: registry,
-            http_req_counter,
-            proxy_traffic,
-            net_bytes,
+            metrics,
             net_monitor: monitor,
         }
     }
@@ -90,8 +78,7 @@ impl ProxyHandler {
                     proxy_config,
                     path,
                     &self.net_monitor,
-                    &self.http_req_counter,
-                    &self.net_bytes,
+                    &self.metrics,
                     &self.prom_registry,
                 )
                 .await
@@ -155,7 +142,7 @@ impl ProxyHandler {
             // connection be upgraded, so we can't return a response inside
             // `on_upgrade` future.
             if let Some(addr) = host_addr(req.uri()) {
-                let proxy_traffic = self.proxy_traffic.clone();
+                let proxy_traffic = self.metrics.proxy_traffic.clone();
                 tokio::task::spawn(async move {
                     match hyper::upgrade::on(req).await {
                         Ok(upgraded) => {
@@ -224,7 +211,7 @@ impl ProxyHandler {
             let stream = TcpStream::connect((host, port)).await?;
             let server_mod: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
                 stream,
-                self.proxy_traffic.clone(),
+                self.metrics.proxy_traffic.clone(),
                 LabelImpl::new(AccessLabel {
                     client: client_socket_addr.ip().to_canonical().to_string(),
                     target: format!("{}:{}", host, port),
@@ -260,6 +247,25 @@ impl ProxyHandler {
                 Err(e) => Err(io::Error::new(ErrorKind::ConnectionAborted, e)),
             }
         }
+    }
+}
+
+fn register_metrics(registry: &mut Registry) -> Metrics {
+    let http_req_counter = Family::<LabelImpl<ReqLabels>, Counter>::default();
+    registry.register(
+        "req_from_out",
+        "Number of HTTP requests received",
+        http_req_counter.clone(),
+    );
+    let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
+    registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
+    let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
+    registry.register("net_bytes", "num net_bytes", net_bytes.clone());
+
+    Metrics {
+        http_req_counter,
+        proxy_traffic,
+        net_bytes,
     }
 }
 
