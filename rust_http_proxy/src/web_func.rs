@@ -145,7 +145,7 @@ fn incr_counter_if_need(
         if is_outer_view_html && (res.status().is_success() || res.status().is_redirection()) {
             http_req_counter
                 .get_or_create(&LabelImpl::new(ReqLabels {
-                    referer: referer_header.to_string(),
+                    referer: extract_domain_from_url(referer_header),
                     path: path.to_string(),
                 }))
                 .inc();
@@ -156,6 +156,27 @@ fn incr_counter_if_need(
                 }))
                 .inc();
         }
+    }
+}
+
+fn extract_domain_from_url(url: &str) -> String {
+    if let Some(caps) = Regex::new("^https?://(.+?)(/|$)").unwrap().captures(url) {
+        caps.get(1).map_or(url, |g| g.as_str()).to_string()
+    } else {
+        url.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_extract_domain_from_url() {
+        assert_eq!(extract_domain_from_url("https://www.arloor.com/"), "www.arloor.com");
+        assert_eq!(extract_domain_from_url("https://www.arloor.com"), "www.arloor.com");
+        assert_eq!(extract_domain_from_url("http://www.arloor.com/"), "www.arloor.com");
+        assert_eq!(extract_domain_from_url("https://www.google.com.hk/"), "www.google.com.hk");
+        assert_eq!(extract_domain_from_url("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "www.bing.com");
     }
 }
 
