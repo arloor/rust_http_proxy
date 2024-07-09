@@ -264,7 +264,7 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     registry.register("net_bytes", "num net_bytes", net_bytes.clone());
 
     register_metric_cleaner(proxy_traffic.clone(), 2);
-    register_metric_cleaner(http_req_counter.clone(), 3);
+    register_metric_cleaner(http_req_counter.clone(), 2);
 
     Metrics {
         http_req_counter,
