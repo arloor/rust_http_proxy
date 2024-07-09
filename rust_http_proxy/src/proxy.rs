@@ -259,6 +259,13 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     );
     let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
     registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
+    let proxy_traffic_to_move = proxy_traffic.clone();
+    tokio::spawn(async move { // 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（归0）的数据
+        loop {
+            tokio::time::sleep(Duration::from_secs(2*60*60)).await;
+            proxy_traffic_to_move.clear();
+        }
+    });
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     registry.register("net_bytes", "num net_bytes", net_bytes.clone());
 
