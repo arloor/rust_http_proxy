@@ -263,8 +263,8 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     registry.register("net_bytes", "num net_bytes", net_bytes.clone());
 
-    register_metrics_clearer(proxy_traffic.clone(), 2);
-    register_metrics_clearer(http_req_counter.clone(), 3);
+    register_metric_cleaner(proxy_traffic.clone(), 2);
+    register_metric_cleaner(http_req_counter.clone(), 3);
 
     Metrics {
         http_req_counter,
@@ -274,7 +274,7 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
 }
 
 // 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（归0）的数据
-fn register_metrics_clearer<T: Label + Send + Sync>(
+fn register_metric_cleaner<T: Label + Send + Sync>(
     counter: Family<T, Counter>,
     interval_in_hour: u64,
 ) {
