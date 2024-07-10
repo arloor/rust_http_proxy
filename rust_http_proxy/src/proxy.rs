@@ -264,6 +264,7 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     registry.register("net_bytes", "num net_bytes", net_bytes.clone());
 
     register_metric_cleaner(proxy_traffic.clone(), 2);
+    register_metric_cleaner(http_req_counter.clone(), 2 * 24);
 
     Metrics {
         http_req_counter,
@@ -274,7 +275,7 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
 
 // 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（数据突降）的数据。
 // 不过，虽然能够处理reset，但increase会用最后一个出现的值-第一个出现的值。在我们清空的实现下，reset后第一个出现的值肯定不是0，所以increase的算出来的值会稍少（少第一次出现的值）
-// 因此对于准确性要求较高的http_req_counter，这里就不做清空了。
+// 因此对于准确性要求较高的http_req_counter，这里的清空间隔就放大一点
 fn register_metric_cleaner<T: Label + Send + Sync>(
     counter: Family<T, Counter>,
     interval_in_hour: u64,
