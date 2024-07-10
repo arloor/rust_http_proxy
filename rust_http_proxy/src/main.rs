@@ -15,7 +15,7 @@ use crate::ip_x::local_ip;
 use crate::tls_helper::tls_config;
 use acceptor::TlsAcceptor;
 use config::load_config;
-use futures_util::future::try_join_all;
+use futures_util::future::select_all;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use io_x::TimeoutIO;
@@ -68,7 +68,7 @@ async fn main() -> Result<(), DynError> {
         })
         .map(Box::pin)
         .collect::<Vec<_>>();
-    try_join_all(futures.into_iter()).await?;
+    select_all(futures.into_iter()).await.0?;
     Ok(())
 }
 use socket2::{Domain, Protocol, Socket, Type};
