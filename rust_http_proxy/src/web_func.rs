@@ -31,6 +31,7 @@ use regex::Regex;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::pin;
 use std::process::Command;
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
@@ -349,22 +350,34 @@ async fn serve_path(
     }
 }
 
-fn final_build<T: AsyncRead + Send + Sync + Unpin + 'static>(
+fn final_build<T>(
     need_gzip: bool,
     async_read: T,
     builder: Builder,
-) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    if need_gzip {
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error>
+where
+    T: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    let stream_body =
+        StreamBody::new(build_reader_stream(async_read, need_gzip).map_ok(Frame::data));
+    builder.body(stream_body.boxed())
+}
+
+fn build_reader_stream<T>(
+    async_read: T,
+    need_gzip: bool,
+) -> ReaderStream<pin::Pin<Box<dyn AsyncRead + Send + Sync + Unpin>>>
+where
+    T: AsyncRead + Send + Sync + Unpin + 'static,
+{
+    let dyn_async_read: pin::Pin<Box<dyn AsyncRead + Send + Sync + Unpin>> = if need_gzip {
         let buf_stream = BufReader::new(async_read);
         let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
-        let reader_stream: ReaderStream<GzipEncoder<_>> = ReaderStream::new(encoder);
-        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-        builder.body(stream_body.boxed())
+        Box::pin(encoder)
     } else {
-        let reader_stream = ReaderStream::new(async_read);
-        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-        builder.body(stream_body.boxed())
-    }
+        Box::pin(async_read)
+    };
+    ReaderStream::new(dyn_async_read)
 }
 
 fn parse_range(
