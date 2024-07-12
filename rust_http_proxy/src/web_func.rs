@@ -342,20 +342,26 @@ async fn serve_path(
             return Ok(build_500_resp());
         };
     }
-    let dyn_async_read: Box<dyn AsyncRead + Unpin + Send + Sync> = if end != file_size - 1 {
-        Box::new(file.take(end - start + 1))
+    if end != file_size - 1 {
+        final_build(need_gzip, file.take(end - start + 1), builder)
     } else {
-        Box::new(file)
-    };
+        final_build(need_gzip, file, builder)
+    }
+}
 
+fn final_build<T: AsyncRead + Send + Sync + Unpin + 'static>(
+    need_gzip: bool,
+    async_read: T,
+    builder: Builder,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     if need_gzip {
-        let buf_stream = BufReader::new(dyn_async_read);
+        let buf_stream = BufReader::new(async_read);
         let encoder = GzipEncoder::with_quality(buf_stream, async_compression::Level::Best);
         let reader_stream: ReaderStream<GzipEncoder<_>> = ReaderStream::new(encoder);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
     } else {
-        let reader_stream = ReaderStream::new(dyn_async_read);
+        let reader_stream = ReaderStream::new(async_read);
         let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
         builder.body(stream_body.boxed())
     }
