@@ -29,7 +29,7 @@ use prometheus_client::{
     registry::Registry,
 };
 use rand::Rng;
-use tokio::{net::{TcpStream, ToSocketAddrs}, pin};
+use tokio::{net::TcpStream, pin};
 
 pub struct ProxyHandler {
     prom_registry: Registry,
@@ -77,9 +77,9 @@ impl ProxyHandler {
                 return self
                     .reverse_proxy(
                         client_socket_addr,
-                        &client_socket_addr.to_string(),
                         req,
-                        (plaintext_host.as_str(), plaintext_port.to_owned()),
+                        plaintext_host.as_str(),
+                        plaintext_port.to_owned(),
                     )
                     .await;
             } else {
@@ -277,23 +277,23 @@ impl ProxyHandler {
     async fn reverse_proxy(
         &self,
         client_socket_addr: SocketAddr,
-        host: &str,
         req: Request<Incoming>,
-        plaintext_socket_addr: impl ToSocketAddrs,
+        plain_host: &str,
+        plain_port: u16,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let port = 3000;
         let username = "".to_string();
-        let stream = TcpStream::connect(plaintext_socket_addr).await?;
-        let server_mod: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
+        let stream = TcpStream::connect((plain_host, plain_port)).await?;
+        let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
             stream,
             self.metrics.proxy_traffic.clone(),
             LabelImpl::new(AccessLabel {
                 client: client_socket_addr.ip().to_canonical().to_string(),
-                target: format!("{}:{}", host, port),
+                target: format!("{}:{}", plain_host, plain_port),
                 username,
             }),
         );
-        let io = TokioIo::new(server_mod);
+        let stream = TimeoutIO::new(stream, Duration::from_secs(60));
+        let io = TokioIo::new(stream);
         // req.headers_mut().remove(http::header::HOST.to_string());
         // req.headers_mut().insert(
         //     http::header::HOST,
@@ -302,7 +302,7 @@ impl ProxyHandler {
         match Builder::new()
             .preserve_header_case(true)
             .title_case_headers(true)
-            .handshake(io)
+            .handshake(Box::pin(io))
             .await
         {
             Ok((mut sender, conn)) => {
