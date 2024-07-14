@@ -284,6 +284,7 @@ impl ProxyHandler {
         plain_host: &str,
         plain_port: u16,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        let target = format!("{}:{}", plain_host, plain_port);
         info!(
             "{} fetch plaintext of {}:{} through {}",
             SocketAddrFormat(&client_socket_addr),
@@ -297,17 +298,12 @@ impl ProxyHandler {
             self.metrics.proxy_traffic.clone(),
             LabelImpl::new(AccessLabel {
                 client: client_socket_addr.ip().to_canonical().to_string(),
-                target: format!("{}:{}", plain_host, plain_port),
+                target: target.clone(),
                 username: authority,
             }),
         );
         let stream = TimeoutIO::new(stream, Duration::from_secs(60));
         let io = TokioIo::new(stream);
-        // req.headers_mut().remove(http::header::HOST.to_string());
-        // req.headers_mut().insert(
-        //     http::header::HOST,
-        //     HeaderValue::from_static("127.0.0.1:3000"),
-        // );
         match Builder::new()
             .preserve_header_case(true)
             .title_case_headers(true)
@@ -346,10 +342,16 @@ impl ProxyHandler {
                 //     "body is {}",
                 //     String::from_utf8(bytes.to_vec()).unwrap_or("".to_string())
                 // );
-                let new_request = builder
+                let mut new_request = builder
                     .body(full_body(bytes))
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                // info!("{:?}", new_request);
+                new_request
+                    .headers_mut()
+                    .remove(http::header::HOST.to_string());
+                new_request
+                    .headers_mut()
+                    .insert(http::header::HOST, HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")));
+                info!("{:?}", new_request);
 
                 if let Ok(resp) = sender.send_request(new_request).await {
                     Ok(resp.map(|b| {
