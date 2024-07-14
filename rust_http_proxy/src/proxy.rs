@@ -64,19 +64,21 @@ impl ProxyHandler {
         let config_basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
         if Method::CONNECT != req.method() {
-            let host = if req.version() == Version::HTTP_2 {
-                host_port(req.uri()).unwrap_or("".to_owned())
+            let authority = if req.version() == Version::HTTP_2 {
+                authority(req.uri()).unwrap_or("".to_owned())
             } else {
                 req.headers()
                     .get(http::header::HOST)
                     .map_or("", |h| h.to_str().unwrap_or(""))
                     .to_string()
             };
-            if let Some((plaintext_host, plaintext_port)) = proxy_config.wrap_plaintexts.get(&host)
+            if let Some((plaintext_host, plaintext_port)) =
+                proxy_config.wrap_plaintexts.get(&authority)
             {
                 return self
                     .reverse_proxy(
                         client_socket_addr,
+                        authority,
                         req,
                         plaintext_host.as_str(),
                         plaintext_port.to_owned(),
@@ -166,7 +168,7 @@ impl ProxyHandler {
             // Note: only after client received an empty body with STATUS_OK can the
             // connection be upgraded, so we can't return a response inside
             // `on_upgrade` future.
-            if let Some(addr) = host_port(req.uri()) {
+            if let Some(addr) = authority(req.uri()) {
                 let proxy_traffic = self.metrics.proxy_traffic.clone();
                 tokio::task::spawn(async move {
                     match hyper::upgrade::on(req).await {
@@ -277,11 +279,18 @@ impl ProxyHandler {
     async fn reverse_proxy(
         &self,
         client_socket_addr: SocketAddr,
+        authority: String,
         req: Request<Incoming>,
         plain_host: &str,
         plain_port: u16,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let username = "".to_string();
+        info!(
+            "{} fetch plaintext of {}:{} through {}",
+            SocketAddrFormat(&client_socket_addr),
+            plain_host,
+            plain_port,
+            authority
+        );
         let stream = TcpStream::connect((plain_host, plain_port)).await?;
         let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
             stream,
@@ -289,7 +298,7 @@ impl ProxyHandler {
             LabelImpl::new(AccessLabel {
                 client: client_socket_addr.ip().to_canonical().to_string(),
                 target: format!("{}:{}", plain_host, plain_port),
-                username,
+                username: authority,
             }),
         );
         let stream = TimeoutIO::new(stream, Duration::from_secs(60));
@@ -452,7 +461,7 @@ async fn tunnel(
     Ok(())
 }
 /// Returns the host and port of the given URI.
-fn host_port(uri: &http::Uri) -> Option<String> {
+fn authority(uri: &http::Uri) -> Option<String> {
     uri.authority().map(|authority| authority.to_string())
 }
 
