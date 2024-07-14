@@ -29,12 +29,6 @@ pub struct Param {
         help = "可以多次指定来实现多端口\n"
     )]
     port: Vec<u16>,
-    #[arg(
-        long,
-        value_name = "wrap_plaintext",
-        help = "特定的host:port转发到某http端口\n"
-    )]
-    wrap_plaintext: Vec<String>,
     #[arg(short, long, value_name = "CERT", default_value = "cert.pem")]
     cert: String,
     #[arg(short, long, value_name = "KEY", default_value = "privkey.pem")]
@@ -82,6 +76,15 @@ pub struct Param {
     over_tls: bool,
     #[arg(long, value_name = "HOSTNAME", default_value = "unknown")]
     hostname: String,
+    #[arg(
+        long,
+        value_name = "source=destination",
+        help = r#"特定的host:port转发到某http（非tls）端口，使用=分隔入口和目标站点
+例如：--wrap-plaintext=localhost:7788=127.0.0.1:3000 # https://localhost:7788转发到http://127.0.0.1:3000
+例如：--wrap-plaintext=example.com=127.0.0.1:3000 # https://example.com:443的请求转发到http://127.0.0.1:3000
+"#
+    )]
+    wrap_plaintext: Vec<String>,
 }
 
 pub(crate) struct Config {

@@ -16,6 +16,7 @@
 10. 可选feature：jemalloc内存分配器。使用`cargo build --features jemalloc`命令编译以激活
 11. 支持Accept-Ranges以支持断点续传（备注：暂不支持多range，例如 `Range: bytes=0-100,100-` ）
 12. 采集网卡上行流量，展示在 `/speed` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
+13. 支持反向代理http站点，使用tls保护数据传输（ `--wrap-plaintext` ）。目前仅支持根据Host Header进行路由，并且upstream只能是http站点。
 
 提及的参数详见[命令行参数](#命令行参数)
 
@@ -53,12 +54,17 @@ Options:
            [default: ]
       --never-ask-for-auth
           if enable, never send '407 Proxy Authentication Required' to client。
-          建议开启，否则有被嗅探的风险
+          不建议开启，否则有被嗅探的风险
           
   -o, --over-tls
           if enable, proxy server will listen on https
       --hostname <HOSTNAME>
-          [default: 未知]
+          [default: unknown]
+      --wrap-plaintext <source=destination>
+          特定的host:port转发到某http（非tls）端口，使用=分隔入口和目标站点
+          例如：--wrap-plaintext=localhost:7788=127.0.0.1:3000 # https://localhost:7788转发到http://127.0.0.1:3000
+          例如：--wrap-plaintext=example.com=127.0.0.1:3000 # https://example.com:443的请求转发到http://127.0.0.1:3000
+          
   -h, --help
           Print help
 ```
