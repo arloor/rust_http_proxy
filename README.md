@@ -16,7 +16,7 @@
 10. 可选feature：jemalloc内存分配器。使用`cargo build --features jemalloc`命令编译以激活
 11. 支持Accept-Ranges以支持断点续传（备注：暂不支持多range，例如 `Range: bytes=0-100,100-` ）
 12. 采集网卡上行流量，展示在 `/speed` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
-13. 支持反向代理http站点，使用tls保护数据传输（ `--wrap-plaintext` ）。目前仅支持根据Host Header进行路由，并且upstream只能是http站点。
+13. 支持反向代理http站点，使用tls保护数据传输（ `--wrap-plaintext` ）。目前仅支持根据Host Header进行路由，并且upstream只能是http站点。Motivation：我用NextChatWeb搭了一个类chatgpt的应用，需要tls保护下密码，又不想用nginx，顺手开发了下。
 
 提及的参数详见[命令行参数](#命令行参数)
 
