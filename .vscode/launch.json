@@ -53,6 +53,7 @@
                 "-o",
                 "--never-ask-for-auth",
                 "-r=arloor",
+                "--wrap-plaintext=127.0.0.1:7788=127.0.0.1:3000"
                 // "--log-dir=tmp"
             ],
             "env": {
