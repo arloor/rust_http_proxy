@@ -11,7 +11,11 @@ use crate::{ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, L
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-use hyper::{body::Body, client::conn::http1::Builder, header::HeaderName};
+use hyper::{
+    body::Body,
+    client::conn::http1::Builder,
+    header::{self, HeaderName},
+};
 use hyper::{
     body::Bytes, header::HeaderValue, http, upgrade::Upgraded, Method, Request, Response, Version,
 };
@@ -60,6 +64,60 @@ impl ProxyHandler {
         let config_basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
         if Method::CONNECT != req.method() {
+            if req.version() == Version::HTTP_11 {
+                if let Some(host) = req.headers().get(header::HOST) {
+                    let host = host.to_str().unwrap();
+                    if host.starts_with("49.235.185.225") {
+                        let port = 3000;
+                        let username = "".to_string();
+                        let stream = TcpStream::connect(("127.0.0.1", 3000)).await?;
+                        let server_mod: CounterIO<TcpStream, LabelImpl<AccessLabel>> =
+                            CounterIO::new(
+                                stream,
+                                self.metrics.proxy_traffic.clone(),
+                                LabelImpl::new(AccessLabel {
+                                    client: client_socket_addr.ip().to_canonical().to_string(),
+                                    target: format!("{}:{}", host, port),
+                                    username,
+                                }),
+                            );
+                        let io = TokioIo::new(server_mod);
+                        req.headers_mut().remove(http::header::HOST.to_string());
+                        req.headers_mut().insert(
+                            http::header::HOST,
+                            HeaderValue::from_static("127.0.0.1:3000"),
+                        );
+                        match Builder::new()
+                            .preserve_header_case(true)
+                            .title_case_headers(true)
+                            .handshake(io)
+                            .await
+                        {
+                            Ok((mut sender, conn)) => {
+                                tokio::task::spawn(async move {
+                                    if let Err(err) = conn.await {
+                                        println!("Connection failed: {:?}", err);
+                                    }
+                                });
+
+                                let a = if let Ok(resp) = sender.send_request(req).await {
+                                    Ok(resp.map(|b| {
+                                        b.map_err(|e| {
+                                            let e = e;
+                                            io::Error::new(ErrorKind::InvalidData, e)
+                                        })
+                                        .boxed()
+                                    }))
+                                } else {
+                                    Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
+                                };
+                                return a;
+                            }
+                            Err(e) => return Err(io::Error::new(ErrorKind::ConnectionAborted, e)),
+                        }
+                    }
+                }
+            }
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 let raw_path = req.uri().path();
                 let path = percent_decode_str(raw_path)
