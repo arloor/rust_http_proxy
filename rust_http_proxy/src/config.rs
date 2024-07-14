@@ -1,8 +1,8 @@
-use log_x::init_log;
 use base64::engine::general_purpose;
 use base64::Engine;
 use clap::Parser;
 use log::{info, warn};
+use log_x::init_log;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,6 +29,12 @@ pub struct Param {
         help = "可以多次指定来实现多端口\n"
     )]
     port: Vec<u16>,
+    #[arg(
+        long,
+        value_name = "wrap_plaintext",
+        help = "特定的host:port转发到某http端口\n"
+    )]
+    wrap_plaintext: Vec<String>,
     #[arg(short, long, value_name = "CERT", default_value = "cert.pem")]
     cert: String,
     #[arg(short, long, value_name = "KEY", default_value = "privkey.pem")]
@@ -88,6 +94,7 @@ pub(crate) struct Config {
     pub(crate) over_tls: bool,
     pub(crate) hostname: String,
     pub(crate) port: Vec<u16>,
+    pub(crate) wrap_plaintexts: HashMap<String, (String, u16)>,
     pub(crate) tls_config_broadcast: Option<broadcast::Sender<Arc<ServerConfig>>>,
 }
 
@@ -103,6 +110,23 @@ impl From<Param> for Config {
                 basic_auth.insert(format!("Basic {}", base64), username);
             }
         }
+        let wrap_plaintexts: HashMap<String, (String, u16)> = param
+            .wrap_plaintext
+            .iter()
+            .map(|wrap| {
+                let mut wrap = wrap.split('=');
+                let tls_addr = wrap.next().unwrap_or("").to_string();
+                let no_tls_addr = wrap.next().unwrap_or("").to_string();
+                let mut no_tls_addr = no_tls_addr.split(':');
+                let no_tls_host = no_tls_addr.next().unwrap_or("").to_string();
+                let no_tls_port = no_tls_addr
+                    .next()
+                    .unwrap_or("80")
+                    .parse::<u16>()
+                    .unwrap_or(80);
+                (tls_addr, (no_tls_host, no_tls_port))
+            })
+            .collect();
         let tls_config_broadcast = if param.over_tls {
             let (tx, _rx) = broadcast::channel::<Arc<ServerConfig>>(10);
             let tx_clone = tx.clone();
@@ -134,6 +158,7 @@ impl From<Param> for Config {
             over_tls: param.over_tls,
             hostname: param.hostname,
             port: param.port,
+            wrap_plaintexts,
             tls_config_broadcast,
         }
     }

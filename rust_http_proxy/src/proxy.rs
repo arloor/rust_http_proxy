@@ -11,9 +11,13 @@ use crate::{ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, L
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-use hyper::{body::Body, client::conn::http1::Builder, header::HeaderName};
 use hyper::{
     body::Bytes, header::HeaderValue, http, upgrade::Upgraded, Method, Request, Response, Version,
+};
+use hyper::{
+    body::{Body, Incoming},
+    client::conn::http1::Builder,
+    header::HeaderName,
 };
 use hyper_util::rt::TokioIo;
 use log::{info, warn};
@@ -60,47 +64,67 @@ impl ProxyHandler {
         let config_basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
         if Method::CONNECT != req.method() {
-            if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
-                let raw_path = req.uri().path();
-                let path = percent_decode_str(raw_path)
-                    .decode_utf8()
-                    .unwrap_or(Cow::from(raw_path));
-                let path = path.as_ref();
-                if !config_basic_auth.is_empty() && !never_ask_for_auth {
-                    // 存在嗅探风险时，不伪装成http服务
-                    return Err(io::Error::new(
-                        ErrorKind::PermissionDenied,
-                        "reject http GET/POST when ask_for_auth and basic_auth not empty",
-                    ));
-                }
-                return web_func::serve_http_request(
-                    &req,
-                    client_socket_addr,
-                    proxy_config,
-                    path,
-                    &self.net_monitor,
-                    &self.metrics,
-                    &self.prom_registry,
-                )
-                .await
-                .map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-            }
-            if let Some(host) = req.uri().host() {
-                let host = host.to_string();
-                info!(
-                    "{:>21?} {:^7} {:?} {:?} Host: {:?} User-Agent: {:?}",
-                    client_socket_addr,
-                    req.method().as_str(),
-                    req.uri(),
-                    req.version(),
-                    req.headers()
-                        .get(http::header::HOST)
-                        .map_or("", |h| h.to_str().unwrap_or(host.as_str())),
-                    req.headers()
-                        .get(http::header::USER_AGENT)
-                        .map_or("", |h| h.to_str().unwrap_or("")),
-                );
+            let host = if req.version() == Version::HTTP_2 {
+                host_port(req.uri()).unwrap_or("".to_owned())
+            } else {
+                req.headers()
+                    .get(http::header::HOST)
+                    .map_or("", |h| h.to_str().unwrap_or(""))
+                    .to_string()
             };
+            if let Some((plaintext_host, plaintext_port)) = proxy_config.wrap_plaintexts.get(&host)
+            {
+                return self
+                    .reverse_proxy(
+                        client_socket_addr,
+                        req,
+                        plaintext_host.as_str(),
+                        plaintext_port.to_owned(),
+                    )
+                    .await;
+            } else {
+                if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
+                    let raw_path = req.uri().path();
+                    let path = percent_decode_str(raw_path)
+                        .decode_utf8()
+                        .unwrap_or(Cow::from(raw_path));
+                    let path = path.as_ref();
+                    if !config_basic_auth.is_empty() && !never_ask_for_auth {
+                        // 存在嗅探风险时，不伪装成http服务
+                        return Err(io::Error::new(
+                            ErrorKind::PermissionDenied,
+                            "reject http GET/POST when ask_for_auth and basic_auth not empty",
+                        ));
+                    }
+                    return web_func::serve_http_request(
+                        &req,
+                        client_socket_addr,
+                        proxy_config,
+                        path,
+                        &self.net_monitor,
+                        &self.metrics,
+                        &self.prom_registry,
+                    )
+                    .await
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
+                }
+                if let Some(host) = req.uri().host() {
+                    let host = host.to_string();
+                    info!(
+                        "{:>21?} {:^7} {:?} {:?} Host: {:?} User-Agent: {:?}",
+                        client_socket_addr,
+                        req.method().as_str(),
+                        req.uri(),
+                        req.version(),
+                        req.headers()
+                            .get(http::header::HOST)
+                            .map_or("", |h| h.to_str().unwrap_or(host.as_str())),
+                        req.headers()
+                            .get(http::header::USER_AGENT)
+                            .map_or("", |h| h.to_str().unwrap_or("")),
+                    );
+                };
+            }
         }
 
         let (username, authed) = check_auth(
@@ -142,7 +166,7 @@ impl ProxyHandler {
             // Note: only after client received an empty body with STATUS_OK can the
             // connection be upgraded, so we can't return a response inside
             // `on_upgrade` future.
-            if let Some(addr) = host_addr(req.uri()) {
+            if let Some(addr) = host_port(req.uri()) {
                 let proxy_traffic = self.metrics.proxy_traffic.clone();
                 tokio::task::spawn(async move {
                     match hyper::upgrade::on(req).await {
@@ -249,6 +273,90 @@ impl ProxyHandler {
             }
         }
     }
+
+    async fn reverse_proxy(
+        &self,
+        client_socket_addr: SocketAddr,
+        req: Request<Incoming>,
+        plain_host: &str,
+        plain_port: u16,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        let username = "".to_string();
+        let stream = TcpStream::connect((plain_host, plain_port)).await?;
+        let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
+            stream,
+            self.metrics.proxy_traffic.clone(),
+            LabelImpl::new(AccessLabel {
+                client: client_socket_addr.ip().to_canonical().to_string(),
+                target: format!("{}:{}", plain_host, plain_port),
+                username,
+            }),
+        );
+        let stream = TimeoutIO::new(stream, Duration::from_secs(60));
+        let io = TokioIo::new(stream);
+        // req.headers_mut().remove(http::header::HOST.to_string());
+        // req.headers_mut().insert(
+        //     http::header::HOST,
+        //     HeaderValue::from_static("127.0.0.1:3000"),
+        // );
+        match Builder::new()
+            .preserve_header_case(true)
+            .title_case_headers(true)
+            .handshake(Box::pin(io))
+            .await
+        {
+            Ok((mut sender, conn)) => {
+                tokio::task::spawn(async move {
+                    if let Err(err) = conn.await {
+                        warn!("reverse proxy connection failed: {:?}", err);
+                    }
+                });
+
+                let method = req.method().clone();
+                let url = req.uri().clone();
+                let url = match url.path_and_query() {
+                    Some(path_and_query) => path_and_query.as_str(),
+                    None => "/",
+                };
+                let mut builder = Request::builder()
+                    .method(method)
+                    .uri(url)
+                    .version(Version::HTTP_11);
+                for ele in req.headers() {
+                    builder = builder.header(ele.0, ele.1);
+                }
+
+                let collected = req
+                    .into_body()
+                    .collect()
+                    .await
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                // 将收集到的数据转换为字节数组
+                let bytes = collected.to_bytes();
+                // info!(
+                //     "body is {}",
+                //     String::from_utf8(bytes.to_vec()).unwrap_or("".to_string())
+                // );
+                let new_request = builder
+                    .body(full_body(bytes))
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                // info!("{:?}", new_request);
+
+                if let Ok(resp) = sender.send_request(new_request).await {
+                    Ok(resp.map(|b| {
+                        b.map_err(|e| {
+                            let e = e;
+                            io::Error::new(ErrorKind::InvalidData, e)
+                        })
+                        .boxed()
+                    }))
+                } else {
+                    Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
+                }
+            }
+            Err(e) => Err(io::Error::new(ErrorKind::ConnectionAborted, e)),
+        }
+    }
 }
 
 fn register_metrics(registry: &mut Registry) -> Metrics {
@@ -344,7 +452,7 @@ async fn tunnel(
     Ok(())
 }
 /// Returns the host and port of the given URI.
-fn host_addr(uri: &http::Uri) -> Option<String> {
+fn host_port(uri: &http::Uri) -> Option<String> {
     uri.authority().map(|authority| authority.to_string())
 }
 
