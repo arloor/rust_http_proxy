@@ -308,7 +308,7 @@ impl ProxyHandler {
             Ok((mut sender, conn)) => {
                 tokio::task::spawn(async move {
                     if let Err(err) = conn.await {
-                        println!("Connection failed: {:?}", err);
+                        warn!("reverse proxy connection failed: {:?}", err);
                     }
                 });
 
