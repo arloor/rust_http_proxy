@@ -353,7 +353,7 @@ impl ProxyHandler {
                     http::header::HOST,
                     HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")),
                 );
-                info!("{:?}", new_request);
+                // info!("{:?}", new_request);
 
                 if let Ok(resp) = sender.send_request(new_request).await {
                     Ok(resp.map(|b| {
