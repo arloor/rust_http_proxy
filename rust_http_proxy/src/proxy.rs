@@ -20,7 +20,7 @@ use hyper::{
     header::HeaderName,
 };
 use hyper_util::rt::TokioIo;
-use log::{info, warn};
+use log::{debug, info, warn};
 use percent_encoding::percent_decode_str;
 use prom_label::Label;
 use prometheus_client::{
@@ -329,28 +329,30 @@ impl ProxyHandler {
                     .version(Version::HTTP_11);
                 for ele in req.headers() {
                     builder = builder.header(ele.0, ele.1);
+                    debug!("{}: {:?}", ele.0, ele.1);
                 }
 
-                let collected = req
-                    .into_body()
-                    .collect()
-                    .await
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                // 将收集到的数据转换为字节数组
-                let bytes = collected.to_bytes();
+                // let collected = req
+                //     .into_body()
+                //     .collect()
+                //     .await
+                //     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                // // 将收集到的数据转换为字节数组
+                // let bytes = collected.to_bytes();
                 // info!(
                 //     "body is {}",
                 //     String::from_utf8(bytes.to_vec()).unwrap_or("".to_string())
                 // );
                 let mut new_request = builder
-                    .body(full_body(bytes))
+                    .body(req.into_body())
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 new_request
                     .headers_mut()
                     .remove(http::header::HOST.to_string());
-                new_request
-                    .headers_mut()
-                    .insert(http::header::HOST, HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")));
+                new_request.headers_mut().insert(
+                    http::header::HOST,
+                    HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")),
+                );
                 info!("{:?}", new_request);
 
                 if let Ok(resp) = sender.send_request(new_request).await {
