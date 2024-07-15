@@ -47,6 +47,8 @@ pub(crate) struct Metrics {
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
 
+const CHUNKED: &str = "chunked";
+
 impl ProxyHandler {
     pub fn new() -> ProxyHandler {
         let mut registry = Registry::default();
@@ -360,13 +362,12 @@ impl ProxyHandler {
                     None => "",
                 };
                 if new_req.headers().get(header::CONTENT_LENGTH).is_none()
-                    && transfer_encoding != "chunked"
+                    && transfer_encoding != CHUNKED
                 {
                     info!("add header Transfer-Encoding: chunked because of missing of Content-Length for http1.1 protocal");
-                    new_req.headers_mut().insert(
-                        header::TRANSFER_ENCODING,
-                        HeaderValue::from_static("chunked"),
-                    );
+                    new_req
+                        .headers_mut()
+                        .insert(header::TRANSFER_ENCODING, HeaderValue::from_static(CHUNKED));
                 }
                 // info!("{:?}", new_request);
 
