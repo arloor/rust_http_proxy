@@ -350,18 +350,17 @@ impl ProxyHandler {
                 let mut new_req: Request<Incoming> = new_req_builder
                     .body(req.into_body())
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                new_req
-                    .headers_mut()
-                    .remove(http::header::HOST.to_string());
+                new_req.headers_mut().remove(http::header::HOST.to_string());
                 new_req.headers_mut().insert(
                     http::header::HOST,
                     HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")),
                 );
+                let transfer_encoding = match new_req.headers().get(header::TRANSFER_ENCODING) {
+                    Some(header_value) => header_value.to_str().unwrap_or(""),
+                    None => "",
+                };
                 if new_req.headers().get(header::CONTENT_LENGTH).is_none()
-                    && new_req
-                        .headers()
-                        .get(header::TRANSFER_ENCODING)
-                        .is_none()
+                    && transfer_encoding != "chunked"
                 {
                     info!("add header Transfer-Encoding: chunked because of missing of Content-Length for http1.1 protocal");
                     new_req.headers_mut().insert(
