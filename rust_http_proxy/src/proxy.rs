@@ -12,7 +12,7 @@ use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
-    body::Bytes, header::HeaderValue, http, upgrade::Upgraded, Method, Request, Response, Version,
+    body::Bytes, header::{self, HeaderValue}, http, upgrade::Upgraded, Method, Request, Response, Version,
 };
 use hyper::{
     body::{Body, Incoming},
@@ -353,6 +353,12 @@ impl ProxyHandler {
                     http::header::HOST,
                     HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")),
                 );
+                if new_request.headers().get(header::CONTENT_LENGTH).is_none() {
+                    info!("add header Transfer-Encoding: chunked because of missing of Content-Length for http1.1 protocal");
+                    new_request
+                        .headers_mut()
+                        .insert(header::TRANSFER_ENCODING, HeaderValue::from_static("chunked"));
+                }
                 // info!("{:?}", new_request);
 
                 if let Ok(resp) = sender.send_request(new_request).await {
