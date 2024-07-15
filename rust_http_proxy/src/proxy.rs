@@ -12,7 +12,11 @@ use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
-    body::Bytes, header::{self, HeaderValue}, http, upgrade::Upgraded, Method, Request, Response, Version,
+    body::Bytes,
+    header::{self, HeaderValue},
+    http,
+    upgrade::Upgraded,
+    Method, Request, Response, Version,
 };
 use hyper::{
     body::{Body, Incoming},
@@ -323,12 +327,12 @@ impl ProxyHandler {
                     Some(path_and_query) => path_and_query.as_str(),
                     None => "/",
                 };
-                let mut builder = Request::builder()
+                let mut new_req_builder = Request::builder()
                     .method(method)
                     .uri(url)
                     .version(Version::HTTP_11);
                 for ele in req.headers() {
-                    builder = builder.header(ele.0, ele.1);
+                    new_req_builder = new_req_builder.header(ele.0, ele.1);
                     debug!("{}: {:?}", ele.0, ele.1);
                 }
 
@@ -343,25 +347,31 @@ impl ProxyHandler {
                 //     "body is {}",
                 //     String::from_utf8(bytes.to_vec()).unwrap_or("".to_string())
                 // );
-                let mut new_request = builder
+                let mut new_req: Request<Incoming> = new_req_builder
                     .body(req.into_body())
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                new_request
+                new_req
                     .headers_mut()
                     .remove(http::header::HOST.to_string());
-                new_request.headers_mut().insert(
+                new_req.headers_mut().insert(
                     http::header::HOST,
                     HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")),
                 );
-                if new_request.headers().get(header::CONTENT_LENGTH).is_none() {
+                if new_req.headers().get(header::CONTENT_LENGTH).is_none()
+                    && new_req
+                        .headers()
+                        .get(header::TRANSFER_ENCODING)
+                        .is_none()
+                {
                     info!("add header Transfer-Encoding: chunked because of missing of Content-Length for http1.1 protocal");
-                    new_request
-                        .headers_mut()
-                        .insert(header::TRANSFER_ENCODING, HeaderValue::from_static("chunked"));
+                    new_req.headers_mut().insert(
+                        header::TRANSFER_ENCODING,
+                        HeaderValue::from_static("chunked"),
+                    );
                 }
                 // info!("{:?}", new_request);
 
-                if let Ok(resp) = sender.send_request(new_request).await {
+                if let Ok(resp) = sender.send_request(new_req).await {
                     Ok(resp.map(|b| {
                         b.map_err(|e| {
                             let e = e;
