@@ -330,7 +330,7 @@ impl ProxyHandler {
                     None => "/",
                 };
                 let mut new_req_builder = Request::builder()
-                    .method(method)
+                    .method(method.clone())
                     .uri(url)
                     .version(Version::HTTP_11);
                 for ele in req.headers() {
@@ -361,10 +361,11 @@ impl ProxyHandler {
                     Some(header_value) => header_value.to_str().unwrap_or(""),
                     None => "",
                 };
-                if new_req.headers().get(header::CONTENT_LENGTH).is_none()
+                if method != Method::GET
                     && transfer_encoding != CHUNKED
+                    && new_req.headers().get(header::CONTENT_LENGTH).is_none()
                 {
-                    info!("add header Transfer-Encoding: chunked because of missing of Content-Length for http1.1 protocal");
+                    info!("add \"Transfer-Encoding: chunked\" when Content-Length is missing for http1.1 non-get request");
                     new_req
                         .headers_mut()
                         .insert(header::TRANSFER_ENCODING, HeaderValue::from_static(CHUNKED));
