@@ -11,6 +11,7 @@ use crate::{ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, L
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+#[allow(unused_imports)]
 use hyper::{
     body::Bytes,
     header::{self, HeaderValue},
@@ -47,6 +48,7 @@ pub(crate) struct Metrics {
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
 
+#[allow(dead_code)]
 const CHUNKED: &str = "chunked";
 
 impl ProxyHandler {
@@ -357,19 +359,19 @@ impl ProxyHandler {
                     http::header::HOST,
                     HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")),
                 );
-                let transfer_encoding = match new_req.headers().get(header::TRANSFER_ENCODING) {
-                    Some(header_value) => header_value.to_str().unwrap_or(""),
-                    None => "",
-                };
-                if method != Method::GET
-                    && transfer_encoding != CHUNKED
-                    && new_req.headers().get(header::CONTENT_LENGTH).is_none()
-                {
-                    info!("add \"Transfer-Encoding: chunked\" when Content-Length is missing for http1.1 non-get request");
-                    new_req
-                        .headers_mut()
-                        .insert(header::TRANSFER_ENCODING, HeaderValue::from_static(CHUNKED));
-                }
+                // let transfer_encoding = match new_req.headers().get(header::TRANSFER_ENCODING) {
+                //     Some(header_value) => header_value.to_str().unwrap_or(""),
+                //     None => "",
+                // };
+                // if method != Method::GET
+                //     && transfer_encoding != CHUNKED
+                //     && new_req.headers().get(header::CONTENT_LENGTH).is_none()
+                // {
+                //     info!("add \"Transfer-Encoding: chunked\" when Content-Length is missing for http1.1 non-get request");
+                //     new_req
+                //         .headers_mut()
+                //         .insert(header::TRANSFER_ENCODING, HeaderValue::from_static(CHUNKED));
+                // }
                 // info!("{:?}", new_request);
 
                 if let Ok(resp) = sender.send_request(new_req).await {
