@@ -40,7 +40,12 @@ io_x = { path = "../io_x" }
 prom_label = { path = "../prom_label" }
 # [target.'cfg(target_env = "musl")'.dependencies]
 # aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
-
+reqwest = { version = "0.12.5", default-features = false, features = [
+    # "rustls-tls",
+    "charset",
+    # "http2",
+    "macos-system-configuration",
+] }
 [features]
 default = ["ring"]
 jemalloc = ["jemallocator"]

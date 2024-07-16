@@ -11,7 +11,6 @@ use crate::{ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, L
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-#[allow(unused_imports)]
 use hyper::{
     body::Bytes,
     header::{self, HeaderValue},
@@ -24,6 +23,8 @@ use hyper::{
     client::conn::http1::Builder,
     header::HeaderName,
 };
+use hyper_util::client::legacy::Client;
+use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use percent_encoding::percent_decode_str;
@@ -40,6 +41,7 @@ pub struct ProxyHandler {
     prom_registry: Registry,
     metrics: Metrics,
     net_monitor: NetMonitor,
+    client: Client<hyper_util::client::legacy::connect::HttpConnector, Incoming>,
 }
 
 pub(crate) struct Metrics {
@@ -57,10 +59,13 @@ impl ProxyHandler {
         let metrics = register_metrics(&mut registry);
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
+        let client: Client<hyper_util::client::legacy::connect::HttpConnector, Incoming> =
+            Client::builder(TokioExecutor::new()).build_http();
         ProxyHandler {
             prom_registry: registry,
             metrics,
             net_monitor: monitor,
+            client,
         }
     }
     pub async fn proxy(
@@ -292,7 +297,6 @@ impl ProxyHandler {
         plain_host: &str,
         plain_port: u16,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let target = format!("{}:{}", plain_host, plain_port);
         info!(
             "{} fetch plaintext of {}:{} through {}",
             SocketAddrFormat(&client_socket_addr),
@@ -300,93 +304,36 @@ impl ProxyHandler {
             plain_port,
             authority
         );
-        let stream = TcpStream::connect((plain_host, plain_port)).await?;
-        let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
-            stream,
-            self.metrics.proxy_traffic.clone(),
-            LabelImpl::new(AccessLabel {
-                client: client_socket_addr.ip().to_canonical().to_string(),
-                target: target.clone(),
-                username: authority,
-            }),
-        );
-        let stream = TimeoutIO::new(stream, Duration::from_secs(60));
-        let io = TokioIo::new(stream);
-        match Builder::new()
-            .preserve_header_case(true)
-            .title_case_headers(true)
-            .handshake(Box::pin(io))
-            .await
-        {
-            Ok((mut sender, conn)) => {
-                tokio::task::spawn(async move {
-                    if let Err(err) = conn.await {
-                        warn!("reverse proxy connection failed: {:?}", err);
-                    }
-                });
-
-                let method = req.method().clone();
-                let url = req.uri().clone();
-                let url = match url.path_and_query() {
-                    Some(path_and_query) => path_and_query.as_str(),
-                    None => "/",
-                };
-                let mut new_req_builder = Request::builder()
-                    .method(method.clone())
-                    .uri(url)
-                    .version(Version::HTTP_11);
-                for ele in req.headers() {
-                    new_req_builder = new_req_builder.header(ele.0, ele.1);
-                    debug!("{}: {:?}", ele.0, ele.1);
-                }
-
-                // let collected = req
-                //     .into_body()
-                //     .collect()
-                //     .await
-                //     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                // // 将收集到的数据转换为字节数组
-                // let bytes = collected.to_bytes();
-                // info!(
-                //     "body is {}",
-                //     String::from_utf8(bytes.to_vec()).unwrap_or("".to_string())
-                // );
-                let mut new_req: Request<Incoming> = new_req_builder
-                    .body(req.into_body())
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                new_req.headers_mut().remove(http::header::HOST.to_string());
-                new_req.headers_mut().insert(
-                    http::header::HOST,
-                    HeaderValue::from_str(&target).unwrap_or(HeaderValue::from_static("unknown")),
-                );
-                // let transfer_encoding = match new_req.headers().get(header::TRANSFER_ENCODING) {
-                //     Some(header_value) => header_value.to_str().unwrap_or(""),
-                //     None => "",
-                // };
-                // if method != Method::GET
-                //     && transfer_encoding != CHUNKED
-                //     && new_req.headers().get(header::CONTENT_LENGTH).is_none()
-                // {
-                //     info!("add \"Transfer-Encoding: chunked\" when Content-Length is missing for http1.1 non-get request");
-                //     new_req
-                //         .headers_mut()
-                //         .insert(header::TRANSFER_ENCODING, HeaderValue::from_static(CHUNKED));
-                // }
-                // info!("{:?}", new_request);
-
-                if let Ok(resp) = sender.send_request(new_req).await {
-                    Ok(resp.map(|b| {
-                        b.map_err(|e| {
-                            let e = e;
-                            io::Error::new(ErrorKind::InvalidData, e)
-                        })
-                        .boxed()
-                    }))
-                } else {
-                    Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
-                }
+        let method = req.method().clone();
+        let url = req.uri().clone();
+        let path_and_query = match url.path_and_query() {
+            Some(path_and_query) => path_and_query.as_str(),
+            None => "/",
+        };
+        let url = format!("http://{}:{}{}", plain_host, plain_port, path_and_query);
+        let mut new_req = Request::builder().method(method).uri(url.clone());
+        for ele in req.headers() {
+            if ele.0 != header::HOST {
+                new_req
+                    .headers_mut()
+                    .unwrap()
+                    .append(ele.0.clone(), ele.1.clone());
+            }else{
+                info!("remove host header: {:?}", ele.1);
             }
-            Err(e) => Err(io::Error::new(ErrorKind::ConnectionAborted, e)),
+        }
+        let new_req = new_req.body(req.into_body()).expect("request builder");
+        debug!("reverse_proxy: {:?}", new_req.headers());
+        if let Ok(resp) = self.client.request(new_req).await {
+            Ok(resp.map(|b| {
+                b.map_err(|e| {
+                    let e = e;
+                    io::Error::new(ErrorKind::InvalidData, e)
+                })
+                .boxed()
+            }))
+        } else {
+            Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
         }
     }
 }
