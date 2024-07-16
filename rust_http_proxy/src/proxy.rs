@@ -318,7 +318,7 @@ impl ProxyHandler {
                     .headers_mut()
                     .unwrap()
                     .append(ele.0.clone(), ele.1.clone());
-            }else{
+            } else {
                 info!("remove host header: {:?}", ele.1);
             }
         }
