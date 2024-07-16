@@ -53,7 +53,7 @@
                 "-o",
                 "--never-ask-for-auth",
                 "-r=arloor",
-                "--wrap-plaintext=localhost:7789=127.0.0.1:4000"
+                "--wrap-plaintext=localhost:7789=us.arloor.dev:80"
                 // "--log-dir=tmp"
             ],
             "env": {

@@ -58,8 +58,11 @@ impl ProxyHandler {
         let metrics = register_metrics(&mut registry);
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
-        let client: Client<hyper_util::client::legacy::connect::HttpConnector, Incoming> =
-            Client::builder(TokioExecutor::new()).build_http();
+        let client = Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(5)
+            .pool_timer(hyper_util::rt::TokioTimer::new())
+            .build_http();
         ProxyHandler {
             prom_registry: registry,
             metrics,
