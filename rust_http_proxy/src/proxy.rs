@@ -20,7 +20,6 @@ use hyper::{
 };
 use hyper::{
     body::{Body, Incoming},
-    client::conn::http1::Builder,
     header::HeaderName,
 };
 use hyper_util::client::legacy::Client;
@@ -246,45 +245,17 @@ impl ProxyHandler {
             req.headers_mut()
                 .remove(http::header::PROXY_AUTHORIZATION.to_string());
             req.headers_mut().remove("Proxy-Connection");
-            let host = req.uri().host().expect("uri has no host");
-            let port = req.uri().port_u16().unwrap_or(80);
-            let stream = TcpStream::connect((host, port)).await?;
-            let server_mod: CounterIO<TcpStream, LabelImpl<AccessLabel>> = CounterIO::new(
-                stream,
-                self.metrics.proxy_traffic.clone(),
-                LabelImpl::new(AccessLabel {
-                    client: client_socket_addr.ip().to_canonical().to_string(),
-                    target: format!("{}:{}", host, port),
-                    username,
-                }),
-            );
-            let io = TokioIo::new(server_mod);
-            match Builder::new()
-                .preserve_header_case(true)
-                .title_case_headers(true)
-                .handshake(io)
-                .await
-            {
-                Ok((mut sender, conn)) => {
-                    tokio::task::spawn(async move {
-                        if let Err(err) = conn.await {
-                            println!("Connection failed: {:?}", err);
-                        }
-                    });
-
-                    if let Ok(resp) = sender.send_request(req).await {
-                        Ok(resp.map(|b| {
-                            b.map_err(|e| {
-                                let e = e;
-                                io::Error::new(ErrorKind::InvalidData, e)
-                            })
-                            .boxed()
-                        }))
-                    } else {
-                        Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
-                    }
-                }
-                Err(e) => Err(io::Error::new(ErrorKind::ConnectionAborted, e)),
+            debug!("proxy: {:?}", req);
+            if let Ok(resp) = self.client.request(req).await {
+                Ok(resp.map(|b| {
+                    b.map_err(|e| {
+                        let e = e;
+                        io::Error::new(ErrorKind::InvalidData, e)
+                    })
+                    .boxed()
+                }))
+            } else {
+                Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
             }
         }
     }
@@ -322,8 +293,10 @@ impl ProxyHandler {
                 info!("remove host header: {:?}", ele.1);
             }
         }
-        let new_req = new_req.body(req.into_body()).expect("request builder");
-        debug!("reverse_proxy: {:?}", new_req.headers());
+        let new_req = new_req
+            .body(req.into_body())
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        debug!("reverse_proxy: {:?}", new_req);
         if let Ok(resp) = self.client.request(new_req).await {
             Ok(resp.map(|b| {
                 b.map_err(|e| {
