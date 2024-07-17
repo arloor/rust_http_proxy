@@ -22,7 +22,7 @@ use hyper::{
     body::{Body, Incoming},
     header::HeaderName,
 };
-use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
@@ -40,7 +40,7 @@ pub struct ProxyHandler {
     prom_registry: Registry,
     metrics: Metrics,
     net_monitor: NetMonitor,
-    client: Client<hyper_util::client::legacy::connect::HttpConnector, Incoming>,
+    client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
 }
 
 pub(crate) struct Metrics {
@@ -48,18 +48,54 @@ pub(crate) struct Metrics {
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
-
+#[allow(unused)]
+use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
     pub fn new() -> ProxyHandler {
         let mut registry = Registry::default();
         let metrics = register_metrics(&mut registry);
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
-        let client = Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(Duration::from_secs(90))
-            .pool_max_idle_per_host(5)
-            .pool_timer(hyper_util::rt::TokioTimer::new())
-            .build_http();
+
+        // 创建一个 HttpConnector
+        let mut http_connector = HttpConnector::new();
+        http_connector.enforce_http(false);
+
+        let mut root_cert_store = rustls::RootCertStore::empty();
+        root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let mut valid_count = 0;
+        let mut invalid_count = 0;
+        if let Ok(a) = rustls_native_certs::load_native_certs() {
+            for cert in a {
+                // Continue on parsing errors, as native stores often include ancient or syntactically
+                // invalid certificates, like root certificates without any X509 extensions.
+                // Inspiration: https://github.com/rustls/rustls/blob/633bf4ba9d9521a95f68766d04c22e2b01e68318/rustls/src/anchors.rs#L105-L112
+                match root_cert_store.add(cert) {
+                    Ok(_) => valid_count += 1,
+                    Err(err) => {
+                        invalid_count += 1;
+                        log::debug!("rustls failed to parse DER certificate: {err:?}");
+                    }
+                }
+            }
+        }
+        log::info!("rustls_native_certs found {valid_count} valid and {invalid_count} invalid certificates for reverse proxy");
+
+        let a = rustls::ClientConfig::builder()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth();
+        let https_connector = HttpsConnectorBuilder::new()
+            .with_tls_config(a)
+            .https_or_http()
+            .enable_all_versions()
+            .wrap_connector(http_connector);
+        // 创建一个 HttpsConnector，使用 rustls 作为后端
+        let client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> =
+            Client::builder(TokioExecutor::new())
+                .pool_idle_timeout(Duration::from_secs(90))
+                .pool_max_idle_per_host(5)
+                .pool_timer(hyper_util::rt::TokioTimer::new())
+                .build(https_connector);
         ProxyHandler {
             prom_registry: registry,
             metrics,
@@ -85,19 +121,10 @@ impl ProxyHandler {
                     .map_or("", |h| h.to_str().unwrap_or(""))
                     .to_string()
             };
-            if let Some((plaintext_host, plaintext_port)) =
-                proxy_config.wrap_plaintexts.get(&host_port)
+            if let Some(egress_addr) = proxy_config.reverse_proxy_map.get(&host_port)
             //如果命中了反向代理配置
             {
-                return self
-                    .reverse_proxy(
-                        client_socket_addr,
-                        host_port,
-                        req,
-                        plaintext_host.as_str(),
-                        plaintext_port.to_owned(),
-                    )
-                    .await;
+                return self.reverse_proxy(req, egress_addr).await;
             } else if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 // http2.0肯定是over tls的，所以不是普通GET/POST代理请求。
                 // URL中不包含host（GET / HTTP/1.1）也不是普通GET/POST代理请求。
@@ -288,27 +315,26 @@ impl ProxyHandler {
 
     async fn reverse_proxy(
         &self,
-        client_socket_addr: SocketAddr,
-        authority: String,
         req: Request<Incoming>,
-        plain_host: &str,
-        plain_port: u16,
+        egress_addr: &String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        info!(
-            "{} fetch plaintext of {}:{} through {}",
-            SocketAddrFormat(&client_socket_addr),
-            plain_host,
-            plain_port,
-            authority
-        );
         let method = req.method().clone();
         let url = req.uri().clone();
         let path_and_query = match url.path_and_query() {
             Some(path_and_query) => path_and_query.as_str(),
             None => "/",
         };
-        let url = format!("http://{}:{}{}", plain_host, plain_port, path_and_query);
-        let mut new_req = Request::builder().method(method).uri(url.clone());
+        let url = format!("{}{}", egress_addr, path_and_query);
+        let mut new_req = Request::builder()
+            .method(method)
+            .uri(url.clone())
+            // .version(Version::HTTP_11);
+            // 发现baidu.com有问题
+            .version(if url.starts_with("https:") {
+                req.version()
+            } else {
+                Version::HTTP_11
+            });
         for ele in req.headers() {
             if ele.0 != header::HOST {
                 new_req
@@ -323,16 +349,18 @@ impl ProxyHandler {
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         debug!("reverse_proxy: {:?}", new_req);
-        if let Ok(resp) = self.client.request(new_req).await {
-            Ok(resp.map(|b| {
+        match self.client.request(new_req).await {
+            Ok(resp) => Ok(resp.map(|b| {
                 b.map_err(|e| {
                     let e = e;
                     io::Error::new(ErrorKind::InvalidData, e)
                 })
                 .boxed()
-            }))
-        } else {
-            Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
+            })),
+            Err(e) => {
+                warn!("reverse_proxy error: {:?}", e);
+                Err(io::Error::new(ErrorKind::InvalidData, e))
+            }
         }
     }
 }

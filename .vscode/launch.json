@@ -53,7 +53,7 @@
                 "-o",
                 "--never-ask-for-auth",
                 "-r=arloor",
-                "--wrap-plaintext=localhost:7789=us.arloor.dev:80"
+                "--reverse-proxy=localhost:9999=>https://www.baidu.com",
                 // "--log-dir=tmp"
             ],
             "env": {

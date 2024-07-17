@@ -78,13 +78,14 @@ pub struct Param {
     hostname: String,
     #[arg(
         long,
-        value_name = "source=destination",
-        help = r#"特定的host:port转发到某http（非tls）端口，使用=分隔入口和目标站点
-例如：--wrap-plaintext=localhost:7788=127.0.0.1:3000 # https://localhost:7788转发到http://127.0.0.1:3000
-例如：--wrap-plaintext=example.com=127.0.0.1:3000 # https://example.com:443的请求转发到http://127.0.0.1:3000
+        value_name = "host:port=>url",
+        help = r#"特定的host:port转发到某url
+例如：--reverse-proxy=localhost:7788=>http://example.com # http(s)://localhost:7788转发到http://example.com
+例如：--reverse-proxy=localhost:7788=>https://example.com # http(s)://localhost:7788转发到https://example.com
+例如：--reverse-proxy=localhost:7788=>https://example.com/path/to/ # http(s)://localhost:7788/index.html转发到https://example.com/path/to/index.html
 "#
     )]
-    wrap_plaintext: Vec<String>,
+    reverse_proxy: Vec<String>,
 }
 
 pub(crate) struct Config {
@@ -97,7 +98,7 @@ pub(crate) struct Config {
     pub(crate) over_tls: bool,
     pub(crate) hostname: String,
     pub(crate) port: Vec<u16>,
-    pub(crate) wrap_plaintexts: HashMap<String, (String, u16)>,
+    pub(crate) reverse_proxy_map: HashMap<String, String>,
     pub(crate) tls_config_broadcast: Option<broadcast::Sender<Arc<ServerConfig>>>,
 }
 
@@ -113,21 +114,25 @@ impl From<Param> for Config {
                 basic_auth.insert(format!("Basic {}", base64), username);
             }
         }
-        let wrap_plaintexts: HashMap<String, (String, u16)> = param
-            .wrap_plaintext
+        let reverse_proxy_map: HashMap<String, String> = param
+            .reverse_proxy
             .iter()
             .map(|wrap| {
-                let mut wrap = wrap.split('=');
-                let tls_addr = wrap.next().unwrap_or("").to_string();
-                let no_tls_addr = wrap.next().unwrap_or("").to_string();
-                let mut no_tls_addr = no_tls_addr.split(':');
-                let no_tls_host = no_tls_addr.next().unwrap_or("").to_string();
-                let no_tls_port = no_tls_addr
-                    .next()
-                    .unwrap_or("80")
-                    .parse::<u16>()
-                    .unwrap_or(80);
-                (tls_addr, (no_tls_host, no_tls_port))
+                let mut wrap = wrap.split("=>");
+                let ingress_addr = wrap.next().unwrap_or("").to_string();
+                let mut egress_addr = wrap.next().unwrap_or("").to_string();
+                if egress_addr.ends_with('/') {
+                    egress_addr.truncate(egress_addr.len() - 1);
+                }
+                if url::Url::parse(&egress_addr).is_ok() {
+                    (ingress_addr, egress_addr)
+                } else {
+                    warn!("invalid reverse proxy target: {}", egress_addr);
+                    ("".to_owned(), "".to_owned())
+                }
+            })
+            .filter(|(ingress_addr, egress_addr)| {
+                !ingress_addr.is_empty() && !egress_addr.is_empty()
             })
             .collect();
         let tls_config_broadcast = if param.over_tls {
@@ -161,7 +166,7 @@ impl From<Param> for Config {
             over_tls: param.over_tls,
             hostname: param.hostname,
             port: param.port,
-            wrap_plaintexts,
+            reverse_proxy_map,
             tls_config_broadcast,
         }
     }

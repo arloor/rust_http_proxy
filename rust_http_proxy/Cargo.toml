@@ -1,6 +1,6 @@
 [package]
 name = "rust_http_proxy"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -40,12 +40,15 @@ io_x = { path = "../io_x" }
 prom_label = { path = "../prom_label" }
 # [target.'cfg(target_env = "musl")'.dependencies]
 # aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
-reqwest = { version = "0.12.5", default-features = false, features = [
-    # "rustls-tls",
-    "charset",
-    # "http2",
-    "macos-system-configuration",
+hyper-rustls = { version = "0", features = [
+    "rustls-platform-verifier",
+    "http2",
 ] }
+rustls = { version = "0" }
+rustls-native-certs = "0"
+webpki-roots = "0"
+url = "2"
+
 [features]
 default = ["ring"]
 jemalloc = ["jemallocator"]
