@@ -72,14 +72,15 @@ impl ProxyHandler {
     }
     pub async fn proxy(
         &self,
-        mut req: Request<hyper::body::Incoming>,
+        req: Request<hyper::body::Incoming>,
         proxy_config: &'static Config,
         client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let config_basic_auth = &proxy_config.basic_auth;
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
+        // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
-            let authority = if req.version() == Version::HTTP_2 {
+            let host_port = if req.version() == Version::HTTP_2 {
                 authority(req.uri()).unwrap_or("".to_owned())
             } else {
                 req.headers()
@@ -88,62 +89,33 @@ impl ProxyHandler {
                     .to_string()
             };
             if let Some((plaintext_host, plaintext_port)) =
-                proxy_config.wrap_plaintexts.get(&authority)
+                proxy_config.wrap_plaintexts.get(&host_port) //如果命中了反向代理配置
             {
                 return self
                     .reverse_proxy(
                         client_socket_addr,
-                        authority,
+                        host_port,
                         req,
                         plaintext_host.as_str(),
                         plaintext_port.to_owned(),
                     )
                     .await;
-            } else {
-                if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
-                    let raw_path = req.uri().path();
-                    let path = percent_decode_str(raw_path)
-                        .decode_utf8()
-                        .unwrap_or(Cow::from(raw_path));
-                    let path = path.as_ref();
-                    if !config_basic_auth.is_empty() && !never_ask_for_auth {
-                        // 存在嗅探风险时，不伪装成http服务
-                        return Err(io::Error::new(
-                            ErrorKind::PermissionDenied,
-                            "reject http GET/POST when ask_for_auth and basic_auth not empty",
-                        ));
-                    }
-                    return web_func::serve_http_request(
+            } else if req.version() == Version::HTTP_2 || req.uri().host().is_none() { 
+                // http2.0肯定是over tls的，所以不是普通GET/POST代理请求。
+                // URL中不包含host（GET / HTTP/1.1）也不是普通GET/POST代理请求。
+                return self
+                    .serve_static(
                         &req,
+                        config_basic_auth,
+                        never_ask_for_auth,
                         client_socket_addr,
                         proxy_config,
-                        path,
-                        &self.net_monitor,
-                        &self.metrics,
-                        &self.prom_registry,
                     )
-                    .await
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-                }
-                if let Some(host) = req.uri().host() {
-                    let host = host.to_string();
-                    info!(
-                        "{:>21?} {:^7} {:?} {:?} Host: {:?} User-Agent: {:?}",
-                        client_socket_addr,
-                        req.method().as_str(),
-                        req.uri(),
-                        req.version(),
-                        req.headers()
-                            .get(http::header::HOST)
-                            .map_or("", |h| h.to_str().unwrap_or(host.as_str())),
-                        req.headers()
-                            .get(http::header::USER_AGENT)
-                            .map_or("", |h| h.to_str().unwrap_or("")),
-                    );
-                };
+                    .await;
             }
         }
 
+        // 2. proxy stage
         let (username, authed) = check_auth(
             config_basic_auth,
             &req,
@@ -170,97 +142,150 @@ impl ProxyHandler {
             };
         }
         if Method::CONNECT == req.method() {
-            // Received an HTTP request like:
-            // ```
-            // CONNECT www.domain.com:443 HTTP/1.1
-            // Host: www.domain.com:443
-            // Proxy-Connection: Keep-Alive
-            // ```
-            //
-            // When HTTP method is CONNECT we should return an empty body
-            // then we can eventually upgrade the connection and talk a new protocol.
-            //
-            // Note: only after client received an empty body with STATUS_OK can the
-            // connection be upgraded, so we can't return a response inside
-            // `on_upgrade` future.
-            if let Some(addr) = authority(req.uri()) {
-                let proxy_traffic = self.metrics.proxy_traffic.clone();
-                tokio::task::spawn(async move {
-                    match hyper::upgrade::on(req).await {
-                        Ok(upgraded) => {
-                            let access_label = AccessLabel {
-                                client: client_socket_addr.ip().to_canonical().to_string(),
-                                target: addr.clone(),
-                                username,
-                            };
-                            // Connect to remote server
-                            match TcpStream::connect(addr.as_str()).await {
-                                Ok(target_stream) => {
-                                    let access_tag = access_label.to_string();
-                                    let target_stream = CounterIO::new(
-                                        target_stream,
-                                        proxy_traffic,
-                                        LabelImpl::new(access_label),
-                                    );
-                                    if let Err(e) = tunnel(upgraded, target_stream).await {
-                                        // if e.kind() != ErrorKind::TimedOut {
-                                        warn!(
-                                            "[tunnel io error] [{}]: [{}] {} ",
-                                            access_tag,
-                                            e.kind(),
-                                            e
-                                        );
-                                        // }
-                                    };
-                                }
-                                Err(e) => {
+            self.tunnel_proxy(req, client_socket_addr, username)
+        } else {
+            self.simple_proxy(req).await
+        }
+    }
+
+    /// 代理普通请求
+    /// HTTP/1.1 GET/POST/PUT/DELETE/HEAD
+    async fn simple_proxy(
+        &self,
+        mut req: Request<Incoming>,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        // 删除代理特有的请求头
+        req.headers_mut()
+            .remove(http::header::PROXY_AUTHORIZATION.to_string());
+        req.headers_mut().remove("Proxy-Connection");
+        debug!("proxy: {:?}", req);
+        if let Ok(resp) = self.client.request(req).await {
+            Ok(resp.map(|b| {
+                b.map_err(|e| {
+                    let e = e;
+                    io::Error::new(ErrorKind::InvalidData, e)
+                })
+                .boxed()
+            }))
+        } else {
+            Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
+        }
+    }
+
+    /// 代理CONNECT请求
+    /// HTTP/1.1 CONNECT    
+    fn tunnel_proxy(
+        &self,
+        req: Request<Incoming>,
+        client_socket_addr: SocketAddr,
+        username: String,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        // Received an HTTP request like:
+        // ```
+        // CONNECT www.domain.com:443 HTTP/1.1
+        // Host: www.domain.com:443
+        // Proxy-Connection: Keep-Alive
+        // ```
+        //
+        // When HTTP method is CONNECT we should return an empty body
+        // then we can eventually upgrade the connection and talk a new protocol.
+        //
+        // Note: only after client received an empty body with STATUS_OK can the
+        // connection be upgraded, so we can't return a response inside
+        // `on_upgrade` future.
+        if let Some(addr) = authority(req.uri()) {
+            let proxy_traffic = self.metrics.proxy_traffic.clone();
+            tokio::task::spawn(async move {
+                match hyper::upgrade::on(req).await {
+                    Ok(upgraded) => {
+                        let access_label = AccessLabel {
+                            client: client_socket_addr.ip().to_canonical().to_string(),
+                            target: addr.clone(),
+                            username,
+                        };
+                        // Connect to remote server
+                        match TcpStream::connect(addr.as_str()).await {
+                            Ok(target_stream) => {
+                                let access_tag = access_label.to_string();
+                                let target_stream = CounterIO::new(
+                                    target_stream,
+                                    proxy_traffic,
+                                    LabelImpl::new(access_label),
+                                );
+                                if let Err(e) = tunnel(upgraded, target_stream).await {
+                                    // if e.kind() != ErrorKind::TimedOut {
                                     warn!(
-                                        "[tunnel establish error] [{}]: [{}] {} ",
-                                        access_label,
+                                        "[tunnel io error] [{}]: [{}] {} ",
+                                        access_tag,
                                         e.kind(),
                                         e
-                                    )
-                                }
+                                    );
+                                    // }
+                                };
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "[tunnel establish error] [{}]: [{}] {} ",
+                                    access_label,
+                                    e.kind(),
+                                    e
+                                )
                             }
                         }
-                        Err(e) => warn!("upgrade error: {}", e),
                     }
-                });
-                let mut response = Response::new(empty_body());
-                // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
-                let max_num = 2048 / LOCAL_IP.len();
-                let count = rand::thread_rng().gen_range(1..max_num);
-                for _ in 0..count {
-                    response
-                        .headers_mut()
-                        .append(http::header::SERVER, HeaderValue::from_static(&LOCAL_IP));
+                    Err(e) => warn!("upgrade error: {}", e),
                 }
-                Ok(response)
-            } else {
-                warn!("CONNECT host is not socket addr: {:?}", req.uri());
-                let mut resp = Response::new(full_body("CONNECT must be to a socket address"));
-                *resp.status_mut() = http::StatusCode::BAD_REQUEST;
-
-                Ok(resp)
+            });
+            let mut response = Response::new(empty_body());
+            // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
+            let max_num = 2048 / LOCAL_IP.len();
+            let count = rand::thread_rng().gen_range(1..max_num);
+            for _ in 0..count {
+                response
+                    .headers_mut()
+                    .append(http::header::SERVER, HeaderValue::from_static(&LOCAL_IP));
             }
+            Ok(response)
         } else {
-            // 删除代理特有的请求头
-            req.headers_mut()
-                .remove(http::header::PROXY_AUTHORIZATION.to_string());
-            req.headers_mut().remove("Proxy-Connection");
-            debug!("proxy: {:?}", req);
-            if let Ok(resp) = self.client.request(req).await {
-                Ok(resp.map(|b| {
-                    b.map_err(|e| {
-                        let e = e;
-                        io::Error::new(ErrorKind::InvalidData, e)
-                    })
-                    .boxed()
-                }))
-            } else {
-                Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
-            }
+            warn!("CONNECT host is not socket addr: {:?}", req.uri());
+            let mut resp = Response::new(full_body("CONNECT must be to a socket address"));
+            *resp.status_mut() = http::StatusCode::BAD_REQUEST;
+
+            Ok(resp)
         }
+    }
+
+    async fn serve_static(
+        &self,
+        req: &Request<Incoming>,
+        config_basic_auth: &HashMap<String, String>,
+        never_ask_for_auth: bool,
+        client_socket_addr: SocketAddr,
+        proxy_config: &'static Config,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        let raw_path = req.uri().path();
+        let path = percent_decode_str(raw_path)
+            .decode_utf8()
+            .unwrap_or(Cow::from(raw_path));
+        let path = path.as_ref();
+        if !config_basic_auth.is_empty() && !never_ask_for_auth {
+            // 存在嗅探风险时，不伪装成http服务
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                "reject http GET/POST when ask_for_auth and basic_auth not empty",
+            ));
+        }
+        web_func::serve_http_request(
+            req,
+            client_socket_addr,
+            proxy_config,
+            path,
+            &self.net_monitor,
+            &self.metrics,
+            &self.prom_registry,
+        )
+        .await
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
 
     async fn reverse_proxy(
