@@ -119,13 +119,13 @@ impl From<Param> for Config {
             .iter()
             .map(|wrap| {
                 let mut wrap = wrap.split("=>");
-                let ingress_addr = wrap.next().unwrap_or("").to_string();
+                let ingress_host = wrap.next().unwrap_or("").to_string();
                 let mut egress_addr = wrap.next().unwrap_or("").to_string();
                 if egress_addr.ends_with('/') {
                     egress_addr.truncate(egress_addr.len() - 1);
                 }
                 if url::Url::parse(&egress_addr).is_ok() {
-                    (ingress_addr, egress_addr)
+                    (ingress_host, egress_addr)
                 } else {
                     warn!("invalid reverse proxy target: {}", egress_addr);
                     ("".to_owned(), "".to_owned())
@@ -208,6 +208,9 @@ fn log_config(config: &Config) {
         }
     }
     info!("basic auth is {:?}", config.basic_auth);
+    config.reverse_proxy_map.iter().for_each(|(ingress, egress)| {
+        info!("reverse proxy [{}] => [{}]", ingress, egress);
+    });
 }
 
 #[cfg(unix)]

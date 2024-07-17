@@ -79,13 +79,13 @@ impl ProxyHandler {
                 }
             }
         }
-        log::info!("rustls_native_certs found {valid_count} valid and {invalid_count} invalid certificates for reverse proxy");
+        log::debug!("rustls_native_certs found {valid_count} valid and {invalid_count} invalid certificates for reverse proxy");
 
-        let a = rustls::ClientConfig::builder()
+        let client_tls_config = rustls::ClientConfig::builder()
             .with_root_certificates(root_cert_store)
             .with_no_client_auth();
         let https_connector = HttpsConnectorBuilder::new()
-            .with_tls_config(a)
+            .with_tls_config(client_tls_config)
             .https_or_http()
             .enable_all_versions()
             .wrap_connector(http_connector);
@@ -113,18 +113,24 @@ impl ProxyHandler {
         let never_ask_for_auth = proxy_config.never_ask_for_auth;
         // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
-            let host_port = if req.version() == Version::HTTP_2 {
-                authority(req.uri()).unwrap_or("".to_owned())
+            let host = if req.version() == Version::HTTP_2 {
+                let host_port = authority(req.uri()).unwrap_or("".to_owned());
+                host_port.split(':').next().unwrap_or("").to_string()
             } else {
                 req.headers()
                     .get(http::header::HOST)
                     .map_or("", |h| h.to_str().unwrap_or(""))
+                    .split(':')
+                    .next()
+                    .unwrap_or("")
                     .to_string()
             };
-            if let Some(egress_addr) = proxy_config.reverse_proxy_map.get(&host_port)
+            if let Some(egress_addr) = proxy_config.reverse_proxy_map.get(&host)
             //如果命中了反向代理配置
             {
-                return self.reverse_proxy(req, egress_addr).await;
+                return self
+                    .reverse_proxy(req, egress_addr, &host, &client_socket_addr)
+                    .await;
             } else if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 // http2.0肯定是over tls的，所以不是普通GET/POST代理请求。
                 // URL中不包含host（GET / HTTP/1.1）也不是普通GET/POST代理请求。
@@ -317,6 +323,8 @@ impl ProxyHandler {
         &self,
         req: Request<Incoming>,
         egress_addr: &String,
+        host: &String,
+        client_socket_addr: &SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let method = req.method().clone();
         let url = req.uri().clone();
@@ -335,12 +343,18 @@ impl ProxyHandler {
             } else {
                 Version::HTTP_11
             });
+        let header_map =match new_req.headers_mut() {
+            Some(header_map) => header_map,
+            None => {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "new_req.headers_mut() is None, which means error occurs in new request build. Check URL, method, version...",
+                ));
+            }
+        };
         for ele in req.headers() {
             if ele.0 != header::HOST {
-                new_req
-                    .headers_mut()
-                    .unwrap()
-                    .append(ele.0.clone(), ele.1.clone());
+                header_map.append(ele.0.clone(), ele.1.clone());
             } else {
                 info!("remove host header: {:?}", ele.1);
             }
@@ -348,6 +362,11 @@ impl ProxyHandler {
         let new_req = new_req
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        info!(
+            "reverse proxy [{host}] to [{:?}] {url} from {}",
+            new_req.version(),
+            SocketAddrFormat(client_socket_addr)
+        );
         debug!("reverse_proxy: {:?}", new_req);
         match self.client.request(new_req).await {
             Ok(resp) => Ok(resp.map(|b| {
@@ -516,4 +535,13 @@ pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed()
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_aa() {
+        let host = "www.arloor.com";
+        assert_eq!(host.split(':').next().unwrap_or("").to_string(), host);
+    }
 }

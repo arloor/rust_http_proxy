@@ -168,32 +168,6 @@ fn extract_domain_from_url(url: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test_extract_domain_from_url() {
-        assert_eq!(
-            extract_domain_from_url("https://www.baidu.com/"),
-            "www.baidu.com"
-        );
-        assert_eq!(
-            extract_domain_from_url("https://www.baidu.com"),
-            "www.baidu.com"
-        );
-        assert_eq!(
-            extract_domain_from_url("http://www.baidu.com/"),
-            "www.baidu.com"
-        );
-        assert_eq!(extract_domain_from_url("sadasdasdsadas"), "sadasdasdsadas");
-        assert_eq!(
-            extract_domain_from_url("https://www.google.com.hk/"),
-            "www.google.com.hk"
-        );
-        assert_eq!(extract_domain_from_url("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "www.bing.com");
-    }
-}
-
 async fn serve_metrics(
     registry: &Registry,
     _net_monitor: &NetMonitor,
@@ -563,4 +537,30 @@ fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     let mut resp = Response::new(full_body("Internal Server Error"));
     *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_extract_domain_from_url() {
+        assert_eq!(
+            extract_domain_from_url("https://www.baidu.com/"),
+            "www.baidu.com"
+        );
+        assert_eq!(
+            extract_domain_from_url("https://www.baidu.com"),
+            "www.baidu.com"
+        );
+        assert_eq!(
+            extract_domain_from_url("http://www.baidu.com/"),
+            "www.baidu.com"
+        );
+        assert_eq!(extract_domain_from_url("sadasdasdsadas"), "sadasdasdsadas");
+        assert_eq!(
+            extract_domain_from_url("https://www.google.com.hk/"),
+            "www.google.com.hk"
+        );
+        assert_eq!(extract_domain_from_url("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "www.bing.com");
+    }
 }
