@@ -49,9 +49,6 @@ pub(crate) struct Metrics {
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
 
-#[allow(dead_code)]
-const CHUNKED: &str = "chunked";
-
 impl ProxyHandler {
     pub fn new() -> ProxyHandler {
         let mut registry = Registry::default();
@@ -89,7 +86,8 @@ impl ProxyHandler {
                     .to_string()
             };
             if let Some((plaintext_host, plaintext_port)) =
-                proxy_config.wrap_plaintexts.get(&host_port) //如果命中了反向代理配置
+                proxy_config.wrap_plaintexts.get(&host_port)
+            //如果命中了反向代理配置
             {
                 return self
                     .reverse_proxy(
@@ -100,7 +98,7 @@ impl ProxyHandler {
                         plaintext_port.to_owned(),
                     )
                     .await;
-            } else if req.version() == Version::HTTP_2 || req.uri().host().is_none() { 
+            } else if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 // http2.0肯定是over tls的，所以不是普通GET/POST代理请求。
                 // URL中不包含host（GET / HTTP/1.1）也不是普通GET/POST代理请求。
                 return self
