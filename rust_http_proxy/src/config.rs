@@ -1,7 +1,6 @@
 use base64::engine::general_purpose;
 use base64::Engine;
 use clap::Parser;
-use http::uri::Uri;
 use http::Version;
 use log::{info, warn};
 use log_x::init_log;
@@ -83,7 +82,7 @@ pub struct Param {
         value_name = "HOST=>URL[=>VERSION]",
         help = r#"特定的HOST转发到特定的URL，并且使用特定的VERSION。
 其中URL必须包含scheme和host。
-其中VERSION可以填写HTTP11或者HTTP2，如果不填，则自动推断。
+其中VERSION可以填写HTTP11或者HTTP2，如果不填，则自动推断。一般来说，只对https网站只支持http/1.1（例如反代 https://www.baidu.com）的时候才需要显式设置为HTTP11，其他时候不需要设置。
 例如：--reverse-proxy=localhost:7788=>http://example.com # http(s)://localhost:7788转发到http://example.com
 例如：--reverse-proxy=localhost:7788=>https://example.com # http(s)://localhost:7788转发到https://example.com
 例如：--reverse-proxy=localhost:7788=>https://example.com=>HTTP11 # http(s)://localhost:7788转发到https://example.com，并且使用HTTP/1.1
@@ -94,7 +93,7 @@ pub struct Param {
 }
 
 pub(crate) struct Upstream {
-    pub(crate) uri: Uri,
+    pub(crate) uri: String,
     pub(crate) version: Option<Version>,
 }
 pub(crate) struct Config {
@@ -129,11 +128,11 @@ impl From<Param> for Config {
             .map(|wrap| {
                 let mut wrap = wrap.split("=>");
                 let ingress_host = wrap.next().unwrap_or("").to_string();
-                let mut egress_addr = wrap.next().unwrap_or("").to_string();
-                if egress_addr.ends_with('/') {
-                    egress_addr.truncate(egress_addr.len() - 1);
+                let mut upstream = wrap.next().unwrap_or("").to_string();
+                if upstream.ends_with('/') {
+                    upstream.truncate(upstream.len() - 1);
                 }
-                let uri = match http::uri::Uri::from_maybe_shared(egress_addr) {
+                let upstream_uri = match http::uri::Uri::from_maybe_shared(upstream) {
                     Ok(uri) => {
                         if uri.scheme().is_none() || uri.authority().is_none() {
                             warn!("invalid reverse proxy target: {}", uri);
@@ -152,6 +151,10 @@ impl From<Param> for Config {
                     "HTTP2" => Some(Version::HTTP_2),
                     _ => None,
                 };
+                let mut uri = upstream_uri.to_string();
+                if uri.ends_with('/') {
+                    uri.truncate(uri.len() - 1);
+                }
                 (ingress_host, Some(Upstream { uri, version }))
             })
             .filter(|(_, upstrea)| upstrea.is_some())

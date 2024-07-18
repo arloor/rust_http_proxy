@@ -335,10 +335,7 @@ impl ProxyHandler {
             Some(path_and_query) => path_and_query.as_str(),
             None => "/",
         };
-        let mut upstream_uri = upstream.uri.to_string();
-        if upstream_uri.ends_with('/') {
-            upstream_uri.truncate(upstream_uri.len() - 1);
-        }
+        let upstream_uri = upstream.uri.to_string();
         let url = format!("{}{}", upstream_uri, path_and_query);
         let mut new_req = Request::builder().method(method).uri(url.clone()).version(
             if !url.starts_with("https:") {
