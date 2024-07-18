@@ -60,6 +60,7 @@ impl ProxyHandler {
         // 创建一个 HttpConnector
         let mut http_connector = HttpConnector::new();
         http_connector.enforce_http(false);
+        http_connector.set_keepalive(Some(Duration::from_secs(90)));
 
         let mut root_cert_store = rustls::RootCertStore::empty();
         root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
