@@ -7,7 +7,9 @@ use std::{
     time::Duration,
 };
 
-use crate::{ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, LOCAL_IP};
+use crate::{
+    config::Upstream, ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, LOCAL_IP,
+};
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -126,11 +128,11 @@ impl ProxyHandler {
                     .unwrap_or("")
                     .to_string()
             };
-            if let Some(egress_addr) = proxy_config.reverse_proxy_map.get(&host)
+            if let Some(upstream) = proxy_config.reverse_proxy_map.get(&host)
             //如果命中了反向代理配置
             {
                 return self
-                    .reverse_proxy(req, egress_addr, &host, &client_socket_addr)
+                    .reverse_proxy(req, upstream, &host, &client_socket_addr)
                     .await;
             } else if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 // http2.0肯定是over tls的，所以不是普通GET/POST代理请求。
@@ -323,7 +325,7 @@ impl ProxyHandler {
     async fn reverse_proxy(
         &self,
         req: Request<Incoming>,
-        egress_addr: &String,
+        upstream: &Upstream,
         host: &String,
         client_socket_addr: &SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
@@ -333,18 +335,25 @@ impl ProxyHandler {
             Some(path_and_query) => path_and_query.as_str(),
             None => "/",
         };
-        let url = format!("{}{}", egress_addr, path_and_query);
-        let mut new_req = Request::builder()
-            .method(method)
-            .uri(url.clone())
-            // .version(Version::HTTP_11);
-            // 发现baidu.com有问题
-            .version(if url.starts_with("https:") {
-                req.version()
+        let mut upstream_uri = upstream.uri.to_string();
+        if upstream_uri.ends_with('/') {
+            upstream_uri.truncate(upstream_uri.len() - 1);
+        }
+        let url = format!("{}{}", upstream_uri, path_and_query);
+        let mut new_req = Request::builder().method(method).uri(url.clone()).version(
+            if !url.starts_with("https:") {
+                match upstream.version {
+                    Some(version) => version,
+                    None => Version::HTTP_11,
+                }
             } else {
-                Version::HTTP_11
-            });
-        let header_map =match new_req.headers_mut() {
+                match upstream.version {
+                    Some(version) => version,
+                    None => req.version(),
+                }
+            },
+        );
+        let header_map = match new_req.headers_mut() {
             Some(header_map) => header_map,
             None => {
                 return Err(io::Error::new(

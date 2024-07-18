@@ -47,7 +47,7 @@ hyper-rustls = { version = "0", features = [
 rustls = { version = "0" }
 rustls-native-certs = "0"
 webpki-roots = "0"
-url = "2"
+http = "1"
 
 [features]
 default = ["ring"]

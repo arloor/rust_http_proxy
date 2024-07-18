@@ -1,6 +1,8 @@
 use base64::engine::general_purpose;
 use base64::Engine;
 use clap::Parser;
+use http::uri::Uri;
+use http::Version;
 use log::{info, warn};
 use log_x::init_log;
 use std::collections::HashMap;
@@ -78,16 +80,23 @@ pub struct Param {
     hostname: String,
     #[arg(
         long,
-        value_name = "host:port=>url",
-        help = r#"特定的host:port转发到某url
+        value_name = "HOST=>URL[=>VERSION]",
+        help = r#"特定的HOST转发到特定的URL，并且使用特定的VERSION。
+其中URL必须包含scheme和host。
+其中VERSION可以填写HTTP11或者HTTP2，如果不填，则自动推断。
 例如：--reverse-proxy=localhost:7788=>http://example.com # http(s)://localhost:7788转发到http://example.com
 例如：--reverse-proxy=localhost:7788=>https://example.com # http(s)://localhost:7788转发到https://example.com
+例如：--reverse-proxy=localhost:7788=>https://example.com=>HTTP11 # http(s)://localhost:7788转发到https://example.com，并且使用HTTP/1.1
 例如：--reverse-proxy=localhost:7788=>https://example.com/path/to/ # http(s)://localhost:7788/index.html转发到https://example.com/path/to/index.html
 "#
     )]
     reverse_proxy: Vec<String>,
 }
 
+pub(crate) struct Upstream {
+    pub(crate) uri: Uri,
+    pub(crate) version: Option<Version>,
+}
 pub(crate) struct Config {
     pub(crate) cert: String,
     pub(crate) key: String,
@@ -98,7 +107,7 @@ pub(crate) struct Config {
     pub(crate) over_tls: bool,
     pub(crate) hostname: String,
     pub(crate) port: Vec<u16>,
-    pub(crate) reverse_proxy_map: HashMap<String, String>,
+    pub(crate) reverse_proxy_map: HashMap<String, Upstream>,
     pub(crate) tls_config_broadcast: Option<broadcast::Sender<Arc<ServerConfig>>>,
 }
 
@@ -114,7 +123,7 @@ impl From<Param> for Config {
                 basic_auth.insert(format!("Basic {}", base64), username);
             }
         }
-        let reverse_proxy_map: HashMap<String, String> = param
+        let reverse_proxy_map: HashMap<String, Upstream> = param
             .reverse_proxy
             .iter()
             .map(|wrap| {
@@ -124,16 +133,29 @@ impl From<Param> for Config {
                 if egress_addr.ends_with('/') {
                     egress_addr.truncate(egress_addr.len() - 1);
                 }
-                if url::Url::parse(&egress_addr).is_ok() {
-                    (ingress_host, egress_addr)
-                } else {
-                    warn!("invalid reverse proxy target: {}", egress_addr);
-                    ("".to_owned(), "".to_owned())
-                }
+                let uri = match http::uri::Uri::from_maybe_shared(egress_addr) {
+                    Ok(uri) => {
+                        if uri.scheme().is_none() || uri.authority().is_none() {
+                            warn!("invalid reverse proxy target: {}", uri);
+                            return (ingress_host, None);
+                        }
+                        uri
+                    }
+                    Err(_invalid) => {
+                        warn!("invalid reverse proxy target: {}", _invalid);
+                        return (ingress_host, None);
+                    }
+                };
+                let version = wrap.next().unwrap_or("").to_string();
+                let version = match version.as_str() {
+                    "HTTP11" => Some(Version::HTTP_11),
+                    "HTTP2" => Some(Version::HTTP_2),
+                    _ => None,
+                };
+                (ingress_host, Some(Upstream { uri, version }))
             })
-            .filter(|(ingress_addr, egress_addr)| {
-                !ingress_addr.is_empty() && !egress_addr.is_empty()
-            })
+            .filter(|(_, upstrea)| upstrea.is_some())
+            .map(|entry| (entry.0, entry.1.unwrap()))
             .collect();
         let tls_config_broadcast = if param.over_tls {
             let (tx, _rx) = broadcast::channel::<Arc<ServerConfig>>(10);
@@ -208,9 +230,15 @@ fn log_config(config: &Config) {
         }
     }
     info!("basic auth is {:?}", config.basic_auth);
-    config.reverse_proxy_map.iter().for_each(|(ingress, egress)| {
-        info!("reverse proxy [{}] => [{}]", ingress, egress);
-    });
+    config
+        .reverse_proxy_map
+        .iter()
+        .for_each(|(ingress, egress)| {
+            info!(
+                "reverse proxy [{}] => [{}] version: {:?}",
+                ingress, egress.uri, egress.version
+            );
+        });
 }
 
 #[cfg(unix)]

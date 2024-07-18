@@ -60,11 +60,14 @@ Options:
           if enable, proxy server will listen on https
       --hostname <HOSTNAME>
           [default: unknown]
-      --reverse-proxy <host=>url>
-          特定的host:port转发到某url
-          例如：--reverse-proxy=localhost=>http://example.com # http(s)://localhost[:任意port]转发到http://example.com
-          例如：--reverse-proxy=localhost=>https://example.com # http(s)://localhost[:任意port]转发到https://example.com
-          例如：--reverse-proxy=localhost=>https://example.com/path/to/ # http(s)://localhost[:任意port]/index.html转发到https://example.com/path/to/index.html
+      --reverse-proxy <HOST=>URL[=>VERSION]>
+          特定的HOST转发到特定的URL，并且使用特定的VERSION。
+          其中URL必须包含scheme和host。
+          其中VERSION可以填写HTTP_11或者HTTP_2，如果不填，则自动推断。
+          例如：--reverse-proxy=localhost:7788=>http://example.com # http(s)://localhost:7788转发到http://example.com
+          例如：--reverse-proxy=localhost:7788=>https://example.com # http(s)://localhost:7788转发到https://example.com
+          例如：--reverse-proxy=localhost:7788=>https://example.com=>HTTP_11 # http(s)://localhost:7788转发到https://example.com，并且使用HTTP/1.1
+          例如：--reverse-proxy=localhost:7788=>https://example.com/path/to/ # http(s)://localhost:7788/index.html转发到https://example.com/path/to/index.html
           
   -h, --help
           Print help
