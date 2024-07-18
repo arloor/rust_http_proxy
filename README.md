@@ -63,7 +63,7 @@ Options:
       --reverse-proxy <HOST=>URL[=>VERSION]>
           特定的HOST转发到特定的URL，并且使用特定的VERSION。
           其中URL必须包含scheme和host。
-          其中VERSION可以填写HTTP11或者HTTP2，如果不填，则自动推断。一般来说，只在https网站只支持http/1.1的时候，例如反代 https://www.baidu.com，才需要显式设置为HTTP11，其他时候不需要设置。
+          其中VERSION可以填写HTTP11或者HTTP2，如果不填，则自动推断。一般来说，只在Https网站只支持http/1.1的时候，例如反代https://www.baidu.com，才需要显式设置为HTTP11，其他时候不需要设置。
           例如：--reverse-proxy=localhost:7788=>http://example.com # http(s)://localhost:7788转发到http://example.com
           例如：--reverse-proxy=localhost:7788=>https://example.com # http(s)://localhost:7788转发到https://example.com
           例如：--reverse-proxy=localhost:7788=>https://example.com=>HTTP11 # http(s)://localhost:7788转发到https://example.com，并且使用HTTP/1.1
