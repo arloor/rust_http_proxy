@@ -376,8 +376,8 @@ impl ProxyHandler {
         );
         debug!("reverse_proxy: {:?}", new_req);
         match self.client.request(new_req).await {
-            Ok(resp) => Ok(resp.map(|b| {
-                b.map_err(|e| {
+            Ok(resp) => Ok(resp.map(|resp| {
+                resp.map_err(|e| {
                     let e = e;
                     io::Error::new(ErrorKind::InvalidData, e)
                 })
