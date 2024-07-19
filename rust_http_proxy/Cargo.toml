@@ -38,12 +38,14 @@ socket_filter = { workspace = true, optional = true }
 log_x = { path = "../log_x" }
 io_x = { path = "../io_x" }
 prom_label = { path = "../prom_label" }
-# [target.'cfg(target_env = "musl")'.dependencies]
-# aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
-hyper-rustls = { version = "0", features = [
+hyper-rustls = { version = "0", default-features = false, features = [
     "rustls-platform-verifier",
     "http2",
-] }
+    "native-tokio",
+    "http1",
+    "logging",
+] } # [target.'cfg(target_env = "musl")'.dependencies]
+# aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
 rustls = { version = "0" }
 rustls-native-certs = "0"
 webpki-roots = "0"
@@ -55,6 +57,5 @@ jemalloc = ["jemallocator"]
 bpf = ["socket_filter"]
 bpf_vendored = ["bpf", "socket_filter/vendored"]
 bpf_static = ["bpf", "socket_filter/static"]
-aws_lc_rs = ["tokio-rustls/aws-lc-rs"]
-# aws_lc_rs = ["tokio-rustls/aws-lc-rs","aws-lc-rs/bindgen"]
-ring = ["tokio-rustls/ring"]
+aws_lc_rs = ["tokio-rustls/aws-lc-rs","hyper-rustls/aws-lc-rs"]
+ring = ["tokio-rustls/ring","hyper-rustls/ring"]
