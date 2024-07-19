@@ -78,8 +78,7 @@ impl ProxyHandler {
         // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
             let host = if req.version() == Version::HTTP_2 {
-                let host_port = authority(req.uri()).unwrap_or("".to_owned());
-                host_port.split(':').next().unwrap_or("").to_string()
+                req.uri().host().unwrap_or("").to_string()
             } else {
                 req.headers()
                     .get(http::header::HOST)
