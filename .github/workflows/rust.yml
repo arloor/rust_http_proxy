@@ -16,8 +16,8 @@ jobs:
       - name: Set outputs
         id: vars
         run: echo "sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
-      - name: build musl
-        id: build_musl
+      - name: build
+        id: build
         uses: arloor/rust_musl_action@latest
         with:
           use_musl: false
