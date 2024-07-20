@@ -95,10 +95,8 @@ curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7
 
 ### linux amd64 可执行文件
 
-> v0.1.3可能不是最新版本，请在release页面查看最新版本
-
 ```shell
-curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/v0.1.3/rust_http_proxy
+curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/master/rust_http_proxy
 mv rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
 rust_http_proxy -p 8888
 ```
@@ -116,7 +114,7 @@ docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 8888
 > 注意：ebpf版本并没有什么新特性，只是为了学习下新技术的自嗨。
 
 ```bash
-curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/vebpf/rust_http_proxy -o /tmp/rust_http_proxy
+curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/ebpf/rust_http_proxy -o /tmp/rust_http_proxy
 mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
 rust_http_proxy -p 8888
 ```

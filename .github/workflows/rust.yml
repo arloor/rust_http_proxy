@@ -8,7 +8,6 @@ permissions:
   contents: write
 env:
   CARGO_TERM_COLOR: always
-  USE_MUSL: true
 jobs:
   general:
     runs-on: ubuntu-latest
@@ -21,24 +20,35 @@ jobs:
         id: build_musl
         uses: arloor/rust_musl_action@latest
         with:
-          use_musl: ${{ env.USE_MUSL }}
+          use_musl: false
           extra_deps: cmake
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs
           apt_mirror: mirrors.mit.edu
+          rust_flags: -C target-feature=+crt-static
       - name: docker build and push
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         run: |
           ls -lh ${{ steps.build_musl.outputs.release_dir }}
-          dockerfile="Dockerfile.dyn"
-          if [ "${{ env.USE_MUSL }}" = "true" ]; then
-            dockerfile="Dockerfile.static"
-          fi
+          dockerfile="Dockerfile.static"
           podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           # podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
           podman push docker.io/arloor/rust_http_proxy:latest
-      - name: gihub release
+      - name: create master release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=master
+          if $(gh release delete v${version} -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
+          git config --local user.email "admin@arloor.com"
+          git config --local user.name "arloor"
+          gh release create ${version} ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
+      - name: create version release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -73,7 +83,7 @@ jobs:
           podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf --build-arg TARGET_PATH=/x86_64-unknown-linux-gnu
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           podman push docker.io/arloor/rust_http_proxy:bpf
-      - name: gihub release
+      - name: create ebpf release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         env:
           GH_TOKEN: ${{ github.token }}
@@ -85,4 +95,4 @@ jobs:
           fi
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
-          gh release create v${version} ${{ steps.build_bpf.outputs.release_dir }}rust_http_proxy -n "$version" -t "$version" --prerelease
+          gh release create ${version} ${{ steps.build_bpf.outputs.release_dir }}rust_http_proxy -n "$version" -t "$version" --prerelease
