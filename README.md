@@ -96,7 +96,7 @@ curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7
 ### linux amd64 可执行文件
 
 ```shell
-curl -SLfO https://github.com/arloor/rust_http_proxy/releases/download/master/rust_http_proxy -o /tmp/rust_http_proxy
+curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/master/rust_http_proxy -o /tmp/rust_http_proxy
 mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
 rust_http_proxy -p 8888
 ```
