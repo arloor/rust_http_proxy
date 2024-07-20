@@ -114,7 +114,7 @@ docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 8888
 > 注意：ebpf版本并没有什么新特性，只是为了学习下新技术的自嗨。
 
 ```bash
-curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/ebpf/rust_http_proxy -o /tmp/rust_http_proxy
+curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/bpf/rust_http_proxy -o /tmp/rust_http_proxy
 mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
 rust_http_proxy -p 8888
 ```
