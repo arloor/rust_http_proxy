@@ -54,6 +54,7 @@ jobs:
         run: |
           # 从Cargo.toml中提取版本号
           version=$(grep -E ^version rust_http_proxy/Cargo.toml|awk -F "[\"]" '{print $2}')
+          version="v${version}"
           if [ -z "$version" ]; then echo "version not found"; exit 1; fi
           if $(gh release delete v${version} -y --cleanup-tag); 
             then echo "delete old release"; 
@@ -61,7 +62,7 @@ jobs:
           fi
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
-          gh release create v${version} ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
+          gh release create ${version} ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
   ebpf:
     runs-on: ubuntu-latest
     steps:
