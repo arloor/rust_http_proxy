@@ -40,7 +40,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=master
-          if $(gh release delete v${version} -y --cleanup-tag); 
+          if $(gh release delete ${version} -y --cleanup-tag); 
             then echo "delete old release"; 
             else echo "no old release";
           fi
@@ -56,7 +56,7 @@ jobs:
           version=$(grep -E ^version rust_http_proxy/Cargo.toml|awk -F "[\"]" '{print $2}')
           version="v${version}"
           if [ -z "$version" ]; then echo "version not found"; exit 1; fi
-          if $(gh release delete v${version} -y --cleanup-tag); 
+          if $(gh release delete ${version} -y --cleanup-tag); 
             then echo "delete old release"; 
             else echo "no old release";
           fi
@@ -90,7 +90,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version='bpf'
-          if $(gh release delete v${version} -y --cleanup-tag); 
+          if $(gh release delete ${version} -y --cleanup-tag); 
             then echo "delete old release"; 
             else echo "no old release";
           fi
