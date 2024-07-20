@@ -44,8 +44,7 @@ hyper-rustls = { version = "0", default-features = false, features = [
     "native-tokio",
     "http1",
     "logging",
-] } # [target.'cfg(target_env = "musl")'.dependencies]
-# aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
+] } 
 rustls = { version = "0" }
 rustls-native-certs = "0"
 webpki-roots = "0"
