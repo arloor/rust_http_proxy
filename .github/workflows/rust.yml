@@ -28,7 +28,7 @@ jobs:
       - name: docker build and push
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         run: |
-          ls -lh ${{ steps.build_musl.outputs.release_dir }}
+          ls -lh ${{ steps.build.outputs.release_dir }}
           dockerfile="Dockerfile.static"
           podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest --build-arg TARGET_PATH=/x86_64-unknown-linux-gnu
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
@@ -46,7 +46,7 @@ jobs:
           fi
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
-          gh release create ${version} ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
+          gh release create ${version} ${{ steps.build.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
       - name: create version release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
         env:
@@ -62,7 +62,7 @@ jobs:
           fi
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
-          gh release create ${version} ${{ steps.build_musl.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
+          gh release create ${version} ${{ steps.build.outputs.release_dir }}rust_http_proxy -n "$version" --latest -t "$version"
   bpf:
     runs-on: ubuntu-latest
     steps:
