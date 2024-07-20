@@ -39,7 +39,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=master
+          version=latest
           if $(gh release delete ${version} -y --cleanup-tag); 
             then echo "delete old release"; 
             else echo "no old release";
