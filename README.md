@@ -98,7 +98,7 @@ curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7
 ```shell
 curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/master/rust_http_proxy -o /tmp/rust_http_proxy
 mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
-rust_http_proxy -p 8888
+/usr/bin/rust_http_proxy -p 8888
 ```
 
 ### Docker 安装 
@@ -116,7 +116,7 @@ docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 8888
 ```bash
 curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/bpf/rust_http_proxy -o /tmp/rust_http_proxy
 mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
-rust_http_proxy -p 8888
+/usr/bin/rust_http_proxy -p 8888
 ```
 
 或者
