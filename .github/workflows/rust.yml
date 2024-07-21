@@ -73,10 +73,10 @@ jobs:
         uses: arloor/rust_musl_action@latest
         with:
           use_musl: false
-          extra_deps: cmake libbpf-dev zlib1g-dev libelf-dev pkg-config clang autoconf autopoint flex bison gawk make
-          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,bpf_vendored
+          extra_deps: cmake zlib1g-dev libelf-dev pkg-config clang autoconf autopoint flex bison gawk make
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,bpf_static
           apt_mirror: mirrors.mit.edu
-          rust_flags: -C target-feature=+crt-static
+          rust_flags: -C target-feature=+crt-static -L/usr/lib/x86_64-linux-gnu
       - name: docker build and push
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         run: |

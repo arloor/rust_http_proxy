@@ -49,12 +49,13 @@ rustls = { version = "0" }
 rustls-native-certs = "0"
 webpki-roots = "0"
 http = "1"
+libbpf-sys={version = "1",optional = true}
 
 [features]
 default = ["ring"]
 jemalloc = ["jemallocator"]
 bpf = ["socket_filter"]
 bpf_vendored = ["bpf", "socket_filter/vendored"]
-bpf_static = ["bpf", "socket_filter/static"]
+bpf_static = ["bpf", "socket_filter/static","libbpf-sys/vendored-libbpf"]
 aws_lc_rs = ["rustls/aws-lc-rs"]
 ring = ["rustls/ring"]
