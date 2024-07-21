@@ -50,10 +50,10 @@
                 "username:password",
                 "-w",
                 ".",
-                "-o",
+                // "-o",
                 "--never-ask-for-auth",
                 "-r=arloor",
-                "--reverse-proxy=localhost=>http://dmit.arloor.dev=>HTTP11",
+                // "--reverse-proxy=localhost=>http://dmit.arloor.dev=>HTTP11",
                 // "--log-dir=tmp"
             ],
             "env": {
