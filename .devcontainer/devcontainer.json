@@ -3,14 +3,14 @@
     "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
     "name": "rust_http_proxy",
     "containerUser": "root", // postCreateCommand中命令需要root权限
-    "privileged": true,
+    "remoteUser": "root", // 与containerUser一致
+    "privileged": true, // 让ebpf正常工作
     "features": {
         "ghcr.io/devcontainers/features/rust:1": {}
     },
     "postCreateCommand": { // 容器创建后的初始化命令
-        "apt install":"apt update;apt-get install -y libz-dev libelf-dev pkg-config clang vim less",
+        "apt install":"apt update;apt-get install -y libz-dev libelf-dev pkg-config bpftool clang vim less",
         "chown root":"chown -R root /workspaces", // 修改git repo目录的权限
-        "git config":"[ -f ~/.gitconfig ]&&{git config --global --unset http.proxy;git config --global --unset https.proxy;git config --global --list}"
     }, 
     "hostRequirements": {
         "cpus": 2,
