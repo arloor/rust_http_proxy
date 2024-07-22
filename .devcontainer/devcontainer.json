@@ -9,7 +9,7 @@
         "ghcr.io/devcontainers/features/rust:1": {}
     },
     "postCreateCommand": { // 容器创建后的初始化命令
-        "apt install":"apt update;apt-get install -y libz-dev libelf-dev pkg-config bpftool clang vim less",
+        "apt install":"apt update;apt-get install -y zlib1g-dev libelf-dev pkg-config clang vim less",
         "chown root":"chown -R root /workspaces", // 修改git repo目录的权限
     }, 
     "hostRequirements": {
