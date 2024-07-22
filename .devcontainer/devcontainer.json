@@ -1,18 +1,28 @@
 {
     // https://mcr.microsoft.com/en-us/catalog?search=devcontainers
     "image": "mcr.microsoft.com/devcontainers/universal",
-    "name":"rust_http_proxy",
+    "name": "rust_http_proxy",
     "containerUser": "root", // postCreateCommand中命令需要root权限
     "remoteUser": "root",
     "privileged": true,
     "features": {
         "ghcr.io/devcontainers/features/rust:1": {}
     },
-    "postCreateCommand": "mkdir -p ~/.ssh;echo \"$SSH_PRIVATE\" > ~/.ssh/id_rsa;chmod 0400 ~/.ssh/id_rsa;apt update;apt-get install -y libz-dev libelf-dev pkg-config clang", // 容器创建后的初始化命令
+    "postCreateCommand": {
+        "ssh_config":"mkdir -p ~/.ssh;echo \"$SSH_PRIVATE\" > ~/.ssh/id_rsa;chmod 0400 ~/.ssh/id_rsa;",
+        "apt install":"apt update;apt-get install -y libz-dev libelf-dev pkg-config clang",
+        "git config":"git config --global --unset http.proxy;git config --global --unset https.proxy"
+    }, // 容器创建后的初始化命令
     "hostRequirements": {
         "cpus": 2,
         "memory": "16gb"
     }, // 容器的资源要求
+    "containerEnv": {
+        "http_proxy":"",
+        "https_proxy":"",
+        "HTTP_PROXY":"",
+        "HTTPS_PROXY":""
+    },
     "customizations": {
         "codespaces": {
             "openFiles": [
