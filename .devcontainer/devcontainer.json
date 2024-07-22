@@ -1,6 +1,8 @@
 {
     // https://mcr.microsoft.com/en-us/catalog?search=devcontainers
     "image": "mcr.microsoft.com/devcontainers/universal",
+    "containerUser": "root", // postCreateCommand中命令需要root权限
+    "remoteUser": "root",
     "privileged": true,
     "features": {
         "ghcr.io/devcontainers/features/rust:1": {}
