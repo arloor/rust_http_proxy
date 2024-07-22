@@ -8,6 +8,10 @@
         "ghcr.io/devcontainers/features/rust:1": {}
     },
     "postCreateCommand": "mkdir -p ~/.ssh;echo \"$SSH_PRIVATE\" > ~/.ssh/id_rsa;chmod 0400 ~/.ssh/id_rsa;apt update;apt-get install -y libz-dev libelf-dev pkg-config clang", // 容器创建后的初始化命令
+    "hostRequirements": {
+        "cpus": 2,
+        "memory": "16gb"
+    }, // 容器的资源要求
     "customizations": {
         "codespaces": {
             "openFiles": [
