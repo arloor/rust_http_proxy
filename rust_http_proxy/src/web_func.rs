@@ -96,7 +96,7 @@ pub async fn serve_http_request(
             if !authed {
                 return Ok(build_authenticate_resp(false));
             }
-            serve_metrics(prom_registry, _net_monitor, &metrics.net_bytes).await
+            serve_metrics(req, prom_registry, _net_monitor, &metrics.net_bytes).await
         }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
@@ -169,6 +169,7 @@ fn extract_domain_from_url(url: &str) -> String {
 }
 
 async fn serve_metrics(
+    req: &Request<impl Body>,
     registry: &Registry,
     _net_monitor: &NetMonitor,
     _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
@@ -201,10 +202,23 @@ async fn serve_metrics(
             .header(http::header::SERVER, SERVER_NAME)
             .body(full_body(format!("encode metrics error: {}", e)))
     } else {
-        Response::builder()
+        let builder = Response::builder()
             .status(StatusCode::OK)
-            .header(http::header::SERVER, SERVER_NAME)
-            .body(full_body(buffer))
+            .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(http::header::SERVER, SERVER_NAME);
+        let accept_encoding = req
+            .headers()
+            .get(http::header::ACCEPT_ENCODING)
+            .map_or("", |h| h.to_str().unwrap_or(""));
+        let need_gzip = accept_encoding.contains(GZIP);
+        if need_gzip {
+            let compressed_data = compress_string(&buffer);
+            builder
+                .header(http::header::CONTENT_ENCODING, GZIP)
+                .body(full_body(compressed_data))
+        } else {
+            builder.body(full_body(buffer))
+        }
     }
 }
 
@@ -539,6 +553,18 @@ fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     resp
 }
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::io::prelude::*;
+
+fn compress_string(input: &str) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(input.as_bytes())
+        .expect("Failed to write data");
+    encoder.finish().expect("Failed to finish compression")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,5 +588,25 @@ mod tests {
             "www.google.com.hk"
         );
         assert_eq!(extract_domain_from_url("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "www.bing.com");
+    }
+
+    use flate2::read::GzDecoder;
+
+    fn decompress_string(input: &[u8]) -> String {
+        let mut decoder = GzDecoder::new(input);
+        let mut decompressed_data = String::new();
+        decoder
+            .read_to_string(&mut decompressed_data)
+            .expect("Failed to read data");
+        decompressed_data
+    }
+
+    #[test]
+    fn test_gzip_compress_string() {
+        let original_string = "Hello, Rust! This is a test string for Gzip compression.";
+        let compressed_data = compress_string(original_string);
+        let decompressed_string = decompress_string(&compressed_data);
+
+        assert_eq!(original_string, decompressed_string);
     }
 }

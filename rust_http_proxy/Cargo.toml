@@ -27,6 +27,7 @@ chrono = "0.4"
 # tls-listener = { version = "0.9", features = ["rustls"] }
 pin-project-lite.workspace = true
 prometheus-client.workspace = true
+flate2={version = "1.0"}
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 clap = { version = "4.4", features = ["derive"] }
 base64 = "0.22"
