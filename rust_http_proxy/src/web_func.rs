@@ -565,6 +565,18 @@ fn compress_string(input: &str) -> Vec<u8> {
     encoder.finish().expect("Failed to finish compression")
 }
 
+#[allow(unused)]
+use flate2::read::GzDecoder;
+#[allow(unused)]
+fn decompress_string(input: &[u8]) -> String {
+    let mut decoder = GzDecoder::new(input);
+    let mut decompressed_data = String::new();
+    decoder
+        .read_to_string(&mut decompressed_data)
+        .expect("Failed to read data");
+    decompressed_data
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,16 +602,7 @@ mod tests {
         assert_eq!(extract_domain_from_url("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "www.bing.com");
     }
 
-    use flate2::read::GzDecoder;
 
-    fn decompress_string(input: &[u8]) -> String {
-        let mut decoder = GzDecoder::new(input);
-        let mut decompressed_data = String::new();
-        decoder
-            .read_to_string(&mut decompressed_data)
-            .expect("Failed to read data");
-        decompressed_data
-    }
 
     #[test]
     fn test_gzip_compress_string() {
