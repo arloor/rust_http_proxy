@@ -27,7 +27,7 @@ chrono = "0.4"
 # tls-listener = { version = "0.9", features = ["rustls"] }
 pin-project-lite.workspace = true
 prometheus-client.workspace = true
-flate2={version = "1.0"}
+flate2 = { version = "1.0" }
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 clap = { version = "4.4", features = ["derive"] }
 base64 = "0.22"
@@ -45,18 +45,22 @@ hyper-rustls = { version = "0", default-features = false, features = [
     "native-tokio",
     "http1",
     "logging",
-] } 
-rustls = { version = "0" }
+] }
+rustls = { version = "0", default-features = false, features = [
+    "logging",
+    "std",
+    "tls12",
+] }
 rustls-native-certs = "0"
 webpki-roots = "0"
 http = "1"
-libbpf-sys={version = "1",optional = true}
+libbpf-sys = { version = "1", optional = true }
 
 [features]
 default = ["ring"]
 jemalloc = ["jemallocator"]
 bpf = ["socket_filter"]
 bpf_vendored = ["bpf", "socket_filter/vendored"]
-bpf_static = ["bpf", "socket_filter/static","libbpf-sys/vendored-libbpf"]
+bpf_static = ["bpf", "socket_filter/static", "libbpf-sys/vendored-libbpf"]
 aws_lc_rs = ["rustls/aws-lc-rs"]
 ring = ["rustls/ring"]
