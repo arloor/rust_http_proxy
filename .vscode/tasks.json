@@ -10,8 +10,8 @@
 			"args": [
 				"-p",
 				"rust_http_proxy",
-				"--features",
-				"bpf",
+				// "--features",
+				// "bpf",
 				// "--features",
 				// "jemalloc",
 				// "--no-default-features",
