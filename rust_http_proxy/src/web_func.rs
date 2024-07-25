@@ -78,14 +78,19 @@ pub async fn serve_http_request(
         .uri()
         .authority()
         .map_or(_hostname.as_str(), |authority| authority.host());
+    let accept_encoding = req
+        .headers()
+        .get(http::header::ACCEPT_ENCODING)
+        .map_or("", |h| h.to_str().unwrap_or(""));
+    let can_gzip = accept_encoding.contains(GZIP);
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         #[cfg(target_os = "linux")]
         (_, "/nt") => _count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/speed") => _speed(_net_monitor, _hostname).await,
+        (_, "/speed") => _speed(_net_monitor, _hostname, can_gzip).await,
         #[cfg(target_os = "linux")]
-        (_, "/net") => _speed(_net_monitor, _hostname).await,
+        (_, "/net") => _speed(_net_monitor, _hostname, can_gzip).await,
         (_, "/metrics") => {
             let (_, authed) = check_auth(
                 &proxy_config.basic_auth,
@@ -96,7 +101,7 @@ pub async fn serve_http_request(
             if !authed {
                 return Ok(build_authenticate_resp(false));
             }
-            serve_metrics(req, prom_registry, _net_monitor, &metrics.net_bytes).await
+            serve_metrics(prom_registry, _net_monitor, &metrics.net_bytes, can_gzip).await
         }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
@@ -117,7 +122,7 @@ pub async fn serve_http_request(
                     "".to_string()
                 },
             );
-            let r = serve_path(web_content_path, path, req, true).await;
+            let r = serve_path(web_content_path, path, req, can_gzip, true).await;
             let is_shell = path.ends_with(".sh");
             incr_counter_if_need(
                 &r,
@@ -129,7 +134,7 @@ pub async fn serve_http_request(
             );
             r
         }
-        (&Method::HEAD, path) => serve_path(web_content_path, path, req, false).await,
+        (&Method::HEAD, path) => serve_path(web_content_path, path, req, false, false).await,
         _ => not_found(),
     };
 }
@@ -169,10 +174,10 @@ fn extract_domain_from_url(url: &str) -> String {
 }
 
 async fn serve_metrics(
-    req: &Request<impl Body>,
     registry: &Registry,
     _net_monitor: &NetMonitor,
     _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
+    can_gizp: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     #[cfg(feature = "bpf")]
     {
@@ -206,12 +211,7 @@ async fn serve_metrics(
             .status(StatusCode::OK)
             .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
             .header(http::header::SERVER, SERVER_NAME);
-        let accept_encoding = req
-            .headers()
-            .get(http::header::ACCEPT_ENCODING)
-            .map_or("", |h| h.to_str().unwrap_or(""));
-        let need_gzip = accept_encoding.contains(GZIP);
-        if need_gzip {
+        if can_gizp {
             let compressed_data = compress_string(&buffer);
             builder
                 .header(http::header::CONTENT_ENCODING, GZIP)
@@ -226,6 +226,7 @@ async fn serve_path(
     web_content_path: &String,
     url_path: &str,
     req: &Request<impl Body>,
+    can_gzip: bool,
     need_body: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     if String::from(url_path).contains("/..") {
@@ -288,11 +289,7 @@ async fn serve_path(
 
     // 判断客户端是否支持gzip
     let content_type = content_type.as_str();
-    let accept_encoding = req
-        .headers()
-        .get(http::header::ACCEPT_ENCODING)
-        .map_or("", |h| h.to_str().unwrap_or(""));
-    let need_gzip = accept_encoding.contains(GZIP)
+    let need_gzip = can_gzip
         && (content_type.starts_with("text/html")
             || content_type.starts_with("text/css")
             || content_type.starts_with("application/javascript")
@@ -518,6 +515,7 @@ lazy_static! {
 async fn _speed(
     net_monitor: &NetMonitor,
     hostname: &str,
+    can_gzip: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let r = net_monitor._fetch_all().await;
     let mut scales = vec![];
@@ -538,13 +536,22 @@ async fn _speed(
     if max_up / interval > 10 {
         interval = (max_up / interval / 10) * interval;
     }
-    Response::builder()
+    let body = format!(
+        "{} {}网速 {} {:?} {} {} {}  {:?} {}",
+        _PART0, hostname, _PART1, scales, _PART2, interval, _PART3, series_up, _PART4
+    );
+    let builder = Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(full_body(format!(
-            "{} {}网速 {} {:?} {} {} {}  {:?} {}",
-            _PART0, hostname, _PART1, scales, _PART2, interval, _PART3, series_up, _PART4
-        )))
+        .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8");
+    if can_gzip {
+        let compressed_data = compress_string(&body);
+        builder
+            .header(http::header::CONTENT_ENCODING, GZIP)
+            .body(full_body(compressed_data))
+    } else {
+        builder.body(full_body(body))
+    }
 }
 
 fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
@@ -601,8 +608,6 @@ mod tests {
         );
         assert_eq!(extract_domain_from_url("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "www.bing.com");
     }
-
-
 
     #[test]
     fn test_gzip_compress_string() {
