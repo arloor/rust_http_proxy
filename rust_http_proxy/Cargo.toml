@@ -25,7 +25,6 @@ mime_guess = "2.0"
 httpdate = "1.0"
 percent-encoding = "2.2"
 chrono = "0.4"
-# tls-listener = { version = "0.9", features = ["rustls"] }
 pin-project-lite.workspace = true
 prometheus-client.workspace = true
 flate2 = { version = "1.0" }
@@ -46,13 +45,6 @@ hyper-rustls = { version = "0", default-features = false, features = [
     "http1",
     "logging",
 ] }
-rustls = { version = "0", default-features = false, features = [
-    "logging",
-    "std",
-    "tls12",
-] }
-rustls-native-certs = "0"
-webpki-roots = "0"
 http = "1"
 libbpf-sys = { version = "1", optional = true }
 
@@ -62,5 +54,5 @@ jemalloc = ["jemallocator"]
 bpf = ["socket_filter"]
 bpf_vendored = ["bpf", "socket_filter/vendored"]
 bpf_static = ["bpf", "socket_filter/static", "libbpf-sys/vendored-libbpf"]
-aws_lc_rs = ["rustls/aws-lc-rs"]
-ring = ["rustls/ring"]
+aws_lc_rs = ["tokio-rustls/aws-lc-rs", "hyper-rustls/aws-lc-rs"]
+ring = ["tokio-rustls/ring", "hyper-rustls/ring"]

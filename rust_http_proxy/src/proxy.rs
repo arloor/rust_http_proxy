@@ -357,31 +357,8 @@ fn build_http_client() -> Client<hyper_rustls::HttpsConnector<HttpConnector>, In
     http_connector.enforce_http(false);
     http_connector.set_keepalive(Some(Duration::from_secs(90)));
 
-    let mut root_cert_store = rustls::RootCertStore::empty();
-    root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let mut valid_count = 0;
-    let mut invalid_count = 0;
-    if let Ok(a) = rustls_native_certs::load_native_certs() {
-        for cert in a {
-            // Continue on parsing errors, as native stores often include ancient or syntactically
-            // invalid certificates, like root certificates without any X509 extensions.
-            // Inspiration: https://github.com/rustls/rustls/blob/633bf4ba9d9521a95f68766d04c22e2b01e68318/rustls/src/anchors.rs#L105-L112
-            match root_cert_store.add(cert) {
-                Ok(_) => valid_count += 1,
-                Err(err) => {
-                    invalid_count += 1;
-                    log::debug!("rustls failed to parse DER certificate: {err:?}");
-                }
-            }
-        }
-    }
-    log::debug!("rustls_native_certs found {valid_count} valid and {invalid_count} invalid certificates for reverse proxy");
-
-    let client_tls_config = rustls::ClientConfig::builder()
-        .with_root_certificates(root_cert_store)
-        .with_no_client_auth();
     let https_connector = HttpsConnectorBuilder::new()
-        .with_tls_config(client_tls_config)
+        .with_platform_verifier()
         .https_or_http()
         .enable_all_versions()
         .wrap_connector(http_connector);
