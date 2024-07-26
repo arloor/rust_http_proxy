@@ -75,14 +75,11 @@ impl NetMonitor {
 }
 
 #[cfg(feature = "bpf")]
-use lazy_static::lazy_static;
-#[cfg(feature = "bpf")]
 use socket_filter::TransmitCounter;
 #[cfg(feature = "bpf")]
-lazy_static! {
-    static ref SOCKET_FILTER: Arc<TransmitCounter> =
-        Arc::new(TransmitCounter::new(&IGNORED_INTERFACES));
-}
+static SOCKET_FILTER: std::sync::LazyLock<Arc<TransmitCounter>> =
+    std::sync::LazyLock::new(|| Arc::new(TransmitCounter::new(&IGNORED_INTERFACES)));
+
 #[cfg(feature = "bpf")]
 pub fn get_egress() -> u64 {
     SOCKET_FILTER.get_egress()

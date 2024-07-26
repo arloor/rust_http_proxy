@@ -25,14 +25,13 @@ use hyper::service::service_fn;
 use hyper::{Error, Request, Response};
 use hyper_util::rt::tokio::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
-use lazy_static::lazy_static;
 use log::{info, warn};
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::io;
 use std::net::SocketAddr;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
@@ -47,10 +46,8 @@ type DynError = Box<dyn stdError>; // wrapper for dyn Error
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-lazy_static! {
-    static ref PROXY_HANDLER: Arc<ProxyHandler> = Arc::new(ProxyHandler::new());
-    static ref LOCAL_IP: String = local_ip().unwrap_or("0.0.0.0".to_string());
-}
+static PROXY_HANDLER: LazyLock<Arc<ProxyHandler>> = LazyLock::new(|| Arc::new(ProxyHandler::new()));
+static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {

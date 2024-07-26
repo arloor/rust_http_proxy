@@ -9,7 +9,6 @@ use crate::proxy::NetDirectionLabel;
 use crate::proxy::ReqLabels;
 use crate::Config;
 use http::response::Builder;
-use lazy_static::lazy_static;
 use prom_label::LabelImpl;
 
 use async_compression::tokio::bufread::GzipEncoder;
@@ -33,6 +32,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin;
 use std::process::Command;
+use std::sync::LazyLock;
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader};
@@ -508,9 +508,7 @@ const _PART3: &str = include_str!("../html/part3.html");
 const _PART4: &str = include_str!("../html/part4.html");
 const H404: &str = include_str!("../html/404.html");
 const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
-lazy_static! {
-    static ref BOOTUP_TIME: SystemTime = SystemTime::now();
-}
+static BOOTUP_TIME: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
 
 async fn _speed(
     net_monitor: &NetMonitor,
