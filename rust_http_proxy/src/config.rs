@@ -158,7 +158,15 @@ impl From<Param> for Config {
                 (ingress_host, Some(Upstream { uri, version }))
             })
             .filter(|(_, upstrea)| upstrea.is_some())
-            .map(|entry| (entry.0, entry.1.unwrap_or(Upstream { uri: "".to_string(), version: None })))
+            .map(|entry| {
+                (
+                    entry.0,
+                    entry.1.unwrap_or(Upstream {
+                        uri: "".to_string(),
+                        version: None,
+                    }),
+                )
+            })
             .collect();
         let tls_config_broadcast = if param.over_tls {
             let (tx, _rx) = broadcast::channel::<Arc<ServerConfig>>(10);
