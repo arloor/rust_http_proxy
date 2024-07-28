@@ -3,6 +3,7 @@ name = "log_x"
 version = "0.1.0"
 authors = ["arloor <admin@arloor.com>"]
 edition = "2021"
+rust-version = "1.79.0"
 
 [lib]
 path = "src/lib.rs" # 库文件的路径
