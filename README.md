@@ -1,24 +1,16 @@
-基于 `hyper` 和 `rustls` 的http代理。
-
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/arloor/rust_http_proxy)
 
-整体功能完全对标[Java版本HttpProxy](https://github.com/arloor/HttpProxy)。 内存仅为Java版本的十分之一，为20MB以下。
+基于 `hyper` 和 `rustls` 的静态资源托管服务器、正向代理、反向代理。支持以下特性：
 
-相比 `hyper`的[正向代理example](https://github.com/hyperium/hyper/blob/0.14.x/examples/http_proxy.rs)增加了以下特性：
-
-1. proxy over tls特性( `--over-tls` )：使用tls来对代理流量进行加密。
-2. 每天定时加载tls证书，acme证书过期重新签发时不需要重启服务。
-3. 支持Proxy-Authorization鉴权。
-4. 开启Proxy-Authorization鉴权时，结合 `--never-ask-for-auth` 配置防止嗅探。
-5. 删除代理相关的header，以保持高匿。
-6. 类Nginx的静态资源托管，支持gzip压缩。
-7. 基于Prometheus的可观测，可以监控代理的流量、外链访问等。
-8. 支持多端口，多用户。
-9. 连接空闲（10分钟没有IO）自动关闭。
-10. 可选feature：jemalloc内存分配器。使用`cargo build --features jemalloc`命令编译以激活
-11. 支持Accept-Ranges以支持断点续传（备注：暂不支持多range，例如 `Range: bytes=0-100,100-` ）
-12. 采集网卡上行流量，展示在 `/speed` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
-13. 支持反向代理（ `--reverse-proxy` ）。目前仅支持根据host路由到upstream的url，不支持其他匹配规则。
+1. 使用tls来对正向代理流量进行加密（`--over-tls`）。
+2. 类Nginx的静态资源托管。支持gzip压缩。支持Accept-Ranges以支持断点续传（备注：暂不支持多range，例如 `Range: bytes=0-100,100-` ）
+3. 支持反向代理（ `--reverse-proxy` ）。目前仅支持根据host路由到upstream的url，不支持其他匹配规则。
+4. 基于Prometheus的可观测，可以监控代理的流量、外链访问等。
+5. 采集网卡上行流量，展示在 `/speed` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
+5. 支持多端口，多用户。
+6. 每天定时加载tls证书，acme证书过期重新签发时不需要重启服务。
+7. 连接空闲（10分钟没有IO）自动关闭。
+8. 可选feature：jemalloc内存分配器。使用`cargo build --features jemalloc`命令编译以激活
 
 提及的参数详见[命令行参数](#命令行参数)
 
@@ -236,8 +228,6 @@ Nginx收到的消息：
 ![](traffic_at_nginx.png)
 
 可以看到请求URL和`Proxy-Connection`都被正确处理了。
-
-
 
 ## 一些例子
 
