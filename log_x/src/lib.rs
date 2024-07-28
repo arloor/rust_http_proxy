@@ -1,4 +1,4 @@
-use std::{fs, io, path::PathBuf};
+use std::{fs, io, path};
 
 use flexi_logger::{
     Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, FlexiLoggerError, Logger, LoggerHandle,
@@ -8,11 +8,10 @@ use log::{info, Record};
 
 pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLoggerError> {
     // 转换成绝对路径
-    let log_dir_path = PathBuf::from(log_dir);
+    let log_dir_path = path::absolute(log_dir)?;
     if !log_dir_path.exists() {
         fs::create_dir_all(log_dir_path.clone())?;
     }
-    let log_dir_path=log_dir_path.canonicalize()?;
     let log_dir = log_dir_path.as_path().to_str().ok_or(io::Error::new(
         io::ErrorKind::InvalidInput,
         "error parse absolute path of log dir",
@@ -39,7 +38,11 @@ pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLogg
         .format(my_format)
         .create_symlink(format!("{}/{}", log_dir, log_file))
         .start();
-    info!("log is output to {}/{}", log_dir, log_file);
+    let symlink_path = log_dir_path.join(log_file);
+    let symlink_path = symlink_path
+        .to_str()
+        .ok_or(io::Error::new(io::ErrorKind::InvalidData, "cannot parse"))?;
+    info!("log is output to {}", symlink_path);
     log
 }
 
