@@ -6,22 +6,27 @@
     "remoteUser": "root", // 与containerUser一致
     "privileged": true, // 让ebpf正常工作
     "features": {
-        "ghcr.io/devcontainers/features/rust:1": {}
+        // "ghcr.io/devcontainers/features/rust:1": {} // 不使用预定义的feature，手动安装
     },
     "postCreateCommand": { // 容器创建后的初始化命令
-        "apt install":"apt update;apt-get install -y zlib1g-dev libelf-dev pkg-config clang vim less",
-        "chown root":"chown -R root /workspaces", // 修改git repo目录的权限
-        "clear git config from vscode devcontainer extension":"rm -rf ~/.gitconfig"
-    }, 
+        "rust": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-host x86_64-unknown-linux-gnu -y;",
+        "apt install": "apt update;apt-get install -y zlib1g-dev libelf-dev pkg-config clang vim less",
+        "chown root": "chown -R root /workspaces", // 修改git repo目录的权限
+        // "clear git config from vscode devcontainer extension":"rm -rf ~/.gitconfig"
+    },
     "hostRequirements": {
-        "cpus": 2,
+        "cpus": 4,
         "memory": "16gb"
     }, // 容器的资源要求
-    "containerEnv": {
-        "http_proxy":"",
-        "https_proxy":"",
-        "HTTP_PROXY":"",
-        "HTTPS_PROXY":""
+    "runArgs": [
+        "--network",
+        "host"
+    ], // 与主机共享网络，以使用主机的代理
+    "containerEnv": { // 以下http代理的env会被podman传递进容器
+        // "http_proxy":"",
+        // "https_proxy":"",
+        // "HTTP_PROXY":"",
+        // "HTTPS_PROXY":""
     },
     "customizations": {
         "codespaces": {
