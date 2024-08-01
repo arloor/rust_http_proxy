@@ -352,10 +352,11 @@ impl ProxyHandler {
 }
 
 fn build_http_client() -> Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
+    let pool_idle_timeout = Duration::from_secs(90);
     // 创建一个 HttpConnector
     let mut http_connector = HttpConnector::new();
     http_connector.enforce_http(false);
-    http_connector.set_keepalive(Some(Duration::from_secs(90)));
+    http_connector.set_keepalive(Some(pool_idle_timeout));
 
     let https_connector = HttpsConnectorBuilder::new()
         .with_platform_verifier()
@@ -365,7 +366,7 @@ fn build_http_client() -> Client<hyper_rustls::HttpsConnector<HttpConnector>, In
     // 创建一个 HttpsConnector，使用 rustls 作为后端
     let client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> =
         Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_idle_timeout(pool_idle_timeout)
             .pool_max_idle_per_host(5)
             .pool_timer(hyper_util::rt::TokioTimer::new())
             .build(https_connector);
