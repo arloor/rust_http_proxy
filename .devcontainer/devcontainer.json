@@ -1,4 +1,5 @@
 {
+    // https://containers.dev/implementors/json_reference/
     // https://mcr.microsoft.com/en-us/catalog?search=devcontainers
     "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
     "name": "rust_http_proxy",
