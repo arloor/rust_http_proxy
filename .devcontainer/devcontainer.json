@@ -42,7 +42,7 @@
                 "github.copilot",
                 "github.vscode-github-actions", // github actions
                 "tamasfe.even-better-toml", // toml格式化
-                "serayuzgur.crates", // crates.io插件
+                "fill-labs.dependi", // crates.io插件
                 "waderyan.gitblame",
                 "donjayamanne.githistory"
             ],
