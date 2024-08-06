@@ -38,7 +38,7 @@ socket_filter = { workspace = true, optional = true }
 log_x = { path = "../log_x" }
 io_x = { path = "../io_x" }
 prom_label = { path = "../prom_label" }
-hyper-rustls = { version = "0", default-features = false, features = [
+hyper-rustls = { version = "0.27", default-features = false, features = [
     "rustls-platform-verifier",
     "http2",
     "native-tokio",
