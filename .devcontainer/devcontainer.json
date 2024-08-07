@@ -44,7 +44,8 @@
                 "tamasfe.even-better-toml", // toml格式化
                 "fill-labs.dependi", // crates.io插件
                 "waderyan.gitblame",
-                "donjayamanne.githistory"
+                "donjayamanne.githistory",
+                "mhutchie.git-graph"
             ],
             "settings": {
                 "files.watcherExclude": {
