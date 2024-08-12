@@ -155,13 +155,6 @@ req_from_out_total{referer="all",path="all"} 4
 
 ## Cargo Features
 
-tips: `.vscode/tasks.json` 定义了在vscode中调试时激活的features，为了防止本地修改污染github仓库中的内容，导致在多平台编译失败，建议在 `git add` 前使用下面的命令使git忽略 `.vscode/tasks.json`:
-
-```bash
-cargo install --git https://github.com/arloor/repo
-repo miss .vscode/tasks.json 
-```
-
 ### jemalloc
 
 拥有更高的并发分配能力和减少内存碎片，不过会buffer更多的内存，因此top中RES数值会有上升。激活方式：
