@@ -330,8 +330,8 @@ impl ProxyHandler {
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         info!(
-            "[reverse proxy] {} => {host} => {} {url} {:?}",
-            SocketAddrFormat(client_socket_addr),
+            "[reverse proxy] {:^35} ---> {host} ---> [{}] {url} [{:?}]",
+            SocketAddrFormat(client_socket_addr).to_string(),
             new_req.method(),
             new_req.version()
         );
