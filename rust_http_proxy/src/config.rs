@@ -251,7 +251,7 @@ fn log_config(config: &Config) {
                 egress.uri,
                 egress
                     .version
-                    .map_or("AUTO".to_owned(), |v| format!("{:?}", v))
+                    .map_or("None".to_owned(), |v| format!("{:?}", v))
             );
         });
 }
