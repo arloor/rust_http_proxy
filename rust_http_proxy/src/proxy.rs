@@ -330,11 +330,12 @@ impl ProxyHandler {
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         info!(
-            "reverse proxy [{host}] to [{:?}] {url} from {}",
-            new_req.version(),
-            SocketAddrFormat(client_socket_addr)
+            "{} access [{host}] reverse proxy to {} {url} {:?}",
+            SocketAddrFormat(client_socket_addr),
+            new_req.method(),
+            new_req.version()
         );
-        debug!("reverse_proxy: {:?}", new_req);
+        // debug!("reverse_proxy: {:?}", new_req);
         match self.client.request(new_req).await {
             Ok(resp) => Ok(resp.map(|resp| {
                 resp.map_err(|e| {

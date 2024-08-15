@@ -246,8 +246,12 @@ fn log_config(config: &Config) {
         .iter()
         .for_each(|(ingress, egress)| {
             info!(
-                "reverse proxy [{}] => [{}] version: {:?}",
-                ingress, egress.uri, egress.version
+                "reverse proxy [{}] => [{}] version: {}",
+                ingress,
+                egress.uri,
+                egress
+                    .version
+                    .map_or("AUTO".to_owned(), |v| format!("{:?}", v))
             );
         });
 }
