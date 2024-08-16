@@ -615,6 +615,14 @@ mod tests {
             "sadasdasdsadas"
         );
         assert_eq!(
+            extract_search_engine_from_referer("http://huaiwen.com/baidu.com/bing.com"),
+            "huaiwen.com"
+        );
+        assert_eq!(
+            extract_search_engine_from_referer("http://huaiwenbaidu.com/baidu.com/bing.com"),
+            "baidu"
+        );
+        assert_eq!(
             extract_search_engine_from_referer("https://www.google.com.hk/"),
             "google"
         );
