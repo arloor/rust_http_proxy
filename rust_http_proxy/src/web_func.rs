@@ -151,7 +151,7 @@ fn incr_counter_if_need(
         if is_outer_view_html && (res.status().is_success() || res.status().is_redirection()) {
             http_req_counter
                 .get_or_create(&LabelImpl::new(ReqLabels {
-                    referer: extract_domain_from_url(referer_header),
+                    referer: extract_search_engine_from_referer(referer_header),
                     path: path.to_string(),
                 }))
                 .inc();
@@ -165,11 +165,22 @@ fn incr_counter_if_need(
     }
 }
 
-fn extract_domain_from_url(url: &str) -> String {
-    if let Some(caps) = Regex::new("^https?://(.+?)(/|$)").unwrap().captures(url) {
-        caps.get(1).map_or(url, |g| g.as_str()).to_string()
+fn extract_search_engine_from_referer(referer: &str) -> String {
+    if let Some(caps) = Regex::new("^https?://(.+?)(/|$)")
+        .unwrap()
+        .captures(referer)
+    {
+        let address = caps.get(1).map_or(referer, |g| g.as_str());
+        if let Some(caps) = Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow)")
+            .unwrap()
+            .captures(address)
+        {
+            caps.get(1).map_or(address, |g| g.as_str()).to_string()
+        } else {
+            address.to_owned()
+        }
     } else {
-        url.to_string()
+        referer.to_string()
     }
 }
 
@@ -588,23 +599,26 @@ mod tests {
     #[test]
     fn test_extract_domain_from_url() {
         assert_eq!(
-            extract_domain_from_url("https://www.baidu.com/"),
-            "www.baidu.com"
+            extract_search_engine_from_referer("https://www.baidu.com/"),
+            "baidu"
         );
         assert_eq!(
-            extract_domain_from_url("https://www.baidu.com"),
-            "www.baidu.com"
+            extract_search_engine_from_referer("https://www.baidu.com"),
+            "baidu"
         );
         assert_eq!(
-            extract_domain_from_url("http://www.baidu.com/"),
-            "www.baidu.com"
+            extract_search_engine_from_referer("http://www.baidu.com/"),
+            "baidu"
         );
-        assert_eq!(extract_domain_from_url("sadasdasdsadas"), "sadasdasdsadas");
         assert_eq!(
-            extract_domain_from_url("https://www.google.com.hk/"),
-            "www.google.com.hk"
+            extract_search_engine_from_referer("sadasdasdsadas"),
+            "sadasdasdsadas"
         );
-        assert_eq!(extract_domain_from_url("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "www.bing.com");
+        assert_eq!(
+            extract_search_engine_from_referer("https://www.google.com.hk/"),
+            "google"
+        );
+        assert_eq!(extract_search_engine_from_referer("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "bing");
     }
 
     #[test]
