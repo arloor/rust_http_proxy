@@ -171,7 +171,7 @@ fn extract_search_engine_from_referer(referer: &str) -> String {
         .captures(referer)
     {
         let address = caps.get(1).map_or(referer, |g| g.as_str());
-        if let Some(caps) = Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow)")
+        if let Some(caps) = Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow|duckduckgo)")
             .unwrap()
             .captures(address)
         {
