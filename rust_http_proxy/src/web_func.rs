@@ -188,7 +188,7 @@ async fn serve_metrics(
     registry: &Registry,
     _net_monitor: &NetMonitor,
     _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
-    can_gizp: bool,
+    can_gzip: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     #[cfg(feature = "bpf")]
     {
@@ -222,7 +222,7 @@ async fn serve_metrics(
             .status(StatusCode::OK)
             .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
             .header(http::header::SERVER, SERVER_NAME);
-        if can_gizp {
+        if can_gzip {
             let compressed_data = compress_string(&buffer);
             builder
                 .header(http::header::CONTENT_ENCODING, GZIP)
