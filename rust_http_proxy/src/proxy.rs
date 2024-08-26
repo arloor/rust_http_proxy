@@ -386,7 +386,7 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     registry.register("net_bytes", "num net_bytes", net_bytes.clone());
 
-    register_metric_cleaner(proxy_traffic.clone(), 24);
+    register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
     // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
 
     Metrics {
@@ -401,11 +401,13 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
 // 因此对于准确性要求较高的http_req_counter，这里的清空间隔就放大一点
 fn register_metric_cleaner<T: Label + Send + Sync>(
     counter: Family<T, Counter>,
+    name: String,
     interval_in_hour: u64,
 ) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(interval_in_hour * 60 * 60)).await;
+            info!("cleaning prometheus metric labels for {}", name);
             counter.clear();
         }
     });
