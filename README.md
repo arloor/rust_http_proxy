@@ -146,12 +146,19 @@ req_from_out_total{referer="all",path="all"} 4
 ![alt text](grafana-template2.png)
 
 ## 客户端
- 
-可以使用clash作为客户端，见：
 
-- [clash for windows](https://github.com/Fndroid/clash_for_windows_pkg/releases)
-- [clashX pro](https://install.appcenter.ms/users/clashx/apps/clashx-pro/distribution_groups/public)
-- [ClashForAndroid](https://github.com/Kr328/ClashForAndroid/releases)
+- Clash系列
+    - [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev) 
+    - [ClashMetaForAndroid](https://github.com/MetaCubeX/ClashMetaForAndroid)
+    - [mihomo(clash-meta)](https://github.com/MetaCubeX/mihomo/tree/Meta) 
+- 自研玩具
+    - Rust：[sslocal(fork shadowsocks-rust)](https://github.com/arloor/shadowsocks-rust)
+    - Golang：[forward](https://github.com/arloor/forward)
+    - Java: [connect](https://github.com/arloor/connect)
+        
+
+
+
 
 ## Cargo Features
 
