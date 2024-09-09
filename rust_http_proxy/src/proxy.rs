@@ -8,7 +8,11 @@ use std::{
 };
 
 use crate::{
-    config::Upstream, ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, LOCAL_IP,
+    config::Upstream,
+    http1_client::{host_addr, HttpClient},
+    ip_x::SocketAddrFormat,
+    net_monitor::NetMonitor,
+    web_func, Config, LOCAL_IP,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -24,10 +28,10 @@ use hyper::{
     body::{Body, Incoming},
     header::HeaderName,
 };
-use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use log::{debug, info, warn};
+use log::{info, warn};
 use percent_encoding::percent_decode_str;
 use prom_label::Label;
 use prometheus_client::{
@@ -42,7 +46,8 @@ pub struct ProxyHandler {
     prom_registry: Registry,
     metrics: Metrics,
     net_monitor: NetMonitor,
-    client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+    reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+    http1_client: HttpClient<Incoming>,
 }
 
 pub(crate) struct Metrics {
@@ -59,12 +64,14 @@ impl ProxyHandler {
         let monitor: NetMonitor = NetMonitor::new();
         monitor.start();
 
-        let client = build_http_client();
+        let reverse_client = build_hyper_legacy_client();
+        let http1_client = HttpClient::<Incoming>::default();
         ProxyHandler {
             prom_registry: registry,
             metrics,
             net_monitor: monitor,
-            client,
+            reverse_client,
+            http1_client,
         }
     }
     pub async fn proxy(
@@ -138,7 +145,7 @@ impl ProxyHandler {
         if Method::CONNECT == req.method() {
             self.tunnel_proxy(req, client_socket_addr, username)
         } else {
-            self.simple_proxy(req).await
+            self.simple_proxy(req, client_socket_addr, username).await
         }
     }
 
@@ -147,13 +154,35 @@ impl ProxyHandler {
     async fn simple_proxy(
         &self,
         mut req: Request<Incoming>,
+        client_socket_addr: SocketAddr,
+        username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         // 删除代理特有的请求头
         req.headers_mut()
             .remove(http::header::PROXY_AUTHORIZATION.to_string());
         req.headers_mut().remove("Proxy-Connection");
-        debug!("proxy: {:?}", req);
-        if let Ok(resp) = self.client.request(req).await {
+        // debug!("proxy: {:?}", req);
+        let addr = match host_addr(req.uri()) {
+            Some(h) => h,
+            None => panic!("URI missing host: {}", req.uri()),
+        };
+        let access_label = AccessLabel {
+            client: client_socket_addr.ip().to_canonical().to_string(),
+            target: addr.host().clone(),
+            username,
+        };
+        let stream_map_func = |stream: TcpStream| {
+            CounterIO::new(
+                stream,
+                self.metrics.proxy_traffic.clone(),
+                LabelImpl::new(access_label.clone()),
+            )
+        };
+        if let Ok(resp) = self
+            .http1_client
+            .send_request(req, addr, access_label.clone(), stream_map_func)
+            .await
+        {
             Ok(resp.map(|b| {
                 b.map_err(|e| {
                     let e = e;
@@ -187,18 +216,18 @@ impl ProxyHandler {
         // Note: only after client received an empty body with STATUS_OK can the
         // connection be upgraded, so we can't return a response inside
         // `on_upgrade` future.
-        if let Some(addr) = authority(req.uri()) {
+        if let Some(addr) = host_addr(req.uri()) {
             let proxy_traffic = self.metrics.proxy_traffic.clone();
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
                     Ok(upgraded) => {
                         let access_label = AccessLabel {
                             client: client_socket_addr.ip().to_canonical().to_string(),
-                            target: addr.clone(),
+                            target: addr.clone().to_string(),
                             username,
                         };
                         // Connect to remote server
-                        match TcpStream::connect(addr.as_str()).await {
+                        match TcpStream::connect(addr.to_string()).await {
                             Ok(target_stream) => {
                                 let access_tag = access_label.to_string();
                                 let target_stream = CounterIO::new(
@@ -207,14 +236,12 @@ impl ProxyHandler {
                                     LabelImpl::new(access_label),
                                 );
                                 if let Err(e) = tunnel(upgraded, target_stream).await {
-                                    // if e.kind() != ErrorKind::TimedOut {
                                     warn!(
                                         "[tunnel io error] [{}]: [{}] {} ",
                                         access_tag,
                                         e.kind(),
                                         e
                                     );
-                                    // }
                                 };
                             }
                             Err(e) => {
@@ -336,7 +363,7 @@ impl ProxyHandler {
             new_req.version()
         );
         // debug!("reverse_proxy: {:?}", new_req);
-        match self.client.request(new_req).await {
+        match self.reverse_client.request(new_req).await {
             Ok(resp) => Ok(resp.map(|resp| {
                 resp.map_err(|e| {
                     let e = e;
@@ -352,7 +379,8 @@ impl ProxyHandler {
     }
 }
 
-fn build_http_client() -> Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
+fn build_hyper_legacy_client(
+) -> legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
     let pool_idle_timeout = Duration::from_secs(90);
     // 创建一个 HttpConnector
     let mut http_connector = HttpConnector::new();
@@ -365,8 +393,8 @@ fn build_http_client() -> Client<hyper_rustls::HttpsConnector<HttpConnector>, In
         .enable_all_versions()
         .wrap_connector(http_connector);
     // 创建一个 HttpsConnector，使用 rustls 作为后端
-    let client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> =
-        Client::builder(TokioExecutor::new())
+    let client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> =
+        legacy::Client::builder(TokioExecutor::new())
             .pool_idle_timeout(pool_idle_timeout)
             .pool_max_idle_per_host(5)
             .pool_timer(hyper_util::rt::TokioTimer::new())
@@ -454,12 +482,13 @@ pub(crate) fn check_auth(
 }
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
+
 async fn tunnel(
     upgraded: Upgraded,
     target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
 ) -> io::Result<()> {
     let mut upgraded = TokioIo::new(upgraded);
-    let timed_target_io = TimeoutIO::new(target_io, Duration::from_secs(crate::IDLE_SECONDS));
+    let timed_target_io = TimeoutIO::new(target_io, crate::IDLE_TIMEOUT);
     pin!(timed_target_io);
     // https://github.com/sfackler/tokio-io-timeout/issues/12
     // timed_target_io.as_mut() // 一定要as_mut()，否则会move所有权
@@ -467,10 +496,6 @@ async fn tunnel(
     let (_from_client, _from_server) =
         tokio::io::copy_bidirectional(&mut upgraded, &mut timed_target_io).await?;
     Ok(())
-}
-/// Returns the host and port of the given URI.
-fn authority(uri: &http::Uri) -> Option<String> {
-    uri.authority().map(|authority| authority.to_string())
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -481,7 +506,7 @@ pub struct ReqLabels {
     pub path: String,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
 pub struct AccessLabel {
     pub client: String,
     pub target: String,

@@ -6,13 +6,12 @@ use log::{info, warn};
 use log_x::init_log;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time;
 use tokio_rustls::rustls::ServerConfig;
 
 use crate::tls_helper::tls_config;
-use crate::{IDLE_SECONDS, REFRESH_SECONDS};
+use crate::{IDLE_TIMEOUT, REFRESH_INTERVAL};
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
 #[derive(Parser)]
@@ -174,9 +173,9 @@ impl From<Param> for Config {
             let key_clone = param.key.clone();
             let cert_clone = param.cert.clone();
             tokio::spawn(async move {
-                info!("update tls config every {} seconds", REFRESH_SECONDS);
+                info!("update tls config every {:?}", REFRESH_INTERVAL);
                 loop {
-                    time::sleep(Duration::from_secs(REFRESH_SECONDS)).await;
+                    time::sleep(REFRESH_INTERVAL).await;
                     if let Ok(new_acceptor) = tls_config(&key_clone, &cert_clone) {
                         info!("update tls config");
                         if let Err(e) = tx_clone.send(new_acceptor) {
@@ -224,7 +223,7 @@ pub(crate) fn load_config() -> &'static Config {
     info!("hostname seems to be {}", param.hostname);
     let config = Config::from(param);
     log_config(&config);
-    info!("auto close connection after idle for {IDLE_SECONDS} seconds",);
+    info!("auto close connection after idle for {:?}", IDLE_TIMEOUT);
     return Box::leak(Box::new(config));
 }
 

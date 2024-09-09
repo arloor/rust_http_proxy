@@ -7,7 +7,9 @@ mod tls_helper;
 mod web_func;
 #[macro_use]
 mod macros;
+mod address;
 mod config;
+mod http1_client;
 
 use crate::config::Config;
 
@@ -36,8 +38,9 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
-const REFRESH_SECONDS: u64 = 24 * 60 * 60; // 24 hour
-pub(crate) const IDLE_SECONDS: u64 = if !cfg!(debug_assertions) { 600 } else { 10 }; // 3 minutes
+const REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hour
+pub(crate) const IDLE_TIMEOUT: Duration =
+    Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 10 }); // 3 minutes
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
@@ -160,7 +163,7 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     client_socket_addr: SocketAddr,
 ) {
     let binding = auto::Builder::new(TokioExecutor::new());
-    let timed_io = TimeoutIO::new(io, Duration::from_secs(IDLE_SECONDS));
+    let timed_io = TimeoutIO::new(io, IDLE_TIMEOUT);
     let timed_io = Box::pin(timed_io);
     let connection = binding.serve_connection_with_upgrades(
         TokioIo::new(timed_io),
