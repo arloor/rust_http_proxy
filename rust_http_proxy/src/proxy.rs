@@ -168,7 +168,7 @@ impl ProxyHandler {
         };
         let access_label = AccessLabel {
             client: client_socket_addr.ip().to_canonical().to_string(),
-            target: addr.host().clone(),
+            target: addr.to_string(),
             username,
         };
         let stream_map_func = |stream: TcpStream| {
@@ -180,7 +180,7 @@ impl ProxyHandler {
         };
         if let Ok(resp) = self
             .http1_client
-            .send_request(req, addr, access_label.clone(), stream_map_func)
+            .send_request(req, &access_label, stream_map_func)
             .await
         {
             Ok(resp.map(|b| {

@@ -13,6 +13,7 @@ pub enum Address {
 }
 
 impl Address {
+    #[allow(dead_code)]
     pub fn host(&self) -> String {
         match self {
             Address::SocketAddress(ref addr) => addr.ip().to_string(),
