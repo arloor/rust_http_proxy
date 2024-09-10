@@ -171,11 +171,11 @@ impl ProxyHandler {
             target: addr.to_string(),
             username,
         };
-        let stream_map_func = |stream: TcpStream| {
+        let stream_map_func = |stream: TcpStream, access_label: AccessLabel| {
             CounterIO::new(
                 stream,
                 self.metrics.proxy_traffic.clone(),
-                LabelImpl::new(access_label.clone()),
+                LabelImpl::new(access_label),
             )
         };
         if let Ok(resp) = self

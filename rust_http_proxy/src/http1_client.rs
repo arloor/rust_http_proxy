@@ -124,7 +124,10 @@ where
         &self,
         req: Request<B>,
         access_label: &AccessLabel,
-        stream_map_func: impl FnOnce(TcpStream) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+        stream_map_func: impl FnOnce(
+            TcpStream,
+            AccessLabel,
+        ) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
         //
@@ -283,14 +286,18 @@ where
     async fn connect(
         scheme: &Scheme,
         access_label: &AccessLabel,
-        stream_map_func: impl FnOnce(TcpStream) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+        stream_map_func: impl FnOnce(
+            TcpStream,
+            AccessLabel,
+        ) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         if *scheme != Scheme::HTTP && *scheme != Scheme::HTTPS {
             return Err(io::Error::new(ErrorKind::InvalidInput, "invalid scheme"));
         }
 
         let stream = TcpStream::connect(&access_label.target).await?;
-        let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> = stream_map_func(stream);
+        let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> =
+            stream_map_func(stream, access_label.clone());
 
         HttpConnection::connect_http_http1(scheme, access_label, stream).await
     }
