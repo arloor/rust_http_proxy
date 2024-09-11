@@ -5,12 +5,11 @@ use std::{
     error::Error,
     fmt::Debug,
     io::{self, ErrorKind},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use http::{header, uri::Authority, HeaderMap, HeaderValue, Uri, Version};
+use http::{header, HeaderMap, HeaderValue, Version};
 use hyper::{
     body::{self, Body},
     client::conn::http1,
@@ -24,7 +23,7 @@ use lru_time_cache::LruCache;
 use prom_label::LabelImpl;
 use tokio::{net::TcpStream, sync::Mutex};
 
-use crate::{address::Address, proxy::AccessLabel};
+use crate::proxy::AccessLabel;
 
 const CONNECTION_EXPIRE_DURATION: Duration =
     Duration::from_secs(if !cfg!(debug_assertions) { 30 } else { 10 });
@@ -33,74 +32,6 @@ const CONNECTION_EXPIRE_DURATION: Duration =
 pub struct HttpClient<B> {
     #[allow(clippy::type_complexity)]
     cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>,
-}
-
-impl<B> Clone for HttpClient<B> {
-    fn clone(&self) -> Self {
-        HttpClient {
-            cache_conn: self.cache_conn.clone(),
-        }
-    }
-}
-
-impl<B> Default for HttpClient<B>
-where
-    B: Body + Send + Unpin + Debug + 'static,
-    B::Data: Send,
-    B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
-{
-    fn default() -> Self {
-        HttpClient::new()
-    }
-}
-
-pub fn host_addr(uri: &Uri) -> Option<Address> {
-    match uri.authority() {
-        None => None,
-        Some(authority) => authority_addr(uri.scheme_str(), authority),
-    }
-}
-
-pub fn authority_addr(scheme_str: Option<&str>, authority: &Authority) -> Option<Address> {
-    // RFC7230 indicates that we should ignore userinfo
-    // https://tools.ietf.org/html/rfc7230#section-5.3.3
-
-    // Check if URI has port
-    let port = match authority.port_u16() {
-        Some(port) => port,
-        None => {
-            match scheme_str {
-                None => 80, // Assume it is http
-                Some("http") => 80,
-                Some("https") => 443,
-                _ => return None, // Not supported
-            }
-        }
-    };
-
-    let host_str = authority.host();
-
-    // RFC3986 indicates that IPv6 address should be wrapped in [ and ]
-    // https://tools.ietf.org/html/rfc3986#section-3.2.2
-    //
-    // Example: [::1] without port
-    if host_str.starts_with('[') && host_str.ends_with(']') {
-        // Must be a IPv6 address
-        let addr = &host_str[1..host_str.len() - 1];
-        match addr.parse::<Ipv6Addr>() {
-            Ok(a) => Some(Address::from(SocketAddr::new(IpAddr::V6(a), port))),
-            // Ignore invalid IPv6 address
-            Err(..) => None,
-        }
-    } else {
-        // It must be a IPv4 address
-        match host_str.parse::<Ipv4Addr>() {
-            Ok(a) => Some(Address::from(SocketAddr::new(IpAddr::V4(a), port))),
-            // Should be a domain name, or a invalid IP address.
-            // Let DNS deal with it.
-            Err(..) => Some(Address::DomainNameAddress(host_str.to_owned(), port)),
-        }
-    }
 }
 
 impl<B> HttpClient<B>

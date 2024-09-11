@@ -8,11 +8,7 @@ use std::{
 };
 
 use crate::{
-    config::Upstream,
-    http1_client::{host_addr, HttpClient},
-    ip_x::SocketAddrFormat,
-    net_monitor::NetMonitor,
-    web_func, Config, LOCAL_IP,
+    address::host_addr, config::Upstream, http1_client::HttpClient, ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, LOCAL_IP
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -65,7 +61,7 @@ impl ProxyHandler {
         monitor.start();
 
         let reverse_client = build_hyper_legacy_client();
-        let http1_client = HttpClient::<Incoming>::default();
+        let http1_client = HttpClient::<Incoming>::new();
         ProxyHandler {
             prom_registry: registry,
             metrics,
