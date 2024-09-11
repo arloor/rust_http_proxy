@@ -61,8 +61,6 @@ where
         ) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
-        //
-        // FIXME: If the cached connection is closed unexpectly, this request will fail immediately.
         if let Some(c) = self.get_cached_connection(access_label).await {
             debug!("HTTP client for host: {} taken from cache", &access_label);
             match self.send_request_conn(access_label, c, req).await {
@@ -107,6 +105,7 @@ where
                     continue;
                 }
                 if c.is_closed() {
+                    // true at once after connection.await return
                     debug!("HTTP connection for host: {} is closed", access_label,);
                     continue;
                 }
