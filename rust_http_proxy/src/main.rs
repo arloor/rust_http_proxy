@@ -10,6 +10,7 @@ mod macros;
 mod address;
 mod config;
 mod http1_client;
+mod reverse;
 
 use crate::config::Config;
 

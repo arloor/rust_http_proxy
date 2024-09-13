@@ -8,7 +8,12 @@ use std::{
 };
 
 use crate::{
-    address::host_addr, config::Upstream, http1_client::HttpClient, ip_x::SocketAddrFormat, net_monitor::NetMonitor, web_func, Config, LOCAL_IP
+    address::host_addr,
+    http1_client::HttpClient,
+    ip_x::SocketAddrFormat,
+    net_monitor::NetMonitor,
+    reverse::{self, LocationConfig},
+    web_func, Config, LOCAL_IP,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -81,6 +86,7 @@ impl ProxyHandler {
         // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
             let host = if req.version() == Version::HTTP_2 {
+                // 没有port
                 req.uri().host().unwrap_or("").to_string()
             } else {
                 req.headers()
@@ -91,13 +97,14 @@ impl ProxyHandler {
                     .unwrap_or("")
                     .to_string()
             };
-            if let Some(upstream) = proxy_config.reverse_proxy_map.get(&host)
-            //如果命中了反向代理配置
-            {
-                return self
-                    .reverse_proxy(req, upstream, &host, &client_socket_addr)
-                    .await;
-            } else if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
+            if let Some(locations) = proxy_config.reverse_proxy_config.get(&host) {
+                if let Some(location_config) = pick_location(req.uri().path(), locations) {
+                    return self
+                        .reverse_proxy(req, location_config, &client_socket_addr)
+                        .await;
+                }
+            }
+            if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 // http2.0肯定是over tls的，所以不是普通GET/POST代理请求。
                 // URL中不包含host（GET / HTTP/1.1）也不是普通GET/POST代理请求。
                 return self
@@ -308,28 +315,31 @@ impl ProxyHandler {
     async fn reverse_proxy(
         &self,
         req: Request<Incoming>,
-        upstream: &Upstream,
-        host: &String,
+        location_config: &LocationConfig,
         client_socket_addr: &SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let method = req.method().clone();
-        let url = req.uri().clone();
-        let path_and_query = match url.path_and_query() {
+        let old_url = req.uri().clone();
+        let path_and_query = match old_url.path_and_query() {
             Some(path_and_query) => path_and_query.as_str(),
-            None => "/",
+            None => "",
         };
-        let upstream_uri = upstream.uri.to_string();
+        let path_and_query = location_config.upstream.replacement.clone()
+            + &path_and_query[location_config.location.len()..];
+        let upstream_uri = location_config.upstream.scheme_and_authority.clone();
         let url = format!("{}{}", upstream_uri, path_and_query);
         let mut new_req = Request::builder().method(method).uri(url.clone()).version(
             if !url.starts_with("https:") {
-                match upstream.version {
-                    Some(version) => version,
-                    None => Version::HTTP_11,
+                match location_config.upstream.version {
+                    reverse::Version::H1 => Version::HTTP_11,
+                    reverse::Version::H2 => Version::HTTP_2,
+                    reverse::Version::Auto => Version::HTTP_11,
                 }
             } else {
-                match upstream.version {
-                    Some(version) => version,
-                    None => req.version(),
+                match location_config.upstream.version {
+                    reverse::Version::H1 => Version::HTTP_11,
+                    reverse::Version::H2 => Version::HTTP_2,
+                    reverse::Version::Auto => req.version(),
                 }
             },
         );
@@ -353,8 +363,9 @@ impl ProxyHandler {
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         info!(
-            "[reverse proxy] {:^35} ---> {host} ---> [{}] {url} [{:?}]",
+            "[reverse proxy] {:^35} ---> {} ---> [{}] {url} [{:?}]",
             SocketAddrFormat(client_socket_addr).to_string(),
+            old_url,
             new_req.method(),
             new_req.version()
         );
@@ -373,6 +384,16 @@ impl ProxyHandler {
             }
         }
     }
+}
+
+fn pick_location<'b>(path: &str, locations: &'b [LocationConfig]) -> Option<&'b LocationConfig> {
+    // let path = match path {
+    //     "" => "/",
+    //     path => path,
+    // };
+    locations
+        .iter()
+        .find(|&ele| path.starts_with(&ele.location))
 }
 
 fn build_hyper_legacy_client(

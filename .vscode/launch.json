@@ -53,8 +53,7 @@
                 "-o",
                 "--never-ask-for-auth",
                 "-r=arloor",
-                // "--reverse-proxy=localhost=>https://www.baidu.com=>HTTP11",
-                // "--log-dir=tmp"
+                "--reverse-proxy-config-file=.vscode/reverse_proxy.yaml"
             ],
             "env": {
                 "HOSTNAME": "test"
