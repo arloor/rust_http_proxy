@@ -60,6 +60,7 @@ pub(crate) struct Metrics {
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
+const DEFAULT_HOST: &str="default_host";
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
@@ -123,7 +124,7 @@ impl ProxyHandler {
                 .config
                 .reverse_proxy_config
                 .get(&host)
-                .or(self.config.reverse_proxy_config.get("default_host"))
+                .or(self.config.reverse_proxy_config.get(DEFAULT_HOST))
             {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
