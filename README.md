@@ -132,8 +132,8 @@ default_host:
 ### linux amd64 可执行文件
 
 ```shell
-curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy -o /tmp/rust_http_proxy
-mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
+curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy -o /tmp/rust_http_proxy
+install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
 /usr/bin/rust_http_proxy -p 8888
 ```
 
@@ -150,8 +150,8 @@ docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 8888
 > 注意：ebpf版本并没有什么新特性，只是为了学习下新技术的自嗨。
 
 ```bash
-curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/bpf/rust_http_proxy -o /tmp/rust_http_proxy
-mv /tmp/rust_http_proxy /usr/bin/rust_http_proxy&&chmod +x /usr/bin/rust_http_proxy
+curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/bpf/rust_http_proxy -o /tmp/rust_http_proxy
+install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
 /usr/bin/rust_http_proxy -p 8888
 ```
 
