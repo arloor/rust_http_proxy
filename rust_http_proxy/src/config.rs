@@ -156,7 +156,7 @@ impl TryFrom<Param> for Config {
     }
 }
 
-pub(crate) fn load_config() -> &'static Config {
+pub(crate) fn load_config() -> Config {
     let mut param = Param::parse();
     param.hostname = get_hostname();
     if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
@@ -176,7 +176,7 @@ pub(crate) fn load_config() -> &'static Config {
     let config = Config::try_from(param).unwrap();
     log_config(&config);
     info!("auto close connection after idle for {:?}", IDLE_TIMEOUT);
-    return Box::leak(Box::new(config));
+    config
 }
 
 fn log_config(config: &Config) {
@@ -202,7 +202,10 @@ fn log_config(config: &Config) {
             for ele in reverse_proxy_config.1 {
                 info!(
                     "     {:40} -> {}{}...",
-                    format!("[scheme]://{}:[port]{}...", reverse_proxy_config.0, ele.location),
+                    format!(
+                        "[scheme]://{}:[port]{}...",
+                        reverse_proxy_config.0, ele.location
+                    ),
                     ele.upstream.scheme_and_authority,
                     ele.upstream.replacement
                 );

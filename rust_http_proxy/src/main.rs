@@ -50,22 +50,22 @@ type DynError = Box<dyn stdError>; // wrapper for dyn Error
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-static PROXY_HANDLER: LazyLock<Arc<ProxyHandler>> = LazyLock::new(|| Arc::new(ProxyHandler::new()));
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    let proxy_config: &'static Config = load_config();
+    let proxy_config: Config = load_config();
+    let ports = proxy_config.port.clone();
+    let proxy_handler = Arc::new(ProxyHandler::new(proxy_config));
     #[cfg(feature = "jemalloc")]
     info!("jemalloc is enabled");
     handle_signal()?;
 
-    let futures = proxy_config
-        .port
+    let futures = ports
         .iter()
         .map(|port| {
-            let proxy_handler = PROXY_HANDLER.clone();
-            async move { bootstrap(proxy_config, *port, proxy_handler).await }
+            let proxy_handler = proxy_handler.clone();
+            async move { bootstrap(*port, proxy_handler).await }
         })
         .map(Box::pin)
         .collect::<Vec<_>>();
@@ -94,11 +94,8 @@ async fn create_dual_stack_listener(port: u16) -> io::Result<TcpListener> {
     TcpListener::from_std(std_listener)
 }
 
-async fn bootstrap(
-    config: &'static Config,
-    port: u16,
-    proxy_handler: Arc<ProxyHandler>,
-) -> Result<(), DynError> {
+async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), DynError> {
+    let config = &proxy_handler.config;
     info!(
         "Listening on http{}://{}:{}",
         match config.over_tls {
@@ -134,7 +131,7 @@ async fn bootstrap(
                         Ok((conn,client_socket_addr)) => {
                             let proxy_handler=proxy_handler.clone();
                             tokio::spawn(async move {
-                                serve(conn, proxy_handler, config, client_socket_addr).await;
+                                serve(conn, proxy_handler, client_socket_addr).await;
                             });
                         }
                         Err(err) => {
@@ -150,7 +147,7 @@ async fn bootstrap(
             if let Ok((tcp_stream, client_socket_addr)) = tcp_listener.accept().await {
                 let proxy_handler = proxy_handler.clone();
                 tokio::task::spawn(async move {
-                    serve(tcp_stream, proxy_handler, config, client_socket_addr).await;
+                    serve(tcp_stream, proxy_handler, client_socket_addr).await;
                 });
             }
         }
@@ -160,7 +157,6 @@ async fn bootstrap(
 async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     io: T,
     proxy_handler: Arc<ProxyHandler>,
-    config: &'static Config,
     client_socket_addr: SocketAddr,
 ) {
     let binding = auto::Builder::new(TokioExecutor::new());
@@ -171,7 +167,7 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
         // service_fn(|req| _proxy(req, config, client_socket_addr, proxy_handler.clone())), // 与下面注释的方法相同，可以注意一下
         service_fn(|req| {
             let proxy_handler = proxy_handler.clone();
-            async move { proxy_handler.proxy(req, config, client_socket_addr).await }
+            async move { proxy_handler.proxy(req, client_socket_addr).await }
         }),
     );
     if let Err(err) = connection.await {
@@ -189,11 +185,10 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
 /// * `Result<Response<BoxBody<Bytes, io::Error>>, io::Error>` - hyper::Response
 async fn _proxy(
     req: Request<hyper::body::Incoming>,
-    config: &'static Config,
     client_socket_addr: SocketAddr,
     proxy_handler: Arc<ProxyHandler>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    proxy_handler.proxy(req, config, client_socket_addr).await
+    proxy_handler.proxy(req, client_socket_addr).await
 }
 
 /// 处理hyper错误

@@ -46,7 +46,7 @@ static GZIP: &str = "gzip";
 pub async fn serve_http_request(
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
-    proxy_config: &'static Config,
+    proxy_config: &Config,
     path: &str,
     _net_monitor: &NetMonitor,
     metrics: &Metrics,
@@ -171,9 +171,10 @@ fn extract_search_engine_from_referer(referer: &str) -> String {
         .captures(referer)
     {
         let address = caps.get(1).map_or(referer, |g| g.as_str());
-        if let Some(caps) = Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow|duckduckgo)")
-            .unwrap()
-            .captures(address)
+        if let Some(caps) =
+            Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow|duckduckgo)")
+                .unwrap()
+                .captures(address)
         {
             caps.get(1).map_or(address, |g| g.as_str()).to_string()
         } else {

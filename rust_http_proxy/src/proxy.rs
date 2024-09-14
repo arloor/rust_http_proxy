@@ -52,6 +52,7 @@ pub struct ProxyHandler {
     net_monitor: NetMonitor,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     http1_client: HttpClient<Incoming>,
+    pub(crate) config: Config,
 }
 
 pub(crate) struct Metrics {
@@ -62,7 +63,7 @@ pub(crate) struct Metrics {
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
-    pub fn new() -> ProxyHandler {
+    pub fn new(config: Config) -> ProxyHandler {
         let mut registry = Registry::default();
         let metrics = register_metrics(&mut registry);
         let monitor: NetMonitor = NetMonitor::new();
@@ -76,16 +77,16 @@ impl ProxyHandler {
             net_monitor: monitor,
             reverse_client,
             http1_client,
+            config,
         }
     }
     pub async fn proxy(
         &self,
         req: Request<hyper::body::Incoming>,
-        proxy_config: &'static Config,
         client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let config_basic_auth = &proxy_config.basic_auth;
-        let never_ask_for_auth = proxy_config.never_ask_for_auth;
+        let config_basic_auth = &self.config.basic_auth;
+        let never_ask_for_auth = self.config.never_ask_for_auth;
         // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
             let host = if req.version() == Version::HTTP_2 {
@@ -100,14 +101,14 @@ impl ProxyHandler {
                     .unwrap_or("")
                     .to_string()
             };
-            if let Some(locations) = proxy_config.reverse_proxy_config.get(&host) {
+            if let Some(locations) = self.config.reverse_proxy_config.get(&host) {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
                         .reverse_proxy(
                             req,
                             location_config,
                             &client_socket_addr,
-                            &proxy_config.reverse_proxy_config,
+                            &self.config.reverse_proxy_config,
                         )
                         .await;
                 }
@@ -121,7 +122,6 @@ impl ProxyHandler {
                         config_basic_auth,
                         never_ask_for_auth,
                         client_socket_addr,
-                        proxy_config,
                     )
                     .await;
             }
@@ -293,7 +293,6 @@ impl ProxyHandler {
         config_basic_auth: &HashMap<String, String>,
         never_ask_for_auth: bool,
         client_socket_addr: SocketAddr,
-        proxy_config: &'static Config,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let raw_path = req.uri().path();
         let path = percent_decode_str(raw_path)
@@ -310,7 +309,7 @@ impl ProxyHandler {
         web_func::serve_http_request(
             req,
             client_socket_addr,
-            proxy_config,
+            &self.config,
             path,
             &self.net_monitor,
             &self.metrics,
