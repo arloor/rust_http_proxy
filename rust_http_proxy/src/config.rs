@@ -1,6 +1,7 @@
 use base64::engine::general_purpose;
 use base64::Engine;
 use clap::Parser;
+use http::Uri;
 use log::{info, warn};
 use log_x::init_log;
 use std::collections::HashMap;
@@ -174,6 +175,29 @@ pub(crate) fn load_config() -> Config {
     }
     info!("hostname seems to be {}", param.hostname);
     let config = Config::try_from(param).unwrap();
+    for ele in &config.reverse_proxy_config {
+        for location_config in ele.1 {
+            match location_config.upstream.scheme_and_authority.parse::<Uri>() {
+                Ok(scheme_and_authority) => {
+                    if scheme_and_authority.scheme().is_none() {
+                        panic!("upstream scheme_and_authority's scheme is empty");
+                    }
+                    if scheme_and_authority.authority().is_none() {
+                        panic!("upstream scheme_and_authority's authority is empty");
+                    }
+                    if scheme_and_authority.path() != "/"
+                        
+                    {
+                        panic!("upstream scheme_and_authority's path is not empty");
+                    }
+                    if scheme_and_authority.query().is_some() {
+                        panic!("upstream scheme_and_authority's query is not empty");
+                    }
+                }
+                Err(e) => panic!("parse upstream scheme_and_authority error:{}", e),
+            }
+        }
+    }
     log_config(&config);
     info!("auto close connection after idle for {:?}", IDLE_TIMEOUT);
     config
