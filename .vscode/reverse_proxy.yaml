@@ -1,5 +1,5 @@
 localhost:
-  - location: / # 默认为 /
+  - location: /baidu # 默认为 /
     upstream:
       scheme_and_authority: https://www.baidu.com
       replacement: / # 默认为 /
