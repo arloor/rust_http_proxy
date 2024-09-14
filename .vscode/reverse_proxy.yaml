@@ -1,15 +1,15 @@
 localhost:
-  - upstream:
-      scheme_and_authority: https://www.baidu.com
-      version: H1
   - location: /v1/chat/completions
     upstream:
       scheme_and_authority: https://models.inference.ai.azure.com
       replacement: /chat/completions
-  - location: /https://github.com
+  - location: /https://github.com/
     upstream:
       scheme_and_authority: https://github.com
   - location: /github-production-release
     upstream:
       scheme_and_authority: https://objects.githubusercontent.com
       replacement: /github-production-release
+  - location: /https://raw.githubusercontent.com/
+    upstream:
+      scheme_and_authority: https://raw.githubusercontent.com
