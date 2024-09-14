@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    cell::LazyCell,
     collections::HashMap,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
@@ -47,12 +46,13 @@ use rand::Rng;
 use tokio::{net::TcpStream, pin};
 
 pub struct ProxyHandler {
+    pub(crate) config: Config,
     prom_registry: Registry,
     metrics: Metrics,
     net_monitor: NetMonitor,
-    reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     http1_client: HttpClient<Incoming>,
-    pub(crate) config: Config,
+    reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+    redirect_bachpaths: Vec<RedirectBackpaths>,
 }
 
 pub(crate) struct Metrics {
@@ -71,6 +71,20 @@ impl ProxyHandler {
 
         let reverse_client = build_hyper_legacy_client();
         let http1_client = HttpClient::<Incoming>::new();
+
+        let mut vec = Vec::<RedirectBackpaths>::new();
+        for (host, locations) in &config.reverse_proxy_config {
+            for location in locations {
+                vec.push(RedirectBackpaths {
+                    redirect_url: location.upstream.scheme_and_authority.clone()
+                        + location.upstream.replacement.as_str(),
+                    host: host.clone(),
+                    location: location.location.clone(),
+                });
+            }
+        }
+        vec.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
+
         ProxyHandler {
             prom_registry: registry,
             metrics,
@@ -78,6 +92,7 @@ impl ProxyHandler {
             reverse_client,
             http1_client,
             config,
+            redirect_bachpaths: vec,
         }
     }
     pub async fn proxy(
@@ -104,12 +119,7 @@ impl ProxyHandler {
             if let Some(locations) = self.config.reverse_proxy_config.get(&host) {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
-                        .reverse_proxy(
-                            req,
-                            location_config,
-                            &client_socket_addr,
-                            &self.config.reverse_proxy_config,
-                        )
+                        .reverse_proxy(req, location_config, &client_socket_addr)
                         .await;
                 }
             }
@@ -324,7 +334,6 @@ impl ProxyHandler {
         req: Request<Incoming>,
         location_config: &LocationConfig,
         client_socket_addr: &SocketAddr,
-        reverse_proxy_config: &HashMap<String, Vec<LocationConfig>>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let method = req.method().clone();
         let raw_req_url = req.uri().clone();
@@ -385,7 +394,7 @@ impl ProxyHandler {
                     &mut resp,
                     upstream_req_url,
                     raw_req_url,
-                    reverse_proxy_config,
+                    &self.redirect_bachpaths,
                 );
                 Ok(resp.map(|body| {
                     body.map_err(|e| {
@@ -407,7 +416,7 @@ fn handle_redirect(
     resp: &mut Response<Incoming>,
     upstream_req_uri: Uri,
     raw_req_uri: Uri,
-    reverse_proxy_config: &HashMap<String, Vec<LocationConfig>>,
+    redirect_bachpaths: &[RedirectBackpaths],
 ) {
     if resp.status().is_redirection() {
         let headers = resp.headers_mut();
@@ -419,7 +428,7 @@ fn handle_redirect(
                     raw_req_uri.scheme_str().unwrap_or("https"),
                     raw_req_uri.port_u16().unwrap_or(80),
                     absolute_redirect_location,
-                    reverse_proxy_config,
+                    redirect_bachpaths,
                 ) {
                     let old = mem::replace(
                         redirect_location,
@@ -432,7 +441,7 @@ fn handle_redirect(
     }
 }
 
-struct RedirectSources {
+struct RedirectBackpaths {
     redirect_url: String,
     host: String,
     location: String,
@@ -442,26 +451,9 @@ fn lookup(
     scheme: &str,
     port: u16,
     absolute_location: String,
-    reverse_proxy_config: &HashMap<String, Vec<LocationConfig>>,
+    redirect_bachpaths: &[RedirectBackpaths],
 ) -> Option<String> {
-    let vec = LazyCell::new(|| {
-        info!("init by lazy cell");
-        let mut vec = Vec::<RedirectSources>::new();
-        for (host, locations) in reverse_proxy_config {
-            for location in locations {
-                vec.push(RedirectSources {
-                    redirect_url: location.upstream.scheme_and_authority.clone()
-                        + location.upstream.replacement.as_str(),
-                    host: host.clone(),
-                    location: location.location.clone(),
-                });
-            }
-        }
-        vec.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
-        vec
-    });
-
-    for ele in vec.iter() {
+    for ele in redirect_bachpaths.iter() {
         if absolute_location.starts_with(ele.redirect_url.as_str()) {
             info!(
                 "      {:40} -> {}...",
