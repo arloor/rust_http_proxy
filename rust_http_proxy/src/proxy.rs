@@ -482,7 +482,7 @@ fn lookup(
                 ele.redirect_url,
             );
             let host = match ele.host.as_str() {
-                DEFAULT_HOST => raw_host,
+                DEFAULT_HOST => raw_host, // 如果是default_host，就用当前host
                 other => other,
             };
             return Some(
