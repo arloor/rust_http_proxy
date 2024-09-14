@@ -424,9 +424,14 @@ fn handle_redirect(
             if let Some(absolute_redirect_location) =
                 ensure_absolute(redirect_location, &upstream_req_uri)
             {
+                let scheme = raw_req_uri.scheme_str().unwrap_or("https");
                 if let Some(replacement) = lookup(
-                    raw_req_uri.scheme_str().unwrap_or("https"),
-                    raw_req_uri.port_u16().unwrap_or(80),
+                    scheme,
+                    raw_req_uri.port_u16().unwrap_or(match scheme {
+                        "http" => 80,
+                        "https" => 443,
+                        _ => 443,
+                    }),
                     absolute_redirect_location,
                     redirect_bachpaths,
                 ) {
