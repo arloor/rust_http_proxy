@@ -54,15 +54,8 @@ Options:
           if enable, proxy server will listen on https
       --hostname <HOSTNAME>
           [default: unknown]
-      --reverse-proxy <HOST=>URL[=>VERSION]>
-          特定的HOST转发到特定的URL，并且使用特定的VERSION。
-          其中URL必须包含scheme和host。
-          其中VERSION可以填写HTTP11或者HTTP2，如果不填，则自动推断。一般来说，只在Https网站只支持http/1.1的时候，例如反代https://www.baidu.com，才需要显式设置为HTTP11，其他时候不需要设置。
-          例如：--reverse-proxy=localhost:7788=>http://example.com # http(s)://localhost:7788转发到http://example.com
-          例如：--reverse-proxy=localhost:7788=>https://example.com # http(s)://localhost:7788转发到https://example.com
-          例如：--reverse-proxy=localhost:7788=>https://example.com=>HTTP11 # http(s)://localhost:7788转发到https://example.com，并且使用HTTP/1.1
-          例如：--reverse-proxy=localhost:7788=>https://example.com/path/to/ # http(s)://localhost:7788/index.html转发到https://example.com/path/to/index.html
-          
+      --reverse-proxy-config-file <REVERSE_PROXY>
+          反向代理配置文件
   -h, --help
           Print help
 ```
@@ -83,6 +76,48 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 
 ```shell
 curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7788  --proxy-insecure
+```
+
+## 反向代理配置
+
+```yaml
+YOUR_DOMAIN:
+  - location: / # 默认为 /
+    upstream:
+      scheme_and_authority: https://www.baidu.com
+      replacement: / # 默认为 /
+      version: H1 # 可以填H1、H2、AUTO，默认为AUTO
+```
+
+**例子1:** Github Proxy
+
+```bash
+curl https://YOUR_DOMAIN/https://raw.githubusercontent.com/arloor/iptablesUtils/master/natcfg.sh
+
+```yaml
+YOUR_DOMAIN:
+  - location: /https://github.com
+    upstream:
+      scheme_and_authority: https://github.com
+      replacement:
+  - location: /github-production-release
+    upstream:
+      scheme_and_authority: https://objects.githubusercontent.com
+      replacement: /github-production-release
+  - location: /https://raw.githubusercontent.com
+    upstream:
+      scheme_and_authority: https://raw.githubusercontent.com
+      replacement:
+```
+
+**例子2:** 将Github Models的url改写成openai api的url格式
+
+```yaml
+YOUR_DOMAIN:
+  - location: /v1/chat/completions
+    upstream:
+      scheme_and_authority: https://models.inference.ai.azure.com
+      replacement: /chat/completions
 ```
 
 ## 安装说明

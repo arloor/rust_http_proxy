@@ -1,15 +1,22 @@
 localhost:
+  - location: / # 默认为 /
+    upstream:
+      scheme_and_authority: https://www.baidu.com
+      replacement: / # 默认为 /
+      version: H1 # 可以填H1、H2、AUTO，默认为AUTO
   - location: /v1/chat/completions
     upstream:
       scheme_and_authority: https://models.inference.ai.azure.com
       replacement: /chat/completions
-  - location: /https://github.com/
+  - location: /https://github.com
     upstream:
       scheme_and_authority: https://github.com
+      replacement:
   - location: /github-production-release
     upstream:
       scheme_and_authority: https://objects.githubusercontent.com
       replacement: /github-production-release
-  - location: /https://raw.githubusercontent.com/
+  - location: /https://raw.githubusercontent.com
     upstream:
       scheme_and_authority: https://raw.githubusercontent.com
+      replacement:
