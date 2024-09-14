@@ -72,10 +72,10 @@ impl ProxyHandler {
         let reverse_client = build_hyper_legacy_client();
         let http1_client = HttpClient::<Incoming>::new();
 
-        let mut vec = Vec::<RedirectBackpaths>::new();
+        let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
         for (host, locations) in &config.reverse_proxy_config {
             for location in locations {
-                vec.push(RedirectBackpaths {
+                redirect_bachpaths.push(RedirectBackpaths {
                     redirect_url: location.upstream.scheme_and_authority.clone()
                         + location.upstream.replacement.as_str(),
                     host: host.clone(),
@@ -83,7 +83,10 @@ impl ProxyHandler {
                 });
             }
         }
-        vec.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
+        redirect_bachpaths.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
+        for ele in redirect_bachpaths.iter() {
+            debug!("find redirect back path for: {}", ele.redirect_url);
+        }
 
         ProxyHandler {
             prom_registry: registry,
@@ -92,7 +95,7 @@ impl ProxyHandler {
             reverse_client,
             http1_client,
             config,
-            redirect_bachpaths: vec,
+            redirect_bachpaths,
         }
     }
     pub async fn proxy(
