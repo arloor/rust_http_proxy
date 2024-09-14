@@ -382,7 +382,12 @@ impl ProxyHandler {
         info!(
             "[reverse proxy] {:^35} ---> {} ---> [{}] {url} [{:?}]",
             SocketAddrFormat(client_socket_addr).to_string(),
-            raw_req_url,
+            format!(
+                "{}://{}{}",
+                raw_req_url.scheme_str().unwrap_or("[scheme]"),
+                raw_req_url.authority().map_or("", |a| a.as_str()),
+                raw_req_url.path()
+            ),
             upstream_req.method(),
             upstream_req.version()
         );
