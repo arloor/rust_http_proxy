@@ -60,7 +60,7 @@ pub(crate) struct Metrics {
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
-const DEFAULT_HOST: &str="default_host";
+const DEFAULT_HOST: &str = "default_host";
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
@@ -441,6 +441,7 @@ fn handle_redirect(
                 let scheme = raw_req_uri.scheme_str().unwrap_or("https");
                 if let Some(replacement) = lookup(
                     scheme,
+                    raw_req_uri.host().unwrap_or(""),
                     raw_req_uri.port_u16().unwrap_or(match scheme {
                         "http" => 80,
                         "https" => 443,
@@ -468,6 +469,7 @@ struct RedirectBackpaths {
 
 fn lookup(
     scheme: &str,
+    raw_host: &str,
     port: u16,
     absolute_location: String,
     redirect_bachpaths: &[RedirectBackpaths],
@@ -479,10 +481,14 @@ fn lookup(
                 format!("[scheme]://{}:[port]{}...", ele.host, ele.location),
                 ele.redirect_url,
             );
+            let host = match ele.host.as_str() {
+                DEFAULT_HOST => raw_host,
+                other => other,
+            };
             return Some(
                 scheme.to_owned()
                     + "://"
-                    + &ele.host
+                    + host
                     + ":"
                     + &port.to_string()
                     + &ele.location
