@@ -34,7 +34,7 @@ use hyper::{
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use log::{info, warn};
+use log::{debug, info, warn};
 use percent_encoding::percent_decode_str;
 use prom_label::Label;
 use prometheus_client::{
@@ -435,11 +435,11 @@ fn handle_redirect(
                     absolute_redirect_location,
                     redirect_bachpaths,
                 ) {
-                    let old = mem::replace(
+                    let _ = mem::replace(
                         redirect_location,
                         HeaderValue::from_str(replacement.as_str()).unwrap(),
                     );
-                    info!("change location header to {} from {:?}", replacement, old);
+                    info!("redirect to {}", replacement);
                 }
             }
         }
@@ -460,7 +460,7 @@ fn lookup(
 ) -> Option<String> {
     for ele in redirect_bachpaths.iter() {
         if absolute_location.starts_with(ele.redirect_url.as_str()) {
-            info!(
+            debug!(
                 "      {:40} -> {}...",
                 format!("[scheme]://{}:[port]{}...", ele.host, ele.location),
                 ele.redirect_url,
