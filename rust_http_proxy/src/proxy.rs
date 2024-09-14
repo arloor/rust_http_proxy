@@ -1,8 +1,10 @@
 use std::{
     borrow::Cow,
+    cell::LazyCell,
     collections::HashMap,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
+    mem,
     net::SocketAddr,
     time::Duration,
 };
@@ -17,6 +19,7 @@ use crate::{
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
+use http::{header::LOCATION, Uri};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
     body::Bytes,
@@ -100,7 +103,12 @@ impl ProxyHandler {
             if let Some(locations) = proxy_config.reverse_proxy_config.get(&host) {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
-                        .reverse_proxy(req, location_config, &client_socket_addr)
+                        .reverse_proxy(
+                            req,
+                            location_config,
+                            &client_socket_addr,
+                            &proxy_config.reverse_proxy_config,
+                        )
                         .await;
                 }
             }
@@ -317,10 +325,11 @@ impl ProxyHandler {
         req: Request<Incoming>,
         location_config: &LocationConfig,
         client_socket_addr: &SocketAddr,
+        reverse_proxy_config: &HashMap<String, Vec<LocationConfig>>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let method = req.method().clone();
-        let old_url = req.uri().clone();
-        let path_and_query = match old_url.path_and_query() {
+        let raw_req_url = req.uri().clone();
+        let path_and_query = match raw_req_url.path_and_query() {
             Some(path_and_query) => path_and_query.as_str(),
             None => "",
         };
@@ -359,22 +368,26 @@ impl ProxyHandler {
                 info!("remove host header: {:?}", ele.1);
             }
         }
-        let new_req = new_req
+        let upstream_req = new_req
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         info!(
             "[reverse proxy] {:^35} ---> {} ---> [{}] {url} [{:?}]",
             SocketAddrFormat(client_socket_addr).to_string(),
-            old_url,
-            new_req.method(),
-            new_req.version()
+            raw_req_url,
+            upstream_req.method(),
+            upstream_req.version()
         );
+        let upstream_req_url = upstream_req.uri().clone();
         // debug!("reverse_proxy: {:?}", new_req);
-        match self.reverse_client.request(new_req).await {
-            Ok(resp) => {
-                if resp.status().is_redirection() {
-                    warn!("redirection: {:?}", resp);
-                }
+        match self.reverse_client.request(upstream_req).await {
+            Ok(mut resp) => {
+                handle_redirect(
+                    &mut resp,
+                    upstream_req_url,
+                    raw_req_url,
+                    reverse_proxy_config,
+                );
                 Ok(resp.map(|body| {
                     body.map_err(|e| {
                         let e = e;
@@ -389,6 +402,104 @@ impl ProxyHandler {
             }
         }
     }
+}
+
+fn handle_redirect(
+    resp: &mut Response<Incoming>,
+    upstream_req_uri: Uri,
+    raw_req_uri: Uri,
+    reverse_proxy_config: &HashMap<String, Vec<LocationConfig>>,
+) {
+    if resp.status().is_redirection() {
+        let headers = resp.headers_mut();
+        if let Some(redirect_location) = headers.get_mut(LOCATION) {
+            if let Some(absolute_redirect_location) =
+                ensure_absolute(redirect_location, &upstream_req_uri)
+            {
+                if let Some(replacement) = lookup(
+                    raw_req_uri.scheme_str().unwrap_or("https"),
+                    raw_req_uri.port_u16().unwrap_or(80),
+                    absolute_redirect_location,
+                    reverse_proxy_config,
+                ) {
+                    let old = mem::replace(
+                        redirect_location,
+                        HeaderValue::from_str(replacement.as_str()).unwrap(),
+                    );
+                    info!("change location header to {} from {:?}", replacement, old);
+                }
+            }
+        }
+    }
+}
+
+struct RedirectSources {
+    redirect_url: String,
+    host: String,
+    location: String,
+}
+
+fn lookup(
+    scheme: &str,
+    port: u16,
+    absolute_location: String,
+    reverse_proxy_config: &HashMap<String, Vec<LocationConfig>>,
+) -> Option<String> {
+    let vec = LazyCell::new(|| {
+        info!("init by lazy cell");
+        let mut vec = Vec::<RedirectSources>::new();
+        for (host, locations) in reverse_proxy_config {
+            for location in locations {
+                vec.push(RedirectSources {
+                    redirect_url: location.upstream.scheme_and_authority.clone()
+                        + location.upstream.replacement.as_str(),
+                    host: host.clone(),
+                    location: location.location.clone(),
+                });
+            }
+        }
+        vec.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
+        vec
+    });
+
+    for ele in vec.iter() {
+        if absolute_location.starts_with(ele.redirect_url.as_str()) {
+            info!(
+                "      {:40} -> {}...",
+                format!("[scheme]://{}:[port]{}...", ele.host, ele.location),
+                ele.redirect_url,
+            );
+            return Some(
+                scheme.to_owned()
+                    + "://"
+                    + &ele.host
+                    + ":"
+                    + &port.to_string()
+                    + &ele.location
+                    + &absolute_location[ele.redirect_url.len()..],
+            );
+        }
+    }
+    None
+}
+
+fn ensure_absolute(location_header: &mut HeaderValue, new_url: &Uri) -> Option<String> {
+    if let Ok(location) = location_header.to_str() {
+        if let Ok(redirect_url) = location.parse::<Uri>() {
+            if redirect_url.scheme_str().is_none() {
+                //相对路径
+                return Some(format!(
+                    "{}://{}{}",
+                    new_url.scheme_str().unwrap(),
+                    new_url.authority().unwrap(),
+                    location
+                ));
+            } else {
+                return Some(location.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn pick_location<'b>(path: &str, locations: &'b [LocationConfig]) -> Option<&'b LocationConfig> {
