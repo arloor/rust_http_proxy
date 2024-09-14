@@ -371,13 +371,18 @@ impl ProxyHandler {
         );
         // debug!("reverse_proxy: {:?}", new_req);
         match self.reverse_client.request(new_req).await {
-            Ok(resp) => Ok(resp.map(|body| {
-                body.map_err(|e| {
-                    let e = e;
-                    io::Error::new(ErrorKind::InvalidData, e)
-                })
-                .boxed()
-            })),
+            Ok(resp) => {
+                if resp.status().is_redirection() {
+                    warn!("redirection: {:?}", resp);
+                }
+                Ok(resp.map(|body| {
+                    body.map_err(|e| {
+                        let e = e;
+                        io::Error::new(ErrorKind::InvalidData, e)
+                    })
+                    .boxed()
+                }))
+            }
             Err(e) => {
                 warn!("reverse_proxy error: {:?}", e);
                 Err(io::Error::new(ErrorKind::InvalidData, e))
