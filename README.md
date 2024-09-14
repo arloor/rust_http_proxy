@@ -4,7 +4,7 @@
 
 1. 使用tls来对正向代理流量进行加密（`--over-tls`）。
 2. 类Nginx的静态资源托管。支持gzip压缩。支持Accept-Ranges以支持断点续传（备注：暂不支持多range，例如 `Range: bytes=0-100,100-` ）
-3. 支持反向代理（ `--reverse-proxy` ）。目前仅支持根据host路由到upstream的url，不支持其他匹配规则。
+3. 支持反向代理（ `--reverse-proxy-config-file` ）。
 4. 基于Prometheus的可观测，可以监控代理的流量、外链访问等。
 5. 采集网卡上行流量，展示在 `/speed` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
 5. 支持多端口，多用户。
@@ -84,16 +84,20 @@ curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7
 YOUR_DOMAIN:
   - location: / # 默认为 /
     upstream:
-      scheme_and_authority: https://www.baidu.com // 末尾不包含 /
+      scheme_and_authority: https://www.baidu.com # 末尾不包含 /
       replacement: / # 默认为 /
-      version: H1 # 可以填H1、H2、AUTO，默认为AUTO
+      version: AUTO # 可以填H1、H2、AUTO，默认为AUTO
 ```
 
 **例子1:** Github Proxy
 
+在github原始url前加上`https://YOUR_DOMAIN`，以便在国内访问raw.githubusercontent.com和github.com
+
 ```bash
 curl https://YOUR_DOMAIN/https://raw.githubusercontent.com/arloor/iptablesUtils/master/natcfg.sh
 ```
+
+配置文件如下：
 
 ```yaml
 YOUR_DOMAIN:
