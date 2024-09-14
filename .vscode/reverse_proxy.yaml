@@ -4,6 +4,7 @@ localhost:
       scheme_and_authority: https://www.baidu.com
       replacement: / # 默认为 /
       version: H1 # 可以填H1、H2、AUTO，默认为AUTO
+default_host:
   - location: /v1/chat/completions
     upstream:
       scheme_and_authority: https://models.inference.ai.azure.com

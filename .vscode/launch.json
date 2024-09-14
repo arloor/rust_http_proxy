@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug rust_http_proxy",
             "cwd": "${workspaceFolder}",
-            "terminal": "console",
+            "terminal": "integrated",
             // https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md#rust-language-support
             // "cargo": {
             //     "args": [

@@ -119,7 +119,12 @@ impl ProxyHandler {
                     .unwrap_or("")
                     .to_string()
             };
-            if let Some(locations) = self.config.reverse_proxy_config.get(&host) {
+            if let Some(locations) = self
+                .config
+                .reverse_proxy_config
+                .get(&host)
+                .or(self.config.reverse_proxy_config.get("default_host"))
+            {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
                         .reverse_proxy(req, location_config, &client_socket_addr)
