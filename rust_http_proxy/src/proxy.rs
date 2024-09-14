@@ -477,8 +477,8 @@ fn lookup(
     for ele in redirect_bachpaths.iter() {
         if absolute_location.starts_with(ele.redirect_url.as_str()) {
             debug!(
-                "      {:40} -> {}...",
-                format!("[scheme]://{}:[port]{}...", ele.host, ele.location),
+                "    {:<70} -> {}",
+                format!("[scheme]://{}:[port]{}", ele.host, ele.location),
                 ele.redirect_url,
             );
             let host = match ele.host.as_str() {

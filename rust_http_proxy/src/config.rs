@@ -237,9 +237,9 @@ fn log_config(config: &Config) {
         .for_each(|reverse_proxy_config| {
             for ele in reverse_proxy_config.1 {
                 info!(
-                    "     {:40} -> {}{}...",
+                    "    {:<70} -> {}{}",
                     format!(
-                        "[scheme]://{}:[port]{}...",
+                        "[scheme]://{}:[port]{}",
                         reverse_proxy_config.0, ele.location
                     ),
                     ele.upstream.scheme_and_authority,
