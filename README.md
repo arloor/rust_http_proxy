@@ -93,6 +93,7 @@ YOUR_DOMAIN:
 
 ```bash
 curl https://YOUR_DOMAIN/https://raw.githubusercontent.com/arloor/iptablesUtils/master/natcfg.sh
+```
 
 ```yaml
 YOUR_DOMAIN:
