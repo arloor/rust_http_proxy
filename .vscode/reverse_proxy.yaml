@@ -6,4 +6,10 @@ localhost:
     upstream:
       scheme_and_authority: https://models.inference.ai.azure.com
       replacement: /chat/completions
-      version: H2
+  - location: /https://github.com
+    upstream:
+      scheme_and_authority: https://github.com
+  - location: /github-production-release
+    upstream:
+      scheme_and_authority: https://objects.githubusercontent.com
+      replacement: /github-production-release
