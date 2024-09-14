@@ -180,18 +180,30 @@ pub(crate) fn load_config() -> Config {
             match location_config.upstream.scheme_and_authority.parse::<Uri>() {
                 Ok(scheme_and_authority) => {
                     if scheme_and_authority.scheme().is_none() {
-                        panic!("upstream scheme_and_authority's scheme is empty");
+                        panic!(
+                            "wrong scheme_and_authority: {} --- scheme is empty",
+                            location_config.upstream.scheme_and_authority
+                        );
                     }
                     if scheme_and_authority.authority().is_none() {
-                        panic!("upstream scheme_and_authority's authority is empty");
+                        panic!(
+                            "wrong scheme_and_authority: {} --- authority is empty",
+                            location_config.upstream.scheme_and_authority
+                        );
                     }
                     if scheme_and_authority.path() != "/"
-                        
+                        || location_config.upstream.scheme_and_authority.ends_with("/")
                     {
-                        panic!("upstream scheme_and_authority's path is not empty");
+                        panic!(
+                            "wrong scheme_and_authority: {} --- path is not empty",
+                            location_config.upstream.scheme_and_authority
+                        );
                     }
                     if scheme_and_authority.query().is_some() {
-                        panic!("upstream scheme_and_authority's query is not empty");
+                        panic!(
+                            "wrong scheme_and_authority: {} --- query is not empty",
+                            location_config.upstream.scheme_and_authority
+                        );
                     }
                 }
                 Err(e) => panic!("parse upstream scheme_and_authority error:{}", e),

@@ -84,7 +84,7 @@ curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7
 YOUR_DOMAIN:
   - location: / # 默认为 /
     upstream:
-      scheme_and_authority: https://www.baidu.com
+      scheme_and_authority: https://www.baidu.com // 末尾不包含 /
       replacement: / # 默认为 /
       version: H1 # 可以填H1、H2、AUTO，默认为AUTO
 ```
