@@ -89,6 +89,8 @@ YOUR_DOMAIN:
       version: AUTO # 可以填H1、H2、AUTO，默认为AUTO
 ```
 
+如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效
+
 **例子1:** Github Proxy
 
 在github原始url前加上`https://YOUR_DOMAIN`，以便在国内访问raw.githubusercontent.com和github.com
@@ -100,7 +102,7 @@ curl https://YOUR_DOMAIN/https://raw.githubusercontent.com/arloor/iptablesUtils/
 配置文件如下：
 
 ```yaml
-YOUR_DOMAIN:
+default_host:
   - location: /https://github.com
     upstream:
       scheme_and_authority: https://github.com
@@ -118,7 +120,7 @@ YOUR_DOMAIN:
 **例子2:** 将Github Models的url改写成openai api的url格式
 
 ```yaml
-YOUR_DOMAIN:
+default_host:
   - location: /v1/chat/completions
     upstream:
       scheme_and_authority: https://models.inference.ai.azure.com
