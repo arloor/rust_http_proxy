@@ -108,27 +108,16 @@ impl ProxyHandler {
         let never_ask_for_auth = self.config.never_ask_for_auth;
         // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
-            let host = if req.version() == Version::HTTP_2 {
-                // 没有port
-                req.uri().host().unwrap_or("").to_string()
-            } else {
-                req.headers()
-                    .get(http::header::HOST)
-                    .map_or("", |h| h.to_str().unwrap_or(""))
-                    .split(':')
-                    .next()
-                    .unwrap_or("")
-                    .to_string()
-            };
+            let scheme_host_port = scheme_host_port(&req, self.config.over_tls);
             if let Some(locations) = self
                 .config
                 .reverse_proxy_config
-                .get(&host)
+                .get(&scheme_host_port.1)
                 .or(self.config.reverse_proxy_config.get(DEFAULT_HOST))
             {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
-                        .reverse_proxy(req, location_config, &client_socket_addr)
+                        .reverse_proxy(req, &scheme_host_port, location_config, &client_socket_addr)
                         .await;
                 }
             }
@@ -341,35 +330,12 @@ impl ProxyHandler {
     async fn reverse_proxy(
         &self,
         req: Request<Incoming>,
+        scheme_host_port: &(String, String, u16),
         location_config: &LocationConfig,
         client_socket_addr: &SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let method = req.method().clone();
-        let raw_req_url = req.uri().clone();
-        let path_and_query = match raw_req_url.path_and_query() {
-            Some(path_and_query) => path_and_query.as_str(),
-            None => "",
-        };
-        let path_and_query = location_config.upstream.replacement.clone()
-            + &path_and_query[location_config.location.len()..];
-        let upstream_uri = location_config.upstream.scheme_and_authority.clone();
-        let url = format!("{}{}", upstream_uri, path_and_query);
-        let mut new_req = Request::builder().method(method).uri(url.clone()).version(
-            if !url.starts_with("https:") {
-                match location_config.upstream.version {
-                    reverse::Version::H1 => Version::HTTP_11,
-                    reverse::Version::H2 => Version::HTTP_2,
-                    reverse::Version::Auto => Version::HTTP_11,
-                }
-            } else {
-                match location_config.upstream.version {
-                    reverse::Version::H1 => Version::HTTP_11,
-                    reverse::Version::H2 => Version::HTTP_2,
-                    reverse::Version::Auto => req.version(),
-                }
-            },
-        );
-        let header_map = match new_req.headers_mut() {
+        let mut upstream_req_builder = new_upstream_req_builder(&req, location_config);
+        let header_map = match upstream_req_builder.headers_mut() {
             Some(header_map) => header_map,
             None => {
                 return Err(io::Error::new(
@@ -385,19 +351,18 @@ impl ProxyHandler {
                 info!("remove host header: {:?}", ele.1);
             }
         }
-        let upstream_req = new_req
+        let upstream_req = upstream_req_builder
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         info!(
-            "[reverse proxy] {:^35} ---> {} ---> [{}] {url} [{:?}]",
+            "[reverse proxy] {:^35} ---> {} ---> [{}] {:?} [{:?}]",
             SocketAddrFormat(client_socket_addr).to_string(),
             format!(
-                "{}://{}{}",
-                raw_req_url.scheme_str().unwrap_or("[scheme]"),
-                raw_req_url.authority().map_or("", |a| a.as_str()),
-                raw_req_url.path()
+                "{}://{}:{}",
+                scheme_host_port.0, scheme_host_port.1, scheme_host_port.2
             ),
             upstream_req.method(),
+            &upstream_req.uri(),
             upstream_req.version()
         );
         let upstream_req_url = upstream_req.uri().clone();
@@ -406,8 +371,8 @@ impl ProxyHandler {
             Ok(mut resp) => {
                 handle_redirect(
                     &mut resp,
+                    scheme_host_port,
                     upstream_req_url,
-                    raw_req_url,
                     &self.redirect_bachpaths,
                 );
                 Ok(resp.map(|body| {
@@ -426,10 +391,87 @@ impl ProxyHandler {
     }
 }
 
+fn new_upstream_req_builder(
+    req: &Request<Incoming>,
+    location_config: &LocationConfig,
+) -> http::request::Builder {
+    let method = req.method().clone();
+    let path_and_query = match req.uri().path_and_query() {
+        Some(path_and_query) => path_and_query.as_str(),
+        None => "",
+    };
+    let path_and_query = location_config.upstream.replacement.clone()
+        + &path_and_query[location_config.location.len()..];
+    let url = format!(
+        "{}{}",
+        location_config.upstream.scheme_and_authority.clone(),
+        path_and_query
+    );
+
+    Request::builder()
+        .method(method)
+        .uri(url.clone())
+        .version(if !url.starts_with("https:") {
+            match location_config.upstream.version {
+                reverse::Version::H1 => Version::HTTP_11,
+                reverse::Version::H2 => Version::HTTP_2,
+                reverse::Version::Auto => Version::HTTP_11,
+            }
+        } else {
+            match location_config.upstream.version {
+                reverse::Version::H1 => Version::HTTP_11,
+                reverse::Version::H2 => Version::HTTP_2,
+                reverse::Version::Auto => req.version(),
+            }
+        })
+}
+
+fn scheme_host_port(req: &Request<Incoming>, server_over_tls: bool) -> (String, String, u16) {
+    let uri = req.uri();
+    let scheme = uri.scheme_str().unwrap_or(match server_over_tls {
+        true => "https",
+        false => "http",
+    });
+    let result = if req.version() == Version::HTTP_2 {
+        //H2，信息全在uri中
+        (
+            scheme.to_owned(),
+            uri.host().unwrap_or("").to_string(),
+            uri.port_u16().unwrap_or(match scheme {
+                "https" => 443,
+                "http" => 80,
+                _ => 443,
+            }),
+        )
+    } else {
+        let mut split = req
+            .headers()
+            .get(http::header::HOST)
+            .map_or("", |h| h.to_str().unwrap_or(""))
+            .split(':');
+        let host = split.next().unwrap_or("").to_string();
+        let port = split
+            .next()
+            .unwrap_or(match scheme {
+                "https" => "443",
+                "http" => "80",
+                _ => "443",
+            })
+            .parse::<u16>()
+            .unwrap_or(match scheme {
+                "https" => 443,
+                "http" => 80,
+                _ => 443,
+            });
+        (scheme.to_owned(), host, port)
+    };
+    result
+}
+
 fn handle_redirect(
     resp: &mut Response<Incoming>,
+    scheme_host_port: &(String, String, u16),
     upstream_req_uri: Uri,
-    raw_req_uri: Uri,
     redirect_bachpaths: &[RedirectBackpaths],
 ) {
     if resp.status().is_redirection() {
@@ -438,15 +480,8 @@ fn handle_redirect(
             if let Some(absolute_redirect_location) =
                 ensure_absolute(redirect_location, &upstream_req_uri)
             {
-                let scheme = raw_req_uri.scheme_str().unwrap_or("https");
                 if let Some(replacement) = lookup(
-                    scheme,
-                    raw_req_uri.host().unwrap_or(""),
-                    raw_req_uri.port_u16().unwrap_or(match scheme {
-                        "http" => 80,
-                        "https" => 443,
-                        _ => 443,
-                    }),
+                    scheme_host_port,
                     absolute_redirect_location,
                     redirect_bachpaths,
                 ) {
@@ -468,9 +503,7 @@ struct RedirectBackpaths {
 }
 
 fn lookup(
-    scheme: &str,
-    raw_host: &str,
-    port: u16,
+    scheme_host_port: &(String, String, u16),
     absolute_location: String,
     redirect_bachpaths: &[RedirectBackpaths],
 ) -> Option<String> {
@@ -482,15 +515,15 @@ fn lookup(
                 ele.redirect_url,
             );
             let host = match ele.host.as_str() {
-                DEFAULT_HOST => raw_host, // 如果是default_host，就用当前host
+                DEFAULT_HOST => &scheme_host_port.1, // 如果是default_host，就用当前host
                 other => other,
             };
             return Some(
-                scheme.to_owned()
+                scheme_host_port.0.to_owned()
                     + "://"
                     + host
                     + ":"
-                    + &port.to_string()
+                    + &scheme_host_port.2.to_string()
                     + &ele.location
                     + &absolute_location[ele.redirect_url.len()..],
             );
@@ -499,15 +532,15 @@ fn lookup(
     None
 }
 
-fn ensure_absolute(location_header: &mut HeaderValue, new_url: &Uri) -> Option<String> {
+fn ensure_absolute(location_header: &mut HeaderValue, upstream_url: &Uri) -> Option<String> {
     if let Ok(location) = location_header.to_str() {
         if let Ok(redirect_url) = location.parse::<Uri>() {
             if redirect_url.scheme_str().is_none() {
                 //相对路径
                 return Some(format!(
                     "{}://{}{}",
-                    new_url.scheme_str().unwrap(),
-                    new_url.authority().unwrap(),
+                    upstream_url.scheme_str().unwrap(),
+                    upstream_url.authority().unwrap(),
                     location
                 ));
             } else {
