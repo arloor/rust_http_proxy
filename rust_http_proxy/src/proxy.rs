@@ -514,11 +514,11 @@ fn lookup(
                 other => other,
             };
             return Some(
-                scheme_host_port.0.to_owned()
+                scheme_host_port.0.to_owned() // use raw requst's scheme
                     + "://"
-                    + host
+                    + host // if it's default_host, use raw requst's host
                     + ":"
-                    + &scheme_host_port.2.to_string()
+                    + &scheme_host_port.2.to_string() // use raw requst's port
                     + &ele.location
                     + &absolute_location[ele.redirect_url.len()..],
             );
