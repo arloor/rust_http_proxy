@@ -428,7 +428,7 @@ fn scheme_host_port(req: &Request<Incoming>, server_over_tls: bool) -> (String, 
         true => "https",
         false => "http",
     });
-    let result = if req.version() == Version::HTTP_2 {
+    if req.version() == Version::HTTP_2 {
         //H2，信息全在uri中
         (
             scheme.to_owned(),
@@ -460,8 +460,7 @@ fn scheme_host_port(req: &Request<Incoming>, server_over_tls: bool) -> (String, 
                 _ => 443,
             });
         (scheme.to_owned(), host, port)
-    };
-    result
+    }
 }
 
 fn handle_redirect(
