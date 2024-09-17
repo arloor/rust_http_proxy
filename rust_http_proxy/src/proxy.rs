@@ -384,23 +384,25 @@ fn build_upstream_req(
         path_and_query
     );
 
-    let mut builder =
-        Request::builder()
-            .method(method)
-            .uri(url.clone())
-            .version(if !url.starts_with("https:") {
-                match location_config.upstream.version {
-                    reverse::Version::H1 => Version::HTTP_11,
-                    reverse::Version::H2 => Version::HTTP_2,
-                    reverse::Version::Auto => Version::HTTP_11,
-                }
-            } else {
-                match location_config.upstream.version {
-                    reverse::Version::H1 => Version::HTTP_11,
-                    reverse::Version::H2 => Version::HTTP_2,
-                    reverse::Version::Auto => req.version(),
-                }
-            });
+    let mut builder = Request::builder().method(method).uri(url.clone()).version(
+        if !location_config
+            .upstream
+            .scheme_and_authority
+            .starts_with("https:")
+        {
+            match location_config.upstream.version {
+                reverse::Version::H1 => Version::HTTP_11,
+                reverse::Version::H2 => Version::HTTP_2,
+                reverse::Version::Auto => Version::HTTP_11,
+            }
+        } else {
+            match location_config.upstream.version {
+                reverse::Version::H1 => Version::HTTP_11,
+                reverse::Version::H2 => Version::HTTP_2,
+                reverse::Version::Auto => req.version(),
+            }
+        },
+    );
     let header_map = match builder.headers_mut() {
         Some(header_map) => header_map,
         None => {
