@@ -86,7 +86,7 @@ impl ProxyHandler {
         }
         redirect_bachpaths.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
         for ele in redirect_bachpaths.iter() {
-            debug!("find redirect back path for: {}", ele.redirect_url);
+            debug!("find redirect back path for: {}**", ele.redirect_url);
         }
 
         ProxyHandler {
@@ -108,7 +108,7 @@ impl ProxyHandler {
         let never_ask_for_auth = self.config.never_ask_for_auth;
         // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
-            let req_basic = extract_requst_basic_info(&req, self.config.over_tls);
+            let req_basic = extract_requst_basic_info(&req, self.config.over_tls)?;
             if let Some(locations) = self
                 .config
                 .reverse_proxy_config
@@ -118,7 +118,7 @@ impl ProxyHandler {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     let upstream_req = build_upstream_req(req, location_config)?;
                     info!(
-                        "[reverse proxy] {:^35} => {}{}... ==> [{}] {:?} [{:?}]",
+                        "[reverse proxy] {:^35} => {}{}** ==> [{}] {:?} [{:?}]",
                         SocketAddrFormat(&client_socket_addr).to_string(),
                         req_basic,
                         location_config.location,
@@ -426,16 +426,22 @@ fn build_upstream_req(
 struct ReqBasic {
     scheme: String,
     host: String,
-    port: u16,
+    port: Option<u16>,
 }
 
 impl Display for ReqBasic {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}://{}:{}", self.scheme, self.host, self.port)
+        match self.port {
+            Some(port) => write!(f, "{}://{}:{}", self.scheme, self.host, port),
+            None => write!(f, "{}://{}", self.scheme, self.host),
+        }
     }
 }
 
-fn extract_requst_basic_info(req: &Request<Incoming>, server_over_tls: bool) -> ReqBasic {
+fn extract_requst_basic_info(
+    req: &Request<Incoming>,
+    server_over_tls: bool,
+) -> io::Result<ReqBasic> {
     let uri = req.uri();
     let scheme = uri.scheme_str().unwrap_or(match server_over_tls {
         true => "https",
@@ -443,40 +449,38 @@ fn extract_requst_basic_info(req: &Request<Incoming>, server_over_tls: bool) -> 
     });
     if req.version() == Version::HTTP_2 {
         //H2，信息全在uri中
-        ReqBasic {
+        Ok(ReqBasic {
             scheme: scheme.to_owned(),
-            host: uri.host().unwrap_or("").to_string(),
-            port: uri.port_u16().unwrap_or(match scheme {
-                "https" => 443,
-                "http" => 80,
-                _ => 443,
-            }),
-        }
+            host: uri
+                .host()
+                .ok_or(io::Error::new(ErrorKind::InvalidData, "host not in url"))?
+                .to_string(),
+            port: uri.port_u16(),
+        })
     } else {
         let mut split = req
             .headers()
             .get(http::header::HOST)
-            .map_or("", |h| h.to_str().unwrap_or(""))
+            .ok_or(io::Error::new(ErrorKind::InvalidData, "Host Header is absent in HTTP/1.1"))?
+            .to_str()
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?
             .split(':');
-        let host = split.next().unwrap_or("").to_string();
-        let port = split
+        let host = split
             .next()
-            .unwrap_or(match scheme {
-                "https" => "443",
-                "http" => "80",
-                _ => "443",
-            })
-            .parse::<u16>()
-            .unwrap_or(match scheme {
-                "https" => 443,
-                "http" => 80,
-                _ => 443,
-            });
-        ReqBasic {
+            .ok_or(io::Error::new(ErrorKind::InvalidData, "host not in header"))?
+            .to_string();
+        let port = match split.next() {
+            Some(port) => Some(
+                port.parse::<u16>()
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+            ),
+            None => None,
+        };
+        Ok(ReqBasic {
             scheme: scheme.to_owned(),
             host,
             port,
-        }
+        })
     }
 }
 
@@ -520,22 +524,26 @@ fn lookup(
     for ele in redirect_bachpaths.iter() {
         if absolute_location.starts_with(ele.redirect_url.as_str()) {
             info!(
-                "redirect back path for {} is {}",
+                "redirect back path for {}** is {}",
                 ele.redirect_url,
-                format!("[scheme]://{}:[port]{}", ele.host, ele.location),
+                format!("*://{}:*{}**", ele.host, ele.location),
             );
             let host = match ele.host.as_str() {
                 DEFAULT_HOST => &req_basic.host, // 如果是default_host，就用当前host
                 other => other,
             };
+            let port_part = if let Some(port) = req_basic.port {
+                format!(":{}", port)
+            } else {
+                String::new()
+            };
             return Some(
-                req_basic.scheme.to_owned() // use raw requst's scheme
-                    + "://"
-                    + host // if it's default_host, use raw requst's host
-                    + ":"
-                    + &req_basic.port.to_string() // use raw requst's port
-                    + &ele.location
-                    + &absolute_location[ele.redirect_url.len()..],
+                req_basic.scheme.to_owned() // use raw request's scheme
+                + "://"
+                + host // if it's default_host, use raw request's host
+                + &port_part // use raw request's port if available
+                + &ele.location
+                + &absolute_location[ele.redirect_url.len()..],
             );
         }
     }
