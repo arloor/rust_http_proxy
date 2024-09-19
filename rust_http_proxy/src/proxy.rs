@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
-    mem,
     net::SocketAddr,
     time::Duration,
 };
@@ -19,7 +18,7 @@ use crate::{
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http::{
-    header::LOCATION,
+    header::{HOST, LOCATION},
     uri::{Authority, Parts, Scheme},
     Uri,
 };
@@ -188,15 +187,12 @@ impl ProxyHandler {
         client_socket_addr: SocketAddr,
         username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        // 删除代理特有的请求头
-        req.headers_mut()
-            .remove(http::header::PROXY_AUTHORIZATION.to_string());
-        req.headers_mut().remove("Proxy-Connection");
-        // debug!("proxy: {:?}", req);
-        let addr = match host_addr(req.uri()) {
-            Some(h) => h,
-            None => panic!("URI missing host: {}", req.uri()),
-        };
+        let addr = host_addr(req.uri()).ok_or_else(|| {
+            io::Error::new(
+            ErrorKind::InvalidData,
+            format!("URI missing host: {}", req.uri()),
+            )
+        })?;
         let access_label = AccessLabel {
             client: client_socket_addr.ip().to_canonical().to_string(),
             target: addr.to_string(),
@@ -209,8 +205,7 @@ impl ProxyHandler {
                 LabelImpl::new(access_label),
             )
         };
-        // change absoulte uri to relative uri
-        origin_form(req.uri_mut());
+        mod_http1_proxy_req(&mut req);
         if let Ok(resp) = self
             .http1_client
             .send_request(req, &access_label, stream_map_func)
@@ -371,6 +366,28 @@ impl ProxyHandler {
     }
 }
 
+fn mod_http1_proxy_req(req: &mut Request<Incoming>) {
+    // 删除代理特有的请求头
+    req.headers_mut()
+        .remove(http::header::PROXY_AUTHORIZATION.to_string());
+    req.headers_mut().remove("Proxy-Connection");
+    // set host header
+    let uri = req.uri().clone();
+    req.headers_mut().remove(HOST);
+    req.headers_mut().entry(HOST).or_insert_with(|| {
+        let hostname = uri.host().expect("authority implies host");
+        if let Some(port) = get_non_default_port(&uri) {
+            let s = format!("{}:{}", hostname, port);
+            HeaderValue::from_str(&s)
+        } else {
+            HeaderValue::from_str(hostname)
+        }
+        .expect("uri host is valid header value")
+    });
+    // change absoulte uri to relative uri
+    origin_form(req.uri_mut());
+}
+
 fn build_upstream_req(
     req: Request<Incoming>,
     location_config: &LocationConfig,
@@ -495,6 +512,20 @@ fn extract_requst_basic_info(
     }
 }
 
+fn get_non_default_port(uri: &Uri) -> Option<http::uri::Port<&str>> {
+    match (uri.port().map(|p| p.as_u16()), is_schema_secure(uri)) {
+        (Some(443), true) => None,
+        (Some(80), false) => None,
+        _ => uri.port(),
+    }
+}
+
+fn is_schema_secure(uri: &Uri) -> bool {
+    uri.scheme_str()
+        .map(|scheme_str| matches!(scheme_str, "wss" | "https"))
+        .unwrap_or_default()
+}
+
 fn handle_redirect(
     resp: &mut Response<Incoming>,
     req_basic: &ReqBasic,
@@ -510,11 +541,11 @@ fn handle_redirect(
                 if let Some(replacement) =
                     lookup(req_basic, absolute_redirect_location, redirect_bachpaths)
                 {
-                    let _ = mem::replace(
-                        redirect_location,
+                    let origin = headers.insert(
+                        LOCATION,
                         HeaderValue::from_str(replacement.as_str()).unwrap(),
                     );
-                    info!("redirect to {}", replacement);
+                    info!("redirect to [{}], origin is [{:?}]", replacement, origin);
                 }
             }
         }
