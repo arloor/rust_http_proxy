@@ -287,7 +287,7 @@ fn handle_http1_connection_error(err: hyper::Error, access_label: AccessLabel) {
             if io_err.kind() == ErrorKind::TimedOut {
                 // 由于超时导致的连接关闭（TimeoutIO）
                 info!(
-                    "[legacy proxy io closed]: [{}] {} to {}",
+                    "[legacy proxy connection io closed]: [{}] {} to {}",
                     io_err.kind(),
                     io_err,
                     access_label
