@@ -111,7 +111,13 @@ impl ProxyHandler {
         let never_ask_for_auth = self.config.never_ask_for_auth;
         // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
-            let req_basic = extract_requst_basic_info(&req, self.config.over_tls)?;
+            let req_basic = extract_requst_basic_info(
+                &req,
+                match self.config.over_tls {
+                    true => "https",
+                    false => "http",
+                },
+            )?;
             if let Some(locations) = self
                 .config
                 .reverse_proxy_config
@@ -187,7 +193,7 @@ impl ProxyHandler {
         client_socket_addr: SocketAddr,
         username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let access_label = self.parse_req_meta(&req, client_socket_addr, username)?;
+        let access_label = self.build_access_label(&req, client_socket_addr, username)?;
         mod_http1_proxy_req(&mut req)?;
         match self
             .http1_client
@@ -215,7 +221,7 @@ impl ProxyHandler {
         }
     }
 
-    fn parse_req_meta(
+    fn build_access_label(
         &self,
         req: &Request<Incoming>,
         client_socket_addr: SocketAddr,
@@ -479,13 +485,10 @@ impl Display for ReqBasic {
 
 fn extract_requst_basic_info(
     req: &Request<Incoming>,
-    server_over_tls: bool,
+    default_scheme: &str,
 ) -> io::Result<ReqBasic> {
     let uri = req.uri();
-    let scheme = uri.scheme_str().unwrap_or(match server_over_tls {
-        true => "https",
-        false => "http",
-    });
+    let scheme = uri.scheme_str().unwrap_or(default_scheme);
     if req.version() == Version::HTTP_2 {
         //H2，信息全在uri中
         Ok(ReqBasic {
