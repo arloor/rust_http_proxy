@@ -187,10 +187,44 @@ impl ProxyHandler {
         client_socket_addr: SocketAddr,
         username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        let access_label = self.parse_req_meta(&req, client_socket_addr, username)?;
+        mod_http1_proxy_req(&mut req);
+        match self
+            .http1_client
+            .send_request(
+                req,
+                &access_label,
+                |stream: TcpStream, access_label: AccessLabel| {
+                    CounterIO::new(
+                        stream,
+                        self.metrics.proxy_traffic.clone(),
+                        LabelImpl::new(access_label),
+                    )
+                },
+            )
+            .await
+        {
+            Ok(resp) => Ok(resp.map(|body| {
+                body.map_err(|e| {
+                    let e = e;
+                    io::Error::new(ErrorKind::InvalidData, e)
+                })
+                .boxed()
+            })),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn parse_req_meta(
+        &self,
+        req: &Request<Incoming>,
+        client_socket_addr: SocketAddr,
+        username: String,
+    ) -> Result<AccessLabel, io::Error> {
         let addr = host_addr(req.uri()).ok_or_else(|| {
             io::Error::new(
-            ErrorKind::InvalidData,
-            format!("URI missing host: {}", req.uri()),
+                ErrorKind::InvalidData,
+                format!("URI missing host: {}", req.uri()),
             )
         })?;
         let access_label = AccessLabel {
@@ -198,29 +232,7 @@ impl ProxyHandler {
             target: addr.to_string(),
             username,
         };
-        let stream_map_func = |stream: TcpStream, access_label: AccessLabel| {
-            CounterIO::new(
-                stream,
-                self.metrics.proxy_traffic.clone(),
-                LabelImpl::new(access_label),
-            )
-        };
-        mod_http1_proxy_req(&mut req);
-        if let Ok(resp) = self
-            .http1_client
-            .send_request(req, &access_label, stream_map_func)
-            .await
-        {
-            Ok(resp.map(|b| {
-                b.map_err(|e| {
-                    let e = e;
-                    io::Error::new(ErrorKind::InvalidData, e)
-                })
-                .boxed()
-            }))
-        } else {
-            Err(io::Error::new(ErrorKind::ConnectionAborted, "连接失败"))
-        }
+        Ok(access_label)
     }
 
     /// 代理CONNECT请求
