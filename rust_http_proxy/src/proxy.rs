@@ -18,7 +18,11 @@ use crate::{
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
-use http::{header::LOCATION, uri::Parts, Uri};
+use http::{
+    header::LOCATION,
+    uri::{Authority, Parts, Scheme},
+    Uri,
+};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
     body::Bytes,
@@ -343,13 +347,12 @@ impl ProxyHandler {
         origin_req_basic: &ReqBasic,
     ) -> io::Result<Response<BoxBody<Bytes, io::Error>>> {
         let upstream_uri_parts = upstream_req.uri().clone().into_parts();
-        // debug!("reverse_proxy: {:?}", new_req);
         match self.reverse_client.request(upstream_req).await {
             Ok(mut resp) => {
                 handle_redirect(
                     &mut resp,
                     origin_req_basic,
-                    upstream_uri_parts,
+                    &(upstream_uri_parts.scheme, upstream_uri_parts.authority),
                     &self.redirect_bachpaths,
                 );
                 Ok(resp.map(|body| {
@@ -495,7 +498,7 @@ fn extract_requst_basic_info(
 fn handle_redirect(
     resp: &mut Response<Incoming>,
     req_basic: &ReqBasic,
-    upstream_uri_parts: Parts,
+    upstream_uri_parts: &(Option<Scheme>, Option<Authority>),
     redirect_bachpaths: &[RedirectBackpaths],
 ) {
     if resp.status().is_redirection() {
@@ -560,16 +563,16 @@ fn lookup(
 
 fn ensure_absolute(
     location_header: &mut HeaderValue,
-    mut upstream_uri_parts: Parts,
+    upstream_uri_parts: &(Option<Scheme>, Option<Authority>),
 ) -> Option<String> {
     if let Ok(location) = location_header.to_str() {
         if let Ok(redirect_url) = location.parse::<Uri>() {
             if redirect_url.scheme_str().is_none() {
-                //相对路径
-                upstream_uri_parts.path_and_query = redirect_url.path_and_query().cloned();
-                return Uri::from_parts(upstream_uri_parts)
-                    .ok()
-                    .map(|uri| uri.to_string());
+                let mut parts = Parts::default();
+                parts.scheme = upstream_uri_parts.0.clone();
+                parts.authority = upstream_uri_parts.1.clone();
+                parts.path_and_query = redirect_url.path_and_query().cloned();
+                return Uri::from_parts(parts).ok().map(|uri| uri.to_string());
             } else {
                 return Some(location.to_string());
             }
