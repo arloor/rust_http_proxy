@@ -367,7 +367,7 @@ impl ProxyHandler {
                     origin_req_basic,
                     &(upstream_uri_parts.scheme, upstream_uri_parts.authority),
                     &self.redirect_bachpaths,
-                );
+                )?;
                 Ok(resp.map(|body| {
                     body.map_err(|e| {
                         let e = e;
@@ -551,7 +551,7 @@ fn handle_redirect(
     req_basic: &ReqBasic,
     upstream_uri_parts: &(Option<Scheme>, Option<Authority>),
     redirect_bachpaths: &[RedirectBackpaths],
-) {
+) -> io::Result<()> {
     if resp.status().is_redirection() {
         let headers = resp.headers_mut();
         if let Some(redirect_location) = headers.get_mut(LOCATION) {
@@ -563,13 +563,15 @@ fn handle_redirect(
                 {
                     let origin = headers.insert(
                         LOCATION,
-                        HeaderValue::from_str(replacement.as_str()).unwrap(),
+                        HeaderValue::from_str(replacement.as_str())
+                            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
                     );
                     info!("redirect to [{}], origin is [{:?}]", replacement, origin);
                 }
             }
         }
     }
+    Ok(())
 }
 
 struct RedirectBackpaths {

@@ -157,7 +157,7 @@ impl TryFrom<Param> for Config {
     }
 }
 
-pub(crate) fn load_config() -> Config {
+pub(crate) fn load_config() -> Result<Config, DynError> {
     let mut param = Param::parse();
     param.hostname = get_hostname();
     if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
@@ -174,7 +174,7 @@ pub(crate) fn load_config() -> Config {
         let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
     }
     info!("hostname seems to be {}", param.hostname);
-    let config = Config::try_from(param).unwrap();
+    let config = Config::try_from(param)?;
     for ele in &config.reverse_proxy_config {
         for location_config in ele.1 {
             match location_config.upstream.scheme_and_authority.parse::<Uri>() {
@@ -212,7 +212,7 @@ pub(crate) fn load_config() -> Config {
     }
     log_config(&config);
     info!("auto close connection after idle for {:?}", IDLE_TIMEOUT);
-    config
+    Ok(config)
 }
 
 fn log_config(config: &Config) {

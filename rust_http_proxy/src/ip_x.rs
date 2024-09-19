@@ -53,7 +53,7 @@ pub fn local_ip() -> io::Result<String> {
         })
         .collect::<Vec<_>>();
 
-    all_interfaces
+    let result = all_interfaces
         .iter()
         .find(|interface| {
             interface.is_up() && !interface.is_loopback() && !interface.ips.is_empty()
@@ -64,9 +64,11 @@ pub fn local_ip() -> io::Result<String> {
                 .iter()
                 .find(|ip| ip.is_ipv4())
                 .map(|ip| ip.ip().to_string())
-                .unwrap()
-        })
-        .ok_or(io::Error::new(io::ErrorKind::NotFound, "No local ip found"))
+        });
+    match result {
+        Some(ip) => ip.ok_or(io::Error::new(io::ErrorKind::NotFound, "No ipv4 found")),
+        None => Err(io::Error::new(io::ErrorKind::NotFound, "No ip found")),
+    }
 }
 
 pub struct SocketAddrFormat<'a>(pub &'a std::net::SocketAddr);

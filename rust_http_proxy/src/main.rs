@@ -5,8 +5,6 @@ mod net_monitor;
 mod proxy;
 mod tls_helper;
 mod web_func;
-#[macro_use]
-mod macros;
 mod address;
 mod config;
 mod http1_client;
@@ -54,7 +52,7 @@ static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    let proxy_config: Config = load_config();
+    let proxy_config: Config = load_config()?;
     let ports = proxy_config.port.clone();
     let proxy_handler = Arc::new(ProxyHandler::new(proxy_config));
     #[cfg(feature = "jemalloc")]

@@ -151,7 +151,8 @@ fn incr_counter_if_need(
         if is_outer_view_html && (res.status().is_success() || res.status().is_redirection()) {
             http_req_counter
                 .get_or_create(&LabelImpl::new(ReqLabels {
-                    referer: extract_search_engine_from_referer(referer_header),
+                    referer: extract_search_engine_from_referer(referer_header)
+                        .unwrap_or("parse_failed".to_string()),
                     path: path.to_string(),
                 }))
                 .inc();
@@ -165,23 +166,19 @@ fn incr_counter_if_need(
     }
 }
 
-fn extract_search_engine_from_referer(referer: &str) -> String {
-    if let Some(caps) = Regex::new("^https?://(.+?)(/|$)")
-        .unwrap()
-        .captures(referer)
-    {
+fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Error> {
+    if let Some(caps) = Regex::new("^https?://(.+?)(/|$)")?.captures(referer) {
         let address = caps.get(1).map_or(referer, |g| g.as_str());
         if let Some(caps) =
-            Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow|duckduckgo)")
-                .unwrap()
+            Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow|duckduckgo)")?
                 .captures(address)
         {
-            caps.get(1).map_or(address, |g| g.as_str()).to_string()
+            Ok(caps.get(1).map_or(address, |g| g.as_str()).to_string())
         } else {
-            address.to_owned()
+            Ok(address.to_owned())
         }
     } else {
-        referer.to_string()
+        Ok(referer.to_string())
     }
 }
 
@@ -385,9 +382,12 @@ fn parse_range(
     let mut start = 0;
     let mut end = file_size - 1;
     if let Some(range_value) = range_header {
-        let range_value = range_value.to_str().unwrap();
+        let range_value = range_value
+            .to_str()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         // 仅支持单个range，不支持多个range
-        let re = Regex::new(r"^bytes=(\d*)-(\d*)$").unwrap();
+        let re = Regex::new(r"^bytes=(\d*)-(\d*)$")
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         // 使用正则表达式匹配字符串并捕获组
         let caps = re.captures(range_value);
         match caps {
@@ -399,7 +399,9 @@ fn parse_range(
                 if left.is_empty() {
                     if !right.is_empty() {
                         // suffix-length格式，例如bytes=-100
-                        let right = right.parse::<u64>().unwrap();
+                        let right = right
+                            .parse::<u64>()
+                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
                         if right < file_size {
                             start = file_size - right;
                         } else {
@@ -409,9 +411,13 @@ fn parse_range(
                     }
                 } else {
                     // start-end格式，例如bytes=100-200或bytes=100-
-                    start = left.parse::<u64>().unwrap();
+                    start = left
+                        .parse::<u64>()
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
                     if !right.is_empty() {
-                        end = right.parse::<u64>().unwrap();
+                        end = right
+                            .parse::<u64>()
+                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
                     }
                 }
                 builder = builder
@@ -600,34 +606,40 @@ mod tests {
     #[test]
     fn test_extract_domain_from_url() {
         assert_eq!(
-            extract_search_engine_from_referer("https://www.baidu.com/"),
+            extract_search_engine_from_referer("https://www.baidu.com/")
+                .unwrap_or("default".to_string()),
             "baidu"
         );
         assert_eq!(
-            extract_search_engine_from_referer("https://www.baidu.com"),
+            extract_search_engine_from_referer("https://www.baidu.com")
+                .unwrap_or("default".to_string()),
             "baidu"
         );
         assert_eq!(
-            extract_search_engine_from_referer("http://www.baidu.com/"),
+            extract_search_engine_from_referer("http://www.baidu.com/")
+                .unwrap_or("default".to_string()),
             "baidu"
         );
         assert_eq!(
-            extract_search_engine_from_referer("sadasdasdsadas"),
+            extract_search_engine_from_referer("sadasdasdsadas").unwrap_or("default".to_string()),
             "sadasdasdsadas"
         );
         assert_eq!(
-            extract_search_engine_from_referer("http://huaiwen.com/baidu.com/bing.com"),
+            extract_search_engine_from_referer("http://huaiwen.com/baidu.com/bing.com")
+                .unwrap_or("default".to_string()),
             "huaiwen.com"
         );
         assert_eq!(
-            extract_search_engine_from_referer("http://huaiwenbaidu.com/baidu.com/bing.com"),
+            extract_search_engine_from_referer("http://huaiwenbaidu.com/baidu.com/bing.com")
+                .unwrap_or("default".to_string()),
             "baidu"
         );
         assert_eq!(
-            extract_search_engine_from_referer("https://www.google.com.hk/"),
+            extract_search_engine_from_referer("https://www.google.com.hk/")
+                .unwrap_or("default".to_string()),
             "google"
         );
-        assert_eq!(extract_search_engine_from_referer("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"), "bing");
+        assert_eq!(extract_search_engine_from_referer("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE").unwrap_or("default".to_string()), "bing");
     }
 
     #[test]
