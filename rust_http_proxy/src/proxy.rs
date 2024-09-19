@@ -188,7 +188,7 @@ impl ProxyHandler {
         username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let access_label = self.parse_req_meta(&req, client_socket_addr, username)?;
-        mod_http1_proxy_req(&mut req);
+        mod_http1_proxy_req(&mut req)?;
         match self
             .http1_client
             .send_request(
@@ -378,26 +378,31 @@ impl ProxyHandler {
     }
 }
 
-fn mod_http1_proxy_req(req: &mut Request<Incoming>) {
+fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     // 删除代理特有的请求头
     req.headers_mut()
         .remove(http::header::PROXY_AUTHORIZATION.to_string());
     req.headers_mut().remove("Proxy-Connection");
     // set host header
     let uri = req.uri().clone();
-    req.headers_mut().remove(HOST);
-    req.headers_mut().entry(HOST).or_insert_with(|| {
-        let hostname = uri.host().expect("authority implies host");
-        if let Some(port) = get_non_default_port(&uri) {
-            let s = format!("{}:{}", hostname, port);
-            HeaderValue::from_str(&s)
-        } else {
-            HeaderValue::from_str(hostname)
-        }
-        .expect("uri host is valid header value")
-    });
+    let hostname = uri.host().ok_or(io::Error::new(
+        ErrorKind::InvalidData,
+        "host is absent in HTTP/1.1",
+    ))?;
+    let host_header = if let Some(port) = get_non_default_port(&uri) {
+        let s = format!("{}:{}", hostname, port);
+        HeaderValue::from_str(&s)
+    } else {
+        HeaderValue::from_str(hostname)
+    }
+    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    let origin = req.headers_mut().insert(HOST, host_header.clone());
+    if Some(host_header.clone()) != origin {
+        info!("change host header: {:?} -> {:?}", origin, host_header);
+    }
     // change absoulte uri to relative uri
     origin_form(req.uri_mut());
+    Ok(())
 }
 
 fn build_upstream_req(
