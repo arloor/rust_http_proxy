@@ -188,7 +188,6 @@ impl ProxyHandler {
         req.headers_mut()
             .remove(http::header::PROXY_AUTHORIZATION.to_string());
         req.headers_mut().remove("Proxy-Connection");
-        let path_and_query = req.uri().path_and_query();
         // debug!("proxy: {:?}", req);
         let addr = match host_addr(req.uri()) {
             Some(h) => h,
@@ -206,13 +205,8 @@ impl ProxyHandler {
                 LabelImpl::new(access_label),
             )
         };
-        // http/1.1 req url
-        let mut parts = Parts::default();
-        parts.path_and_query = path_and_query.cloned();
-        let _ = mem::replace(
-            req.uri_mut(),
-            Uri::from_parts(parts).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-        );
+        // change absoulte uri to relative uri
+        origin_form(req.uri_mut());
         if let Ok(resp) = self
             .http1_client
             .send_request(req, &access_label, stream_map_func)
@@ -695,9 +689,24 @@ pub(crate) fn check_auth(
     }
     (username, authed)
 }
+
+fn origin_form(uri: &mut Uri) {
+    let path = match uri.path_and_query() {
+        Some(path) if path.as_str() != "/" => {
+            let mut parts = ::http::uri::Parts::default();
+            parts.path_and_query = Some(path.clone());
+            Uri::from_parts(parts).expect("path is valid uri")
+        }
+        _none_or_just_slash => {
+            debug_assert!(Uri::default() == "/");
+            Uri::default()
+        }
+    };
+    *uri = path
+}
+
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-
 async fn tunnel(
     upgraded: Upgraded,
     target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
