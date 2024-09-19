@@ -18,7 +18,7 @@ use crate::{
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
-use http::{header::LOCATION, Uri};
+use http::{header::LOCATION, uri::Parts, Uri};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
     body::Bytes,
@@ -188,6 +188,7 @@ impl ProxyHandler {
         req.headers_mut()
             .remove(http::header::PROXY_AUTHORIZATION.to_string());
         req.headers_mut().remove("Proxy-Connection");
+        let path_and_query = req.uri().path_and_query();
         // debug!("proxy: {:?}", req);
         let addr = match host_addr(req.uri()) {
             Some(h) => h,
@@ -205,6 +206,13 @@ impl ProxyHandler {
                 LabelImpl::new(access_label),
             )
         };
+        // http/1.1 req url
+        let mut parts = Parts::default();
+        parts.path_and_query = path_and_query.cloned();
+        let _ = mem::replace(
+            req.uri_mut(),
+            Uri::from_parts(parts).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+        );
         if let Ok(resp) = self
             .http1_client
             .send_request(req, &access_label, stream_map_func)
@@ -340,14 +348,14 @@ impl ProxyHandler {
         upstream_req: Request<Incoming>,
         req_basic: &ReqBasic,
     ) -> io::Result<Response<BoxBody<Bytes, io::Error>>> {
-        let upstream_req_url = upstream_req.uri().clone();
+        let upstream_req_basic = extract_requst_basic_info(&upstream_req, self.config.over_tls)?;
         // debug!("reverse_proxy: {:?}", new_req);
         match self.reverse_client.request(upstream_req).await {
             Ok(mut resp) => {
                 handle_redirect(
                     &mut resp,
                     req_basic,
-                    upstream_req_url,
+                    &upstream_req_basic,
                     &self.redirect_bachpaths,
                 );
                 Ok(resp.map(|body| {
@@ -415,7 +423,15 @@ fn build_upstream_req(
         if ele.0 != header::HOST {
             header_map.append(ele.0.clone(), ele.1.clone());
         } else {
-            info!("remove host header: {:?}", ele.1);
+            let scheme_and_authority = location_config.upstream.scheme_and_authority.clone();
+            let uri = scheme_and_authority
+                .parse::<Uri>()
+                .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+            info!("replace host header {:?} with {:?}", ele.1, uri.authority());
+            header_map.append(
+                ele.0.clone(),
+                HeaderValue::from_str(uri.authority().unwrap().as_str()).unwrap(),
+            );
         }
     }
     builder
@@ -453,7 +469,10 @@ fn extract_requst_basic_info(
             scheme: scheme.to_owned(),
             host: uri
                 .host()
-                .ok_or(io::Error::new(ErrorKind::InvalidData, "host not in url"))?
+                .ok_or(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "authority is absent in HTTP/2",
+                ))?
                 .to_string(),
             port: uri.port_u16(),
         })
@@ -461,7 +480,10 @@ fn extract_requst_basic_info(
         let mut split = req
             .headers()
             .get(http::header::HOST)
-            .ok_or(io::Error::new(ErrorKind::InvalidData, "Host Header is absent in HTTP/1.1"))?
+            .ok_or(io::Error::new(
+                ErrorKind::InvalidData,
+                "Host Header is absent in HTTP/1.1",
+            ))?
             .to_str()
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?
             .split(':');
@@ -487,14 +509,14 @@ fn extract_requst_basic_info(
 fn handle_redirect(
     resp: &mut Response<Incoming>,
     req_basic: &ReqBasic,
-    upstream_req_uri: Uri,
+    upstream_req_basic: &ReqBasic,
     redirect_bachpaths: &[RedirectBackpaths],
 ) {
     if resp.status().is_redirection() {
         let headers = resp.headers_mut();
         if let Some(redirect_location) = headers.get_mut(LOCATION) {
             if let Some(absolute_redirect_location) =
-                ensure_absolute(redirect_location, &upstream_req_uri)
+                ensure_absolute(redirect_location, upstream_req_basic)
             {
                 if let Some(replacement) =
                     lookup(req_basic, absolute_redirect_location, redirect_bachpaths)
@@ -550,17 +572,15 @@ fn lookup(
     None
 }
 
-fn ensure_absolute(location_header: &mut HeaderValue, upstream_url: &Uri) -> Option<String> {
+fn ensure_absolute(
+    location_header: &mut HeaderValue,
+    upstream_req_basic: &ReqBasic,
+) -> Option<String> {
     if let Ok(location) = location_header.to_str() {
         if let Ok(redirect_url) = location.parse::<Uri>() {
             if redirect_url.scheme_str().is_none() {
                 //相对路径
-                return Some(format!(
-                    "{}://{}{}",
-                    upstream_url.scheme_str().unwrap(),
-                    upstream_url.authority().unwrap(),
-                    location
-                ));
+                return Some(format!("{}{}", upstream_req_basic, location));
             } else {
                 return Some(location.to_string());
             }
