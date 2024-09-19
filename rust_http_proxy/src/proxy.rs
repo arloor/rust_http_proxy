@@ -428,7 +428,7 @@ fn build_upstream_req(
         path_and_query
     );
 
-    let mut builder = Request::builder().method(method).uri(url.clone()).version(
+    let mut builder = Request::builder().method(method).uri(url).version(
         if !location_config
             .upstream
             .scheme_and_authority
