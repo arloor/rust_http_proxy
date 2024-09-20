@@ -371,12 +371,28 @@ impl ProxyHandler {
             .starts_with(upstream_scheme_and_authority));
         match self.reverse_client.request(upstream_req).await {
             Ok(mut resp) => {
-                handle_redirect(
-                    &mut resp,
-                    origin_req_basic,
-                    upstream_scheme_and_authority,
-                    &self.redirect_bachpaths,
-                )?;
+                if resp.status().is_redirection() {
+                    let headers = resp.headers_mut();
+                    let redirect_location = headers.get_mut(LOCATION).ok_or(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "LOCATION absent when 30x",
+                    ))?;
+
+                    let absolute_redirect_location =
+                        ensure_absolute(redirect_location, upstream_scheme_and_authority)?;
+                    if let Some(replacement) = lookup_replacement(
+                        origin_req_basic,
+                        absolute_redirect_location,
+                        &self.redirect_bachpaths,
+                    ) {
+                        let origin = headers.insert(
+                            LOCATION,
+                            HeaderValue::from_str(replacement.as_str())
+                                .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+                        );
+                        info!("redirect to [{}], origin is [{:?}]", replacement, origin);
+                    }
+                }
                 Ok(resp.map(|body| {
                     body.map_err(|e| {
                         let e = e;
@@ -555,47 +571,19 @@ fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
-fn handle_redirect(
-    resp: &mut Response<Incoming>,
-    req_basic: &ReqBasic,
-    upstream_scheme_and_authority: &String,
-    redirect_bachpaths: &[RedirectBackpaths],
-) -> io::Result<()> {
-    if resp.status().is_redirection() {
-        let headers = resp.headers_mut();
-        let redirect_location = headers.get_mut(LOCATION).ok_or(io::Error::new(
-            ErrorKind::InvalidData,
-            "LOCATION absent when 30x",
-        ))?;
-
-        let absolute_redirect_location =
-            ensure_absolute(redirect_location, upstream_scheme_and_authority)?;
-        if let Some(replacement) = lookup(req_basic, absolute_redirect_location, redirect_bachpaths)
-        {
-            let origin = headers.insert(
-                LOCATION,
-                HeaderValue::from_str(replacement.as_str())
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-            );
-            info!("redirect to [{}], origin is [{:?}]", replacement, origin);
-        }
-    }
-    Ok(())
-}
-
 struct RedirectBackpaths {
     redirect_url: String,
     host: String,
     location: String,
 }
 
-fn lookup(
+fn lookup_replacement(
     req_basic: &ReqBasic,
-    absolute_location: String,
+    absolute_redirect_location: String,
     redirect_bachpaths: &[RedirectBackpaths],
 ) -> Option<String> {
     for ele in redirect_bachpaths.iter() {
-        if absolute_location.starts_with(ele.redirect_url.as_str()) {
+        if absolute_redirect_location.starts_with(ele.redirect_url.as_str()) {
             info!(
                 "redirect back path for {}** is {}",
                 ele.redirect_url,
@@ -616,7 +604,7 @@ fn lookup(
                 + host // if it's default_host, use raw request's host
                 + &port_part // use raw request's port if available
                 + &ele.location
-                + &absolute_location[ele.redirect_url.len()..],
+                + &absolute_redirect_location[ele.redirect_url.len()..],
             );
         }
     }
