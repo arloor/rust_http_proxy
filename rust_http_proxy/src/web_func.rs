@@ -221,7 +221,13 @@ async fn serve_metrics(
             .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
             .header(http::header::SERVER, SERVER_NAME);
         if can_gzip {
-            let compressed_data = compress_string(&buffer);
+            let compressed_data = match compress_string(&buffer) {
+                Ok(compressed_data) => compressed_data,
+                Err(e) => {
+                    warn!("compress metrics error: {}", e);
+                    return Ok(build_500_resp());
+                }
+            };
             builder
                 .header(http::header::CONTENT_ENCODING, GZIP)
                 .body(full_body(compressed_data))
@@ -561,7 +567,13 @@ async fn _speed(
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8");
     if can_gzip {
-        let compressed_data = compress_string(&body);
+        let compressed_data = match compress_string(&body) {
+            Ok(compressed_data) => compressed_data,
+            Err(e) => {
+                warn!("compress body error: {}", e);
+                return Ok(build_500_resp());
+            }
+        };
         builder
             .header(http::header::CONTENT_ENCODING, GZIP)
             .body(full_body(compressed_data))
@@ -580,24 +592,20 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io::prelude::*;
 
-fn compress_string(input: &str) -> Vec<u8> {
+fn compress_string(input: &str) -> io::Result<Vec<u8>> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(input.as_bytes())
-        .expect("Failed to write data");
-    encoder.finish().expect("Failed to finish compression")
+    encoder.write_all(input.as_bytes())?;
+    encoder.finish()
 }
 
 #[allow(unused)]
 use flate2::read::GzDecoder;
 #[allow(unused)]
-fn decompress_string(input: &[u8]) -> String {
+fn decompress_string(input: &[u8]) -> io::Result<String> {
     let mut decoder = GzDecoder::new(input);
     let mut decompressed_data = String::new();
-    decoder
-        .read_to_string(&mut decompressed_data)
-        .expect("Failed to read data");
-    decompressed_data
+    decoder.read_to_string(&mut decompressed_data)?;
+    Ok(decompressed_data)
 }
 
 #[cfg(test)]
@@ -643,11 +651,12 @@ mod tests {
     }
 
     #[test]
-    fn test_gzip_compress_string() {
+    fn test_gzip_compress_string() -> io::Result<()> {
         let original_string = "Hello, Rust! This is a test string for Gzip compression.";
-        let compressed_data = compress_string(original_string);
-        let decompressed_string = decompress_string(&compressed_data);
+        let compressed_data = compress_string(original_string)?;
+        let decompressed_string = decompress_string(&compressed_data)?;
 
         assert_eq!(original_string, decompressed_string);
+        Ok(())
     }
 }

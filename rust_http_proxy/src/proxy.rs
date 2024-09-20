@@ -407,7 +407,7 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
         info!("change host header: {:?} -> {:?}", origin, host_header);
     }
     // change absoulte uri to relative uri
-    origin_form(req.uri_mut());
+    origin_form(req.uri_mut())?;
     Ok(())
 }
 
@@ -746,19 +746,20 @@ pub(crate) fn check_auth(
     (username, authed)
 }
 
-fn origin_form(uri: &mut Uri) {
+fn origin_form(uri: &mut Uri) -> io::Result<()> {
     let path = match uri.path_and_query() {
         Some(path) if path.as_str() != "/" => {
             let mut parts = ::http::uri::Parts::default();
             parts.path_and_query = Some(path.clone());
-            Uri::from_parts(parts).expect("path is valid uri")
+            Uri::from_parts(parts).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?
         }
         _none_or_just_slash => {
             debug_assert!(Uri::default() == "/");
             Uri::default()
         }
     };
-    *uri = path
+    *uri = path;
+    Ok(())
 }
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
