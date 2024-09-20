@@ -19,7 +19,6 @@ use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use http::{
     header::{HOST, LOCATION},
-    uri::{Authority, Parts, Scheme},
     Uri,
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -135,7 +134,13 @@ impl ProxyHandler {
                         &upstream_req.uri(),
                         upstream_req.version(),
                     );
-                    return self.reverse_proxy(upstream_req, &req_basic).await;
+                    return self
+                        .reverse_proxy(
+                            upstream_req,
+                            &location_config.upstream.scheme_and_authority,
+                            &req_basic,
+                        )
+                        .await;
                 }
             }
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
@@ -357,15 +362,19 @@ impl ProxyHandler {
     async fn reverse_proxy(
         &self,
         upstream_req: Request<Incoming>,
+        upstream_scheme_and_authority: &String,
         origin_req_basic: &ReqBasic,
     ) -> io::Result<Response<BoxBody<Bytes, io::Error>>> {
-        let upstream_uri_parts = upstream_req.uri().clone().into_parts();
+        debug_assert!(upstream_req
+            .uri()
+            .to_string()
+            .starts_with(upstream_scheme_and_authority));
         match self.reverse_client.request(upstream_req).await {
             Ok(mut resp) => {
                 handle_redirect(
                     &mut resp,
                     origin_req_basic,
-                    &(upstream_uri_parts.scheme, upstream_uri_parts.authority),
+                    upstream_scheme_and_authority,
                     &self.redirect_bachpaths,
                 )?;
                 Ok(resp.map(|body| {
@@ -549,26 +558,26 @@ fn is_schema_secure(uri: &Uri) -> bool {
 fn handle_redirect(
     resp: &mut Response<Incoming>,
     req_basic: &ReqBasic,
-    upstream_uri_parts: &(Option<Scheme>, Option<Authority>),
+    upstream_scheme_and_authority: &String,
     redirect_bachpaths: &[RedirectBackpaths],
 ) -> io::Result<()> {
     if resp.status().is_redirection() {
         let headers = resp.headers_mut();
-        if let Some(redirect_location) = headers.get_mut(LOCATION) {
-            if let Some(absolute_redirect_location) =
-                ensure_absolute(redirect_location, upstream_uri_parts)
-            {
-                if let Some(replacement) =
-                    lookup(req_basic, absolute_redirect_location, redirect_bachpaths)
-                {
-                    let origin = headers.insert(
-                        LOCATION,
-                        HeaderValue::from_str(replacement.as_str())
-                            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-                    );
-                    info!("redirect to [{}], origin is [{:?}]", replacement, origin);
-                }
-            }
+        let redirect_location = headers.get_mut(LOCATION).ok_or(io::Error::new(
+            ErrorKind::InvalidData,
+            "LOCATION absent when 30x",
+        ))?;
+
+        let absolute_redirect_location =
+            ensure_absolute(redirect_location, upstream_scheme_and_authority)?;
+        if let Some(replacement) = lookup(req_basic, absolute_redirect_location, redirect_bachpaths)
+        {
+            let origin = headers.insert(
+                LOCATION,
+                HeaderValue::from_str(replacement.as_str())
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+            );
+            info!("redirect to [{}], origin is [{:?}]", replacement, origin);
         }
     }
     Ok(())
@@ -616,22 +625,19 @@ fn lookup(
 
 fn ensure_absolute(
     location_header: &mut HeaderValue,
-    upstream_uri_parts: &(Option<Scheme>, Option<Authority>),
-) -> Option<String> {
-    if let Ok(location) = location_header.to_str() {
-        if let Ok(redirect_url) = location.parse::<Uri>() {
-            if redirect_url.scheme_str().is_none() {
-                let mut parts = Parts::default();
-                parts.scheme = upstream_uri_parts.0.clone();
-                parts.authority = upstream_uri_parts.1.clone();
-                parts.path_and_query = redirect_url.path_and_query().cloned();
-                return Uri::from_parts(parts).ok().map(|uri| uri.to_string());
-            } else {
-                return Some(location.to_string());
-            }
-        }
+    upstream_scheme_and_authority: &String,
+) -> io::Result<String> {
+    let location = location_header
+        .to_str()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    let redirect_url = location
+        .parse::<Uri>()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    if redirect_url.scheme_str().is_none() {
+        Ok(format!("{}{}", upstream_scheme_and_authority, location))
+    } else {
+        Ok(location.to_string())
     }
-    None
 }
 
 fn pick_location<'b>(path: &str, locations: &'b [LocationConfig]) -> Option<&'b LocationConfig> {
