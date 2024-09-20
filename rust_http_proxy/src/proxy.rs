@@ -371,7 +371,7 @@ impl ProxyHandler {
             .starts_with(upstream_scheme_and_authority));
         match self.reverse_client.request(upstream_req).await {
             Ok(mut resp) => {
-                if resp.status().is_redirection() {
+                if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
                     let headers = resp.headers_mut();
                     let redirect_location = headers.get_mut(LOCATION).ok_or(io::Error::new(
                         ErrorKind::InvalidData,
