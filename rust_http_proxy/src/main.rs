@@ -1,14 +1,16 @@
 #![deny(warnings)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 mod acceptor;
-mod ip_x;
-mod net_monitor;
-mod proxy;
-mod tls_helper;
-mod web_func;
 mod address;
 mod config;
 mod http1_client;
+mod ip_x;
+mod net_monitor;
+mod proxy;
 mod reverse;
+mod tls_helper;
+mod web_func;
 
 use crate::config::Config;
 
@@ -119,6 +121,7 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
         loop {
             tokio::select! {
                 message = rx.recv() => {
+                    #[allow(clippy::expect_used)]
                     let new_config = message.expect("Channel should not be closed");
                     info!("tls config is updated for port:{}",port);
                     // Replace the acceptor with the new one
