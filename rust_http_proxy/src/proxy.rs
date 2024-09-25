@@ -61,16 +61,17 @@ pub(crate) struct Metrics {
     pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
+    #[cfg(feature = "bpf")]
+    pub(crate) cgroup_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
 const DEFAULT_HOST: &str = "default_host";
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
-    pub fn new(config: Config) -> ProxyHandler {
+    #[allow(clippy::expect_used)]
+    pub fn new(config: Config) -> Result<Self, crate::DynError> {
         let mut registry = Registry::default();
         let metrics = register_metrics(&mut registry);
-        let monitor: NetMonitor = NetMonitor::new();
-        monitor.start();
 
         let reverse_client = build_hyper_legacy_client();
         let http1_client = HttpClient::<Incoming>::new();
@@ -91,7 +92,17 @@ impl ProxyHandler {
             debug!("find redirect back path for: {}**", ele.redirect_url);
         }
 
-        ProxyHandler {
+        #[cfg(feature = "bpf")]
+        let (cgroup_transmit_counter, _links) = cgroup_traffic::attach_self_cgroup()?;
+        #[cfg(feature = "bpf")]
+        Box::leak(Box::new(_links)); // 让link永远存活
+        let monitor: NetMonitor = NetMonitor::new(
+            #[cfg(feature = "bpf")]
+            cgroup_transmit_counter,
+        );
+        monitor.start();
+
+        Ok(ProxyHandler {
             prom_registry: registry,
             metrics,
             net_monitor: monitor,
@@ -99,7 +110,7 @@ impl ProxyHandler {
             http1_client,
             config,
             redirect_bachpaths,
-        }
+        })
     }
     pub async fn proxy(
         &self,
@@ -673,6 +684,11 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     registry.register("net_bytes", "num net_bytes", net_bytes.clone());
 
+    #[cfg(feature = "bpf")]
+    let cgroup_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
+    #[cfg(feature = "bpf")]
+    registry.register("cgroup_bytes", "num cgroup_bytes", cgroup_bytes.clone());
+
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
     // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
 
@@ -680,6 +696,8 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
         http_req_counter,
         proxy_traffic,
         net_bytes,
+        #[cfg(feature = "bpf")]
+        cgroup_bytes,
     }
 }
 

@@ -4,6 +4,7 @@ resolver = "2"
 
 [workspace.dependencies]
 socket_filter = { git = "https://github.com/arloor/bpf_rs_hub.git" }
+cgroup_traffic = { git = "https://github.com/arloor/bpf_rs_hub.git" }
 prometheus-client = "0.22"
 pin-project-lite = "0.2"
 log = "0.4"

@@ -25,15 +25,31 @@ pub(crate) const IGNORED_INTERFACES: [&str; 7] =
 
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
+    #[cfg(feature = "bpf")]
+    cgroup_transmit_counter: cgroup_traffic::CgroupTransmitCounter,
 }
 const TOTAL_SECONDS: u64 = 900;
 const INTERVAL_SECONDS: u64 = 5;
 const SIZE: usize = TOTAL_SECONDS as usize / INTERVAL_SECONDS as usize;
 impl NetMonitor {
-    pub fn new() -> NetMonitor {
+    pub fn new(
+        #[cfg(feature = "bpf")] cgroup_transmit_counter: cgroup_traffic::CgroupTransmitCounter,
+    ) -> NetMonitor {
         NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
+            #[cfg(feature = "bpf")]
+            cgroup_transmit_counter,
         }
+    }
+
+    #[cfg(feature = "bpf")]
+    pub(crate) fn get_cgroup_egress(&self) -> u64 {
+        self.cgroup_transmit_counter.get_egress()
+    }
+
+    #[cfg(feature = "bpf")]
+    pub(crate) fn get_cgroup_ingress(&self) -> u64 {
+        self.cgroup_transmit_counter.get_ingress()
     }
 
     pub async fn _fetch_all(&self) -> Vec<TimeValue> {

@@ -101,7 +101,15 @@ pub async fn serve_http_request(
             if !authed {
                 return Ok(build_authenticate_resp(false));
             }
-            serve_metrics(prom_registry, _net_monitor, &metrics.net_bytes, can_gzip).await
+            serve_metrics(
+                prom_registry,
+                _net_monitor,
+                &metrics.net_bytes,
+                #[cfg(feature = "bpf")]
+                &metrics.cgroup_bytes,
+                can_gzip,
+            )
+            .await
         }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
@@ -186,6 +194,7 @@ async fn serve_metrics(
     registry: &Registry,
     _net_monitor: &NetMonitor,
     _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
+    #[cfg(feature = "bpf")] _cgroup_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
     can_gzip: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     #[cfg(feature = "bpf")]
@@ -206,6 +215,25 @@ async fn serve_metrics(
             .inner()
             .store(
                 crate::net_monitor::get_ingress(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+
+        _cgroup_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel {
+                direction: "egress",
+            }))
+            .inner()
+            .store(
+                _net_monitor.get_cgroup_egress(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        _cgroup_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel {
+                direction: "ingress",
+            }))
+            .inner()
+            .store(
+                _net_monitor.get_cgroup_ingress(),
                 std::sync::atomic::Ordering::Relaxed,
             );
     }

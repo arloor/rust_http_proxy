@@ -56,7 +56,7 @@ static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0
 async fn main() -> Result<(), DynError> {
     let proxy_config: Config = load_config()?;
     let ports = proxy_config.port.clone();
-    let proxy_handler = Arc::new(ProxyHandler::new(proxy_config));
+    let proxy_handler = Arc::new(ProxyHandler::new(proxy_config)?);
     #[cfg(feature = "jemalloc")]
     info!("jemalloc is enabled");
     handle_signal()?;
