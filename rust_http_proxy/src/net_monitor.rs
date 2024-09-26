@@ -36,7 +36,7 @@ impl NetMonitor {
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
             #[cfg(feature = "bpf")]
-            cgroup_transmit_counter: init_cgroup_traffic_monitor()?,
+            cgroup_transmit_counter: cgroup_traffic::init_self_cgroup_skb_monitor()?,
         })
     }
 
@@ -136,27 +136,4 @@ pub fn get_egress() -> u64 {
     } else {
         0
     }
-}
-#[cfg(feature = "bpf")]
-fn init_cgroup_traffic_monitor() -> Result<cgroup_traffic::CgroupTransmitCounter, crate::DynError> {
-    let open_object = Box::leak(Box::new(std::mem::MaybeUninit::uninit()));
-    let mut cgroup_transmit_counter = cgroup_traffic::attach_self_cgroup(open_object)?;
-    let cgroup = cgroup_traffic::get_self_cgroup()?;
-    log::info!(
-        "attach to self's cgroup: [ {} ], pids: {:?}",
-        cgroup.0,
-        cgroup.1
-    );
-    let f = std::fs::OpenOptions::new()
-        .read(true)
-        .write(false)
-        .open(cgroup.0)?;
-    use std::os::fd::AsRawFd;
-    let cgroup_fd = f.as_raw_fd();
-    let progs = &mut cgroup_transmit_counter.skel.progs;
-    let link_egress = progs.count_egress_packets.attach_cgroup(cgroup_fd)?;
-    Box::leak(Box::new(link_egress));
-    let link_ingress = progs.count_ingress_packets.attach_cgroup(cgroup_fd)?;
-    Box::leak(Box::new(link_ingress));
-    Ok(cgroup_transmit_counter)
 }
