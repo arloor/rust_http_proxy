@@ -152,7 +152,7 @@ impl ProxyHandler {
                 // http2.0肯定是over tls的，所以不是普通GET/POST代理请求。
                 // URL中不包含host（GET / HTTP/1.1）也不是普通GET/POST代理请求。
                 return self
-                    .serve_static(
+                    .serve_request(
                         &req,
                         config_basic_auth,
                         never_ask_for_auth,
@@ -332,7 +332,7 @@ impl ProxyHandler {
         }
     }
 
-    async fn serve_static(
+    async fn serve_request(
         &self,
         req: &Request<Incoming>,
         config_basic_auth: &HashMap<String, String>,

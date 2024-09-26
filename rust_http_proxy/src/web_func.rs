@@ -86,13 +86,12 @@ pub async fn serve_http_request(
         #[cfg(target_os = "linux")]
         (_, "/net") => _speed(&proxy_handler.net_monitor, _hostname, can_gzip).await,
         (_, "/metrics") => {
-            let (_, authed) = check_auth(
+            if let (_, false) = check_auth(
                 &proxy_handler.config.basic_auth,
                 req,
                 &client_socket_addr,
                 hyper::header::AUTHORIZATION,
-            );
-            if !authed {
+            ) {
                 return Ok(build_authenticate_resp(false));
             }
             #[cfg(feature = "bpf")]
