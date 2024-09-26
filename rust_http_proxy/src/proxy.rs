@@ -717,11 +717,11 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     #[cfg(feature = "bpf")]
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     #[cfg(feature = "bpf")]
-    registry.register("net_bytes", "num net_bytes", net_bytes.clone());
+    registry.register("net_bytes", "num hosts net traffic in bytes", net_bytes.clone());
     #[cfg(feature = "bpf")]
     let cgroup_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     #[cfg(feature = "bpf")]
-    registry.register("cgroup_bytes", "num cgroup_bytes", cgroup_bytes.clone());
+    registry.register("cgroup_bytes", "num this cgroup's net traffic in bytes", cgroup_bytes.clone());
 
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
     // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
