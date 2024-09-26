@@ -49,9 +49,9 @@ use tokio::{net::TcpStream, pin};
 
 pub struct ProxyHandler {
     pub(crate) config: Config,
-    prom_registry: Registry,
-    metrics: Metrics,
-    net_monitor: NetMonitor,
+    pub(crate) prom_registry: Registry,
+    pub(crate) metrics: Metrics,
+    pub(crate) net_monitor: NetMonitor,
     http1_client: HttpClient<Incoming>,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     redirect_bachpaths: Vec<RedirectBackpaths>,
@@ -60,6 +60,7 @@ pub struct ProxyHandler {
 pub(crate) struct Metrics {
     pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
+    #[cfg(feature = "bpf")]
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
     #[cfg(feature = "bpf")]
     pub(crate) cgroup_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
@@ -350,17 +351,9 @@ impl ProxyHandler {
                 "reject http GET/POST when ask_for_auth and basic_auth not empty",
             ));
         }
-        web_func::serve_http_request(
-            req,
-            client_socket_addr,
-            &self.config,
-            path,
-            &self.net_monitor,
-            &self.metrics,
-            &self.prom_registry,
-        )
-        .await
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+        web_func::serve_http_request(self, req, client_socket_addr, path)
+            .await
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
 
     async fn reverse_proxy(
@@ -409,6 +402,53 @@ impl ProxyHandler {
                 warn!("reverse_proxy error: {:?}", e);
                 Err(io::Error::new(ErrorKind::InvalidData, e))
             }
+        }
+    }
+
+    #[cfg(feature = "bpf")]
+    pub(crate) fn snapshot_metrics(&self) {
+        {
+            self.metrics
+                .net_bytes
+                .get_or_create(&LabelImpl::new(NetDirectionLabel {
+                    direction: "egress",
+                }))
+                .inner()
+                .store(
+                    crate::net_monitor::get_egress(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            self.metrics
+                .net_bytes
+                .get_or_create(&LabelImpl::new(NetDirectionLabel {
+                    direction: "ingress",
+                }))
+                .inner()
+                .store(
+                    crate::net_monitor::get_ingress(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+
+            self.metrics
+                .cgroup_bytes
+                .get_or_create(&LabelImpl::new(NetDirectionLabel {
+                    direction: "egress",
+                }))
+                .inner()
+                .store(
+                    self.net_monitor.get_cgroup_egress(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            self.metrics
+                .cgroup_bytes
+                .get_or_create(&LabelImpl::new(NetDirectionLabel {
+                    direction: "ingress",
+                }))
+                .inner()
+                .store(
+                    self.net_monitor.get_cgroup_ingress(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
         }
     }
 }
@@ -674,9 +714,10 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     );
     let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
     registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
+    #[cfg(feature = "bpf")]
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
+    #[cfg(feature = "bpf")]
     registry.register("net_bytes", "num net_bytes", net_bytes.clone());
-
     #[cfg(feature = "bpf")]
     let cgroup_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     #[cfg(feature = "bpf")]
@@ -688,6 +729,7 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     Metrics {
         http_req_counter,
         proxy_traffic,
+        #[cfg(feature = "bpf")]
         net_bytes,
         #[cfg(feature = "bpf")]
         cgroup_bytes,

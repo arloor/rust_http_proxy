@@ -4,10 +4,8 @@ use crate::proxy::build_authenticate_resp;
 use crate::proxy::check_auth;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
-use crate::proxy::Metrics;
-use crate::proxy::NetDirectionLabel;
+use crate::proxy::ProxyHandler;
 use crate::proxy::ReqLabels;
-use crate::Config;
 use http::response::Builder;
 use prom_label::LabelImpl;
 
@@ -42,18 +40,14 @@ const SERVER_NAME: &str = "arloor's creation";
 
 static GZIP: &str = "gzip";
 
-#[allow(clippy::too_many_arguments)]
 pub async fn serve_http_request(
+    proxy_handler: &ProxyHandler,
     req: &Request<impl Body>,
     client_socket_addr: SocketAddr,
-    proxy_config: &Config,
     path: &str,
-    _net_monitor: &NetMonitor,
-    metrics: &Metrics,
-    prom_registry: &Registry,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let web_content_path = &proxy_config.web_content_path;
-    let refer = &proxy_config.referer;
+    let web_content_path = &proxy_handler.config.web_content_path;
+    let refer = &proxy_handler.config.referer;
     let referer_header = req
         .headers()
         .get(REFERER)
@@ -73,7 +67,7 @@ pub async fn serve_http_request(
             return not_found();
         }
     }
-    let _hostname = &proxy_config.hostname;
+    let _hostname = &proxy_handler.config.hostname;
     let _hostname = req
         .uri()
         .authority()
@@ -88,12 +82,12 @@ pub async fn serve_http_request(
         #[cfg(target_os = "linux")]
         (_, "/nt") => _count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/speed") => _speed(_net_monitor, _hostname, can_gzip).await,
+        (_, "/speed") => _speed(&proxy_handler.net_monitor, _hostname, can_gzip).await,
         #[cfg(target_os = "linux")]
-        (_, "/net") => _speed(_net_monitor, _hostname, can_gzip).await,
+        (_, "/net") => _speed(&proxy_handler.net_monitor, _hostname, can_gzip).await,
         (_, "/metrics") => {
             let (_, authed) = check_auth(
-                &proxy_config.basic_auth,
+                &proxy_handler.config.basic_auth,
                 req,
                 &client_socket_addr,
                 hyper::header::AUTHORIZATION,
@@ -101,15 +95,9 @@ pub async fn serve_http_request(
             if !authed {
                 return Ok(build_authenticate_resp(false));
             }
-            serve_metrics(
-                prom_registry,
-                _net_monitor,
-                &metrics.net_bytes,
-                #[cfg(feature = "bpf")]
-                &metrics.cgroup_bytes,
-                can_gzip,
-            )
-            .await
+            #[cfg(feature = "bpf")]
+            proxy_handler.snapshot_metrics();
+            serve_metrics(&proxy_handler.prom_registry, can_gzip).await
         }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
@@ -136,7 +124,7 @@ pub async fn serve_http_request(
                 &r,
                 is_outer_view_html,
                 is_shell,
-                &metrics.http_req_counter,
+                &proxy_handler.metrics.http_req_counter,
                 referer_header,
                 path,
             );
@@ -191,54 +179,11 @@ fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Er
 }
 
 async fn serve_metrics(
-    registry: &Registry,
-    _net_monitor: &NetMonitor,
-    _net_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
-    #[cfg(feature = "bpf")] _cgroup_bytes: &Family<LabelImpl<NetDirectionLabel>, Counter>,
+    prom_registry: &Registry,
     can_gzip: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    #[cfg(feature = "bpf")]
-    {
-        _net_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel {
-                direction: "egress",
-            }))
-            .inner()
-            .store(
-                crate::net_monitor::get_egress(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        _net_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel {
-                direction: "ingress",
-            }))
-            .inner()
-            .store(
-                crate::net_monitor::get_ingress(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-
-        _cgroup_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel {
-                direction: "egress",
-            }))
-            .inner()
-            .store(
-                _net_monitor.get_cgroup_egress(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        _cgroup_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel {
-                direction: "ingress",
-            }))
-            .inner()
-            .store(
-                _net_monitor.get_cgroup_ingress(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-    }
     let mut buffer = String::new();
-    if let Err(e) = encode(&mut buffer, registry) {
+    if let Err(e) = encode(&mut buffer, prom_registry) {
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .header(http::header::SERVER, SERVER_NAME)
