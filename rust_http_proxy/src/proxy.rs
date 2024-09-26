@@ -92,14 +92,7 @@ impl ProxyHandler {
             debug!("find redirect back path for: {}**", ele.redirect_url);
         }
 
-        #[cfg(feature = "bpf")]
-        let (cgroup_transmit_counter, _links) = cgroup_traffic::attach_self_cgroup()?;
-        #[cfg(feature = "bpf")]
-        Box::leak(Box::new(_links)); // 让link永远存活
-        let monitor: NetMonitor = NetMonitor::new(
-            #[cfg(feature = "bpf")]
-            cgroup_transmit_counter,
-        );
+        let monitor: NetMonitor = NetMonitor::new()?;
         monitor.start();
 
         Ok(ProxyHandler {
