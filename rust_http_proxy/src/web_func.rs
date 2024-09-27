@@ -1,5 +1,4 @@
 use crate::ip_x::SocketAddrFormat;
-use crate::linux_monitor::SERVER_NAME;
 use crate::proxy::build_authenticate_resp;
 use crate::proxy::check_auth;
 use crate::proxy::empty_body;
@@ -36,6 +35,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio_util::io::ReaderStream;
 
 pub(crate) static GZIP: &str = "gzip";
+pub(crate) const SERVER_NAME: &str = "arloor's creation";
 
 pub async fn serve_http_request(
     proxy_handler: &ProxyHandler,

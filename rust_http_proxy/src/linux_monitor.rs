@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
 use crate::proxy::full_body;
-use crate::web_func::{build_500_resp, GZIP};
+use crate::web_func::{build_500_resp, GZIP, SERVER_NAME};
 
 #[derive(Debug, Clone)]
 pub struct TimeValue {
@@ -191,7 +191,6 @@ impl NetMonitor {
     }
 }
 
-pub(crate) const SERVER_NAME: &str = "arloor's creation";
 pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     match std::process::Command::new("sh")
             .arg("-c")
