@@ -1,4 +1,5 @@
 use crate::ip_x::SocketAddrFormat;
+use crate::linux_monitor::SERVER_NAME;
 use crate::proxy::build_authenticate_resp;
 use crate::proxy::check_auth;
 use crate::proxy::empty_body;
@@ -34,9 +35,7 @@ use tokio::fs::{metadata, File};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio_util::io::ReaderStream;
 
-const SERVER_NAME: &str = "arloor's creation";
-
-static GZIP: &str = "gzip";
+pub(crate) static GZIP: &str = "gzip";
 
 pub async fn serve_http_request(
     proxy_handler: &ProxyHandler,
@@ -82,9 +81,7 @@ pub async fn serve_http_request(
         #[cfg(target_os = "linux")]
         (_, "/nt") => crate::linux_monitor::count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/net") => {
-            crate::linux_monitor::speed(&proxy_handler.net_monitor, hostname, can_gzip).await
-        }
+        (_, "/net") => proxy_handler.linux_monitor.speed(hostname, can_gzip).await,
         (_, "/metrics") => {
             if let (_, false) = check_auth(
                 &proxy_handler.config.basic_auth,
@@ -472,17 +469,11 @@ fn not_modified(last_modified: SystemTime) -> Result<Response<BoxBody<Bytes, io:
         .header(http::header::SERVER, SERVER_NAME)
         .body(empty_body())
 }
-
-const _PART0: &str = include_str!("../html/part0.html");
-const _PART1: &str = include_str!("../html/part1.html");
-const _PART2: &str = include_str!("../html/part2.html");
-const _PART3: &str = include_str!("../html/part3.html");
-const _PART4: &str = include_str!("../html/part4.html");
 const H404: &str = include_str!("../html/404.html");
 const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
 static BOOTUP_TIME: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
 
-fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
+pub(crate) fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     let mut resp = Response::new(full_body("Internal Server Error"));
     *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
     resp
@@ -492,7 +483,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io::prelude::*;
 
-fn compress_string(input: &str) -> io::Result<Vec<u8>> {
+pub(crate) fn compress_string(input: &str) -> io::Result<Vec<u8>> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(input.as_bytes())?;
     encoder.finish()

@@ -1,11 +1,19 @@
 // only compile in linux.
 
 use chrono::{DateTime, Local};
+use http::{Error, Response, StatusCode};
+use http_body_util::combinators::BoxBody;
+use hyper::body::Bytes;
+use log::warn;
 use std::collections::VecDeque;
 
+use std::io;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
+
+use crate::proxy::full_body;
+use crate::web_func::{build_500_resp, GZIP};
 
 #[derive(Debug, Clone)]
 pub struct TimeValue {
@@ -160,14 +168,14 @@ impl NetMonitor {
         }
         let body = format!(
             "{} {}网速 {} {:?} {} {} {}  {:?} {}",
-            _PART0, hostname, _PART1, scales, _PART2, interval, _PART3, series_up, _PART4
+            PART0, hostname, PART1, scales, PART2, interval, PART3, series_up, PART4
         );
         let builder = Response::builder()
             .status(StatusCode::OK)
             .header(http::header::SERVER, SERVER_NAME)
             .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8");
         if can_gzip {
-            let compressed_data = match compress_string(&body) {
+            let compressed_data = match crate::web_func::compress_string(&body) {
                 Ok(compressed_data) => compressed_data,
                 Err(e) => {
                     warn!("compress body error: {}", e);
@@ -183,6 +191,7 @@ impl NetMonitor {
     }
 }
 
+pub(crate) const SERVER_NAME: &str = "arloor's creation";
 pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     match std::process::Command::new("sh")
             .arg("-c")
@@ -206,3 +215,9 @@ pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
         },
     }
 }
+
+const PART0: &str = include_str!("../html/part0.html");
+const PART1: &str = include_str!("../html/part1.html");
+const PART2: &str = include_str!("../html/part2.html");
+const PART3: &str = include_str!("../html/part3.html");
+const PART4: &str = include_str!("../html/part4.html");

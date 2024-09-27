@@ -51,7 +51,7 @@ pub struct ProxyHandler {
     pub(crate) prom_registry: Registry,
     pub(crate) metrics: Metrics,
     #[cfg(target_os = "linux")]
-    pub(crate) net_monitor: crate::linux_monitor::NetMonitor,
+    pub(crate) linux_monitor: crate::linux_monitor::NetMonitor,
     http1_client: HttpClient<Incoming>,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     redirect_bachpaths: Vec<RedirectBackpaths>,
@@ -102,7 +102,7 @@ impl ProxyHandler {
             prom_registry: registry,
             metrics,
             #[cfg(target_os = "linux")]
-            net_monitor: monitor,
+            linux_monitor: monitor,
             reverse_client,
             http1_client,
             config,
@@ -418,7 +418,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    self.net_monitor.get_egress(),
+                    self.linux_monitor.get_egress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
             self.metrics
@@ -428,7 +428,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    self.net_monitor.get_ingress(),
+                    self.linux_monitor.get_ingress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
 
@@ -439,7 +439,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    self.net_monitor.get_cgroup_egress(),
+                    self.linux_monitor.get_cgroup_egress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
             self.metrics
@@ -449,7 +449,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    self.net_monitor.get_cgroup_ingress(),
+                    self.linux_monitor.get_cgroup_ingress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
         }
