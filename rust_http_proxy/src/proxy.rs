@@ -420,7 +420,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    crate::net_monitor::get_egress(),
+                    self.net_monitor.get_egress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
             self.metrics
@@ -430,7 +430,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    crate::net_monitor::get_ingress(),
+                    self.net_monitor.get_ingress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
 

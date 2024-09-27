@@ -68,11 +68,13 @@ pub async fn serve_http_request(
             return not_found();
         }
     }
-    let _hostname = &proxy_handler.config.hostname;
-    let _hostname = req
+    #[cfg(target_os = "linux")]
+    let hostname = req
         .uri()
         .authority()
-        .map_or(_hostname.as_str(), |authority| authority.host());
+        .map_or(proxy_handler.config.hostname.as_str(), |authority| {
+            authority.host()
+        });
     let accept_encoding = req
         .headers()
         .get(http::header::ACCEPT_ENCODING)
@@ -81,11 +83,11 @@ pub async fn serve_http_request(
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         #[cfg(target_os = "linux")]
-        (_, "/nt") => _count_stream(),
+        (_, "/nt") => count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/speed") => _speed(&proxy_handler.net_monitor, _hostname, can_gzip).await,
+        (_, "/speed") => speed(&proxy_handler.net_monitor, hostname, can_gzip).await,
         #[cfg(target_os = "linux")]
-        (_, "/net") => _speed(&proxy_handler.net_monitor, _hostname, can_gzip).await,
+        (_, "/net") => speed(&proxy_handler.net_monitor, hostname, can_gzip).await,
         (_, "/metrics") => {
             if let (_, false) = check_auth(
                 &proxy_handler.config.basic_auth,
@@ -458,7 +460,8 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io
         ))
 }
 
-fn _count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+#[cfg(target_os = "linux")]
+fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     match Command::new("sh")
             .arg("-c")
             .arg(r#"
@@ -508,7 +511,7 @@ const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
 static BOOTUP_TIME: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
 
 #[cfg(target_os = "linux")]
-async fn _speed(
+async fn speed(
     net_monitor: &NetMonitor,
     hostname: &str,
     can_gzip: bool,

@@ -20,13 +20,16 @@ impl TimeValue {
     }
 }
 
-pub(crate) const IGNORED_INTERFACES: [&str; 7] =
-    ["lo", "podman", "veth", "flannel", "cni0", "utun", "docker"];
+pub(crate) const IGNORED_INTERFACES: &[&str; 7] =
+    &["lo", "podman", "veth", "flannel", "cni0", "utun", "docker"];
 
+#[derive(Clone)]
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    cgroup_transmit_counter: cgroup_traffic::CgroupTransmitCounter,
+    transmit_counter: Arc<socket_filter::TransmitCounter>,
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
+    cgroup_transmit_counter: Arc<cgroup_traffic::CgroupTransmitCounter>,
 }
 const TOTAL_SECONDS: u64 = 900;
 const INTERVAL_SECONDS: u64 = 5;
@@ -36,7 +39,11 @@ impl NetMonitor {
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
             #[cfg(all(target_os = "linux", feature = "bpf"))]
-            cgroup_transmit_counter: cgroup_traffic::init_cgroup_skb_monitor(cgroup_traffic::SELF)?,
+            cgroup_transmit_counter: Arc::new(cgroup_traffic::init_cgroup_skb_monitor(
+                cgroup_traffic::SELF,
+            )?),
+            #[cfg(all(target_os = "linux", feature = "bpf"))]
+            transmit_counter: Arc::new(socket_filter::TransmitCounter::new(IGNORED_INTERFACES)?),
         })
     }
 
@@ -50,7 +57,7 @@ impl NetMonitor {
         self.cgroup_transmit_counter.get_ingress()
     }
 
-    pub async fn _fetch_all(&self) -> Vec<TimeValue> {
+    pub(crate) async fn _fetch_all(&self) -> Vec<TimeValue> {
         let buffer = self.buffer.read().await;
         let x = buffer.as_slices();
         let mut r = vec![];
@@ -59,18 +66,18 @@ impl NetMonitor {
         r
     }
 
-    pub fn start(&self) {
+    pub(crate) fn start(&self) {
         if cfg!(target_os = "linux") {
-            let buffer = self.buffer.clone();
+            let self_clone = self.clone();
             tokio::spawn(async move {
                 let mut last: u64 = 0;
                 loop {
                     {
-                        let new = get_egress();
+                        let new = self_clone.get_egress();
                         if last != 0 {
                             let system_time = SystemTime::now();
                             let datetime: DateTime<Local> = system_time.into();
-                            let mut buffer = buffer.write().await;
+                            let mut buffer = self_clone.buffer.write().await;
                             buffer.push_back(TimeValue::new(
                                 datetime.format("%H:%M:%S").to_string(),
                                 (new - last) * 8 / INTERVAL_SECONDS,
@@ -86,53 +93,44 @@ impl NetMonitor {
             });
         }
     }
-}
 
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-use socket_filter::TransmitCounter;
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-static SOCKET_FILTER: std::sync::LazyLock<Arc<TransmitCounter>> = std::sync::LazyLock::new(|| {
-    Arc::new(TransmitCounter::new(
-        &IGNORED_INTERFACES,
-    ))
-});
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
+    pub fn get_egress(&self) -> u64 {
+        self.transmit_counter.get_egress()
+    }
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
+    pub fn get_ingress(&self) -> u64 {
+        self.transmit_counter.get_ingress()
+    }
 
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-pub fn get_egress() -> u64 {
-    SOCKET_FILTER.get_egress()
-}
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-pub fn get_ingress() -> u64 {
-    SOCKET_FILTER.get_ingress()
-}
+    // Inter-|   Receive                                                |  Transmit
+    //      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    //         lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
+    //       ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
+    #[cfg(not(feature = "bpf"))]
+    pub fn get_egress(&self) -> u64 {
+        use std::fs;
+        if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
+            content = content.replace("\r\n", "\n");
+            let strs = content.split('\n');
+            let mut new: u64 = 0;
+            for str in strs {
+                let array: Vec<&str> = str.split_whitespace().collect();
 
-// Inter-|   Receive                                                |  Transmit
-//      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
-//         lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
-//       ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
-#[cfg(not(feature = "bpf"))]
-pub fn get_egress() -> u64 {
-    use std::fs;
-    if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
-        content = content.replace("\r\n", "\n");
-        let strs = content.split('\n');
-        let mut new: u64 = 0;
-        for str in strs {
-            let array: Vec<&str> = str.split_whitespace().collect();
-
-            if array.len() == 17 {
-                let interface = *array.first().unwrap_or(&"");
-                if IGNORED_INTERFACES
-                    .iter()
-                    .any(|&ignored| interface.starts_with(ignored))
-                {
-                    continue;
+                if array.len() == 17 {
+                    let interface = *array.first().unwrap_or(&"");
+                    if IGNORED_INTERFACES
+                        .iter()
+                        .any(|&ignored| interface.starts_with(ignored))
+                    {
+                        continue;
+                    }
+                    new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
                 }
-                new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
             }
+            new
+        } else {
+            0
         }
-        new
-    } else {
-        0
     }
 }
