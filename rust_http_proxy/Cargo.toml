@@ -53,7 +53,7 @@ serde_yaml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 
 [features]
-default = ["ring", "bpf"]
+default = ["ring"]
 jemalloc = ["jemallocator"]
 bpf = ["socket_filter", "cgroup_traffic"]
 bpf_vendored = ["bpf", "socket_filter/vendored"]
