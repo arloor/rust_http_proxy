@@ -11,7 +11,6 @@ use crate::{
     address::host_addr,
     http1_client::HttpClient,
     ip_x::SocketAddrFormat,
-    net_monitor::NetMonitor,
     reverse::{self, LocationConfig},
     web_func, Config, LOCAL_IP,
 };
@@ -46,11 +45,14 @@ use prometheus_client::{
 };
 use rand::Rng;
 use tokio::{net::TcpStream, pin};
+#[cfg(target_os = "linux")]
+use crate::net_monitor::NetMonitor;
 
 pub struct ProxyHandler {
     pub(crate) config: Config,
     pub(crate) prom_registry: Registry,
     pub(crate) metrics: Metrics,
+    #[cfg(target_os = "linux")]
     pub(crate) net_monitor: NetMonitor,
     http1_client: HttpClient<Incoming>,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
@@ -93,12 +95,15 @@ impl ProxyHandler {
             debug!("find redirect back path for: {}**", ele.redirect_url);
         }
 
+        #[cfg(target_os = "linux")]
         let monitor: NetMonitor = NetMonitor::new()?;
+        #[cfg(target_os = "linux")]
         monitor.start();
 
         Ok(ProxyHandler {
             prom_registry: registry,
             metrics,
+            #[cfg(target_os = "linux")]
             net_monitor: monitor,
             reverse_client,
             http1_client,
@@ -717,11 +722,19 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     #[cfg(feature = "bpf")]
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     #[cfg(feature = "bpf")]
-    registry.register("net_bytes", "num hosts net traffic in bytes", net_bytes.clone());
+    registry.register(
+        "net_bytes",
+        "num hosts net traffic in bytes",
+        net_bytes.clone(),
+    );
     #[cfg(feature = "bpf")]
     let cgroup_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     #[cfg(feature = "bpf")]
-    registry.register("cgroup_bytes", "num this cgroup's net traffic in bytes", cgroup_bytes.clone());
+    registry.register(
+        "cgroup_bytes",
+        "num this cgroup's net traffic in bytes",
+        cgroup_bytes.clone(),
+    );
 
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
     // register_metric_cleaner(http_req_counter.clone(), 7 * 24);

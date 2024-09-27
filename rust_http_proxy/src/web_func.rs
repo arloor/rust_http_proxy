@@ -1,4 +1,5 @@
 use crate::ip_x::SocketAddrFormat;
+#[cfg(target_os = "linux")]
 use crate::net_monitor::NetMonitor;
 use crate::proxy::build_authenticate_resp;
 use crate::proxy::check_auth;
@@ -506,6 +507,7 @@ const H404: &str = include_str!("../html/404.html");
 const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
 static BOOTUP_TIME: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
 
+#[cfg(target_os = "linux")]
 async fn _speed(
     net_monitor: &NetMonitor,
     hostname: &str,

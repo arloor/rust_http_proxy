@@ -6,6 +6,7 @@ mod address;
 mod config;
 mod http1_client;
 mod ip_x;
+#[cfg(target_os = "linux")]
 mod net_monitor;
 mod proxy;
 mod reverse;
