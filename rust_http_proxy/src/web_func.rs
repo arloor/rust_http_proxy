@@ -515,7 +515,7 @@ async fn speed(
     hostname: &str,
     can_gzip: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let r = net_monitor._fetch_all().await;
+    let r = net_monitor.fetch_all().await;
     let mut scales = vec![];
     let mut series_up = vec![];
     let mut max_up = 0;
