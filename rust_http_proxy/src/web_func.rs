@@ -95,7 +95,7 @@ pub async fn serve_http_request(
             ) {
                 return Ok(build_authenticate_resp(false));
             }
-            #[cfg(feature = "bpf")]
+            #[cfg(all(target_os = "linux", feature = "bpf"))]
             proxy_handler.snapshot_metrics();
             serve_metrics(&proxy_handler.prom_registry, can_gzip).await
         }

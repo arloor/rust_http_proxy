@@ -16,6 +16,8 @@ use crate::{
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
+#[cfg(target_os = "linux")]
+use crate::net_monitor::NetMonitor;
 use http::{
     header::{HOST, LOCATION},
     Uri,
@@ -45,8 +47,6 @@ use prometheus_client::{
 };
 use rand::Rng;
 use tokio::{net::TcpStream, pin};
-#[cfg(target_os = "linux")]
-use crate::net_monitor::NetMonitor;
 
 pub struct ProxyHandler {
     pub(crate) config: Config,
@@ -62,9 +62,9 @@ pub struct ProxyHandler {
 pub(crate) struct Metrics {
     pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) cgroup_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
 const DEFAULT_HOST: &str = "default_host";
@@ -410,7 +410,7 @@ impl ProxyHandler {
         }
     }
 
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) fn snapshot_metrics(&self) {
         {
             self.metrics
@@ -719,17 +719,17 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     );
     let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
     registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     registry.register(
         "net_bytes",
         "num hosts net traffic in bytes",
         net_bytes.clone(),
     );
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     let cgroup_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     registry.register(
         "cgroup_bytes",
         "num this cgroup's net traffic in bytes",
@@ -742,9 +742,9 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     Metrics {
         http_req_counter,
         proxy_traffic,
-        #[cfg(feature = "bpf")]
+        #[cfg(all(target_os = "linux", feature = "bpf"))]
         net_bytes,
-        #[cfg(feature = "bpf")]
+        #[cfg(all(target_os = "linux", feature = "bpf"))]
         cgroup_bytes,
     }
 }

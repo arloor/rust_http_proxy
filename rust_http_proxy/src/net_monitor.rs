@@ -25,7 +25,7 @@ pub(crate) const IGNORED_INTERFACES: [&str; 7] =
 
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     cgroup_transmit_counter: cgroup_traffic::CgroupTransmitCounter,
 }
 const TOTAL_SECONDS: u64 = 900;
@@ -35,17 +35,17 @@ impl NetMonitor {
     pub fn new() -> Result<NetMonitor, crate::DynError> {
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
-            #[cfg(feature = "bpf")]
+            #[cfg(all(target_os = "linux", feature = "bpf"))]
             cgroup_transmit_counter: cgroup_traffic::init_self_cgroup_skb_monitor()?,
         })
     }
 
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) fn get_cgroup_egress(&self) -> u64 {
         self.cgroup_transmit_counter.get_egress()
     }
 
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) fn get_cgroup_ingress(&self) -> u64 {
         self.cgroup_transmit_counter.get_ingress()
     }
@@ -88,9 +88,9 @@ impl NetMonitor {
     }
 }
 
-#[cfg(feature = "bpf")]
+#[cfg(all(target_os = "linux", feature = "bpf"))]
 use socket_filter::TransmitCounter;
-#[cfg(feature = "bpf")]
+#[cfg(all(target_os = "linux", feature = "bpf"))]
 static SOCKET_FILTER: std::sync::LazyLock<Arc<TransmitCounter>> = std::sync::LazyLock::new(|| {
     Arc::new(TransmitCounter::new(
         &IGNORED_INTERFACES,
@@ -98,11 +98,11 @@ static SOCKET_FILTER: std::sync::LazyLock<Arc<TransmitCounter>> = std::sync::Laz
     ))
 });
 
-#[cfg(feature = "bpf")]
+#[cfg(all(target_os = "linux", feature = "bpf"))]
 pub fn get_egress() -> u64 {
     SOCKET_FILTER.get_egress()
 }
-#[cfg(feature = "bpf")]
+#[cfg(all(target_os = "linux", feature = "bpf"))]
 pub fn get_ingress() -> u64 {
     SOCKET_FILTER.get_ingress()
 }

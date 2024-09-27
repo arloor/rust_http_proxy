@@ -12,7 +12,7 @@ pub struct LabelImpl<R>(R)
 where
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static;
 
-impl<R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static>  LabelImpl<R> {
+impl<R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static> LabelImpl<R> {
     pub fn new(s: R) -> Self {
         Self(s)
     }

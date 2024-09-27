@@ -2,10 +2,10 @@ use std::{fmt::Debug, pin::Pin, task::Context, task::Poll};
 
 use pin_project_lite::pin_project;
 use prometheus_client::metrics::{counter::Counter, family::Family};
-use tokio::io::AsyncRead;
-use tokio::io::AsyncWrite;
 use std::io;
 use std::time::Duration;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncWrite;
 
 use futures_util::Future;
 use tokio::time::{sleep, Instant, Sleep};
@@ -118,7 +118,6 @@ where
     }
 }
 
-
 pin_project! {
     /// enhance inner tcp stream with prometheus counter
     #[derive(Debug)]
@@ -139,7 +138,7 @@ impl<T> TimeoutIO<T>
 where
     T: AsyncWrite + AsyncRead,
 {
-    pub fn new(inner: T, timeout:Duration) -> Self {
+    pub fn new(inner: T, timeout: Duration) -> Self {
         Self {
             inner,
             timeout,
@@ -149,7 +148,10 @@ where
     /// set timeout
     pub fn _set_timeout_pinned(mut self: Pin<&mut Self>, timeout: Duration) {
         *self.as_mut().project().timeout = timeout;
-        self.project().idle_future.as_mut().reset(Instant::now() + timeout);
+        self.project()
+            .idle_future
+            .as_mut()
+            .reset(Instant::now() + timeout);
     }
 }
 
@@ -166,12 +168,15 @@ where
         let idle_feature = pro.idle_future;
         let timeout: &mut Duration = pro.timeout;
         let read_poll = pro.inner.poll_read(cx, buf);
-        if read_poll.is_ready(){
+        if read_poll.is_ready() {
             // 读到内容或者读到EOF等等,重置计时
             idle_feature.reset(Instant::now() + *timeout);
-        }else if idle_feature.poll(cx).is_ready(){ 
+        } else if idle_feature.poll(cx).is_ready() {
             // 没有读到内容，且已经timeout，则返回错误
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("read idle for {:?}",timeout))));
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("read idle for {:?}", timeout),
+            )));
         }
         read_poll
     }
@@ -190,10 +195,13 @@ where
         let idle_feature = pro.idle_future;
         let timeout: &mut Duration = pro.timeout;
         let write_poll = pro.inner.poll_write(cx, buf);
-        if write_poll.is_ready(){
+        if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
-        }else if idle_feature.poll(cx).is_ready(){ 
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("write idle for {:?}",timeout))));
+        } else if idle_feature.poll(cx).is_ready() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("write idle for {:?}", timeout),
+            )));
         }
         write_poll
     }
@@ -203,10 +211,13 @@ where
         let idle_feature = pro.idle_future;
         let timeout: &mut Duration = pro.timeout;
         let write_poll = pro.inner.poll_flush(cx);
-        if write_poll.is_ready(){
+        if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
-        }else if idle_feature.poll(cx).is_ready(){ 
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("write idle for {:?}",timeout))));
+        } else if idle_feature.poll(cx).is_ready() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("write idle for {:?}", timeout),
+            )));
         }
         write_poll
     }
@@ -219,10 +230,13 @@ where
         let idle_feature = pro.idle_future;
         let timeout: &mut Duration = pro.timeout;
         let write_poll = pro.inner.poll_shutdown(cx);
-        if write_poll.is_ready(){
+        if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
-        }else if idle_feature.poll(cx).is_ready(){ 
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("write idle for {:?}",timeout))));
+        } else if idle_feature.poll(cx).is_ready() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("write idle for {:?}", timeout),
+            )));
         }
         write_poll
     }
@@ -240,12 +254,14 @@ where
         let idle_feature = pro.idle_future;
         let timeout: &mut Duration = pro.timeout;
         let write_poll = pro.inner.poll_write_vectored(cx, bufs);
-        if write_poll.is_ready(){
+        if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
-        }else if idle_feature.poll(cx).is_ready(){ 
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut,format!("write idle for {:?}",timeout))));
+        } else if idle_feature.poll(cx).is_ready() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("write idle for {:?}", timeout),
+            )));
         }
         write_poll
     }
 }
-
