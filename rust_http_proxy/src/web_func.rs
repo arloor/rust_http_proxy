@@ -30,7 +30,6 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin;
-use std::process::Command;
 use std::sync::LazyLock;
 use std::time::SystemTime;
 use tokio::fs::{metadata, File};
@@ -462,7 +461,7 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io
 
 #[cfg(target_os = "linux")]
 fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    match Command::new("sh")
+    match std::process::Command::new("sh")
             .arg("-c")
             .arg(r#"
             netstat -ntp|grep -E "ESTABLISHED|CLOSE_WAIT"|awk -F "[ :]+"  -v OFS="" '$5<10000 && $5!="22" && $7>1024 {printf("%15s   => %15s:%-5s %s\n",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn

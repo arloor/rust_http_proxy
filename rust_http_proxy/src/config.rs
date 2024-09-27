@@ -89,6 +89,7 @@ pub(crate) struct Config {
     pub(crate) referer: String,
     pub(crate) never_ask_for_auth: bool,
     pub(crate) over_tls: bool,
+    #[allow(dead_code)]
     pub(crate) hostname: String,
     pub(crate) port: Vec<u16>,
     pub(crate) reverse_proxy_config: HashMap<String, Vec<LocationConfig>>,
