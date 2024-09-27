@@ -59,7 +59,7 @@ impl NetMonitor {
         self.cgroup_transmit_counter.get_ingress()
     }
 
-    pub(crate) async fn fetch_all(&self) -> Vec<TimeValue> {
+    async fn fetch_all(&self) -> Vec<TimeValue> {
         let buffer = self.buffer.read().await;
         let x = buffer.as_slices();
         let mut r = vec![];
@@ -132,5 +132,77 @@ impl NetMonitor {
         } else {
             0
         }
+    }
+
+    pub async fn speed(
+        &self,
+        hostname: &str,
+        can_gzip: bool,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+        let r = self.fetch_all().await;
+        let mut scales = vec![];
+        let mut series_up = vec![];
+        let mut max_up = 0;
+        for x in r {
+            scales.push(x._time);
+            series_up.push(x._value);
+            if x._value > max_up {
+                max_up = x._value;
+            }
+        }
+        let mut interval = if max_up > 1024 * 1024 * 8 {
+            1024 * 1024 * 8
+        } else {
+            1024 * 1024
+        };
+        if max_up / interval > 10 {
+            interval = (max_up / interval / 10) * interval;
+        }
+        let body = format!(
+            "{} {}网速 {} {:?} {} {} {}  {:?} {}",
+            _PART0, hostname, _PART1, scales, _PART2, interval, _PART3, series_up, _PART4
+        );
+        let builder = Response::builder()
+            .status(StatusCode::OK)
+            .header(http::header::SERVER, SERVER_NAME)
+            .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8");
+        if can_gzip {
+            let compressed_data = match compress_string(&body) {
+                Ok(compressed_data) => compressed_data,
+                Err(e) => {
+                    warn!("compress body error: {}", e);
+                    return Ok(build_500_resp());
+                }
+            };
+            builder
+                .header(http::header::CONTENT_ENCODING, GZIP)
+                .body(full_body(compressed_data))
+        } else {
+            builder.body(full_body(body))
+        }
+    }
+}
+
+pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+    match std::process::Command::new("sh")
+            .arg("-c")
+            .arg(r#"
+            netstat -ntp|grep -E "ESTABLISHED|CLOSE_WAIT"|awk -F "[ :]+"  -v OFS="" '$5<10000 && $5!="22" && $7>1024 {printf("%15s   => %15s:%-5s %s\n",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn
+            "#)
+            .output() {
+        Ok(output) => {
+            Response::builder()
+            .status(StatusCode::OK)
+            .header(http::header::SERVER, SERVER_NAME)
+            .header(http::header::REFRESH, "3")
+            .body(full_body(
+                String::from_utf8(output.stdout).unwrap_or("".to_string())
+                    + (&*String::from_utf8(output.stderr).unwrap_or("".to_string())),
+            ))
+        },
+        Err(e) => {
+            warn!("sh -c error: {}", e);
+            Ok(build_500_resp())
+        },
     }
 }

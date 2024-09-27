@@ -1,6 +1,4 @@
 use crate::ip_x::SocketAddrFormat;
-#[cfg(target_os = "linux")]
-use crate::net_monitor::NetMonitor;
 use crate::proxy::build_authenticate_resp;
 use crate::proxy::check_auth;
 use crate::proxy::empty_body;
@@ -82,11 +80,11 @@ pub async fn serve_http_request(
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         #[cfg(target_os = "linux")]
-        (_, "/nt") => count_stream(),
+        (_, "/nt") => crate::linux_monitor::count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/speed") => speed(&proxy_handler.net_monitor, hostname, can_gzip).await,
-        #[cfg(target_os = "linux")]
-        (_, "/net") => speed(&proxy_handler.net_monitor, hostname, can_gzip).await,
+        (_, "/net") => {
+            crate::linux_monitor::speed(&proxy_handler.net_monitor, hostname, can_gzip).await
+        }
         (_, "/metrics") => {
             if let (_, false) = check_auth(
                 &proxy_handler.config.basic_auth,
@@ -459,31 +457,6 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io
         ))
 }
 
-#[cfg(target_os = "linux")]
-fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    match std::process::Command::new("sh")
-            .arg("-c")
-            .arg(r#"
-            netstat -ntp|grep -E "ESTABLISHED|CLOSE_WAIT"|awk -F "[ :]+"  -v OFS="" '$5<10000 && $5!="22" && $7>1024 {printf("%15s   => %15s:%-5s %s\n",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn
-            "#)
-            .output() {
-        Ok(output) => {
-            Response::builder()
-            .status(StatusCode::OK)
-            .header(http::header::SERVER, SERVER_NAME)
-            .header(http::header::REFRESH, "3")
-            .body(full_body(
-                String::from_utf8(output.stdout).unwrap_or("".to_string())
-                    + (&*String::from_utf8(output.stderr).unwrap_or("".to_string())),
-            ))
-        },
-        Err(e) => {
-            warn!("sh -c error: {}", e);
-            Ok(build_500_resp())
-        },
-    }
-}
-
 fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
@@ -508,55 +481,6 @@ const _PART4: &str = include_str!("../html/part4.html");
 const H404: &str = include_str!("../html/404.html");
 const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
 static BOOTUP_TIME: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
-
-#[cfg(target_os = "linux")]
-async fn speed(
-    net_monitor: &NetMonitor,
-    hostname: &str,
-    can_gzip: bool,
-) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let r = net_monitor.fetch_all().await;
-    let mut scales = vec![];
-    let mut series_up = vec![];
-    let mut max_up = 0;
-    for x in r {
-        scales.push(x._time);
-        series_up.push(x._value);
-        if x._value > max_up {
-            max_up = x._value;
-        }
-    }
-    let mut interval = if max_up > 1024 * 1024 * 8 {
-        1024 * 1024 * 8
-    } else {
-        1024 * 1024
-    };
-    if max_up / interval > 10 {
-        interval = (max_up / interval / 10) * interval;
-    }
-    let body = format!(
-        "{} {}网速 {} {:?} {} {} {}  {:?} {}",
-        _PART0, hostname, _PART1, scales, _PART2, interval, _PART3, series_up, _PART4
-    );
-    let builder = Response::builder()
-        .status(StatusCode::OK)
-        .header(http::header::SERVER, SERVER_NAME)
-        .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8");
-    if can_gzip {
-        let compressed_data = match compress_string(&body) {
-            Ok(compressed_data) => compressed_data,
-            Err(e) => {
-                warn!("compress body error: {}", e);
-                return Ok(build_500_resp());
-            }
-        };
-        builder
-            .header(http::header::CONTENT_ENCODING, GZIP)
-            .body(full_body(compressed_data))
-    } else {
-        builder.body(full_body(body))
-    }
-}
 
 fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     let mut resp = Response::new(full_body("Internal Server Error"));

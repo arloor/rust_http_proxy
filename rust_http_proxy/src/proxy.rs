@@ -16,8 +16,6 @@ use crate::{
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
-#[cfg(target_os = "linux")]
-use crate::net_monitor::NetMonitor;
 use http::{
     header::{HOST, LOCATION},
     Uri,
@@ -53,7 +51,7 @@ pub struct ProxyHandler {
     pub(crate) prom_registry: Registry,
     pub(crate) metrics: Metrics,
     #[cfg(target_os = "linux")]
-    pub(crate) net_monitor: NetMonitor,
+    pub(crate) net_monitor: crate::linux_monitor::NetMonitor,
     http1_client: HttpClient<Incoming>,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     redirect_bachpaths: Vec<RedirectBackpaths>,
@@ -96,7 +94,7 @@ impl ProxyHandler {
         }
 
         #[cfg(target_os = "linux")]
-        let monitor: NetMonitor = NetMonitor::new()?;
+        let monitor = crate::linux_monitor::NetMonitor::new()?;
         #[cfg(target_os = "linux")]
         monitor.start();
 

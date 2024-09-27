@@ -47,7 +47,7 @@ pub fn local_ip() -> io::Result<String> {
     let all_interfaces = all_interfaces
         .iter()
         .filter(|iface| {
-            !crate::net_monitor::IGNORED_INTERFACES
+            !crate::linux_monitor::IGNORED_INTERFACES
                 .iter()
                 .any(|&ignored| iface.name.starts_with(ignored))
         })

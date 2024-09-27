@@ -182,7 +182,7 @@ req_from_out_total{referer="all",path="all"} 4
 
 ### Linux运行时的网速监控
 
-在linux运行时，会监控网卡网速，并展示在 `/speed` 。
+在linux运行时，会监控网卡网速，并展示在 `/net` 。
 
 ![](speed.png)
 
