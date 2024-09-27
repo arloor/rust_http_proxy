@@ -37,7 +37,7 @@ use hyper::{
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use log::{debug, info, warn};
+use log::{info, trace, warn};
 use percent_encoding::percent_decode_str;
 use prom_label::Label;
 use prometheus_client::{
@@ -92,7 +92,7 @@ impl ProxyHandler {
         }
         redirect_bachpaths.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
         for ele in redirect_bachpaths.iter() {
-            debug!("find redirect back path for: {}**", ele.redirect_url);
+            trace!("find redirect back path for: {}**", ele.redirect_url);
         }
 
         #[cfg(target_os = "linux")]
