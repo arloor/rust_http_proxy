@@ -1,6 +1,8 @@
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/arloor/rust_http_proxy)
 
-基于 `hyper` 和 `rustls` 的静态资源托管服务器、正向代理、反向代理。支持以下特性：
+基于 `hyper` 和 `rustls` 的静态资源托管服务器、正向代理、反向代理。
+
+## 功能特性
 
 1. 使用tls来对正向代理流量进行加密（`--over-tls`）。
 2. 类Nginx的静态资源托管。支持gzip压缩。支持Accept-Ranges以支持断点续传（备注：暂不支持多range，例如 `Range: bytes=0-100,100-` ）
@@ -10,9 +12,42 @@
 5. 支持多端口，多用户。
 6. 每天定时加载tls证书，acme证书过期重新签发时不需要重启服务。
 7. 连接空闲（10分钟没有IO）自动关闭。
-8. 可选feature：jemalloc内存分配器。使用`cargo build --features jemalloc`命令编译以激活
 
 提及的参数详见[命令行参数](#命令行参数)
+
+## 安装说明
+
+### linux amd64 可执行文件
+
+```shell
+curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy -o /tmp/rust_http_proxy
+install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
+/usr/bin/rust_http_proxy -p 7788
+```
+
+### Docker 安装 
+
+> 通过Github Action自动更新release，永远是最新版，可放心使用
+
+```shell
+docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 7788
+```
+
+### ebpf版本安装
+
+> 注意：ebpf版本并没有什么新特性，只是为了学习下新技术的自嗨。
+
+```bash
+curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/bpf/rust_http_proxy -o /tmp/rust_http_proxy
+install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
+/usr/bin/rust_http_proxy -p 7788
+```
+
+或者
+
+```bash
+docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf -p 7788
+```
 
 ## 命令行参数
 
@@ -60,25 +95,23 @@ Options:
           Print help
 ```
 
-**SSL配置**
+### SSL配置
 
 其中，tls证书(`--cert`)和pem格式的私钥(`--key`)可以通过openssl命令一键生成：
 
-```shell
+```bash
 openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_proxy/privkey.pem -out /usr/share/rust_http_proxy/cert.pem -days 3650 -subj "/C=cn/ST=hl/L=sd/O=op/OU=as/CN=example.com"
 ```
 
 如需签名证书，请购买tls证书或免费解决方案（acme.sh等）
 
-**测试TLS Proxy**
+测试TLS Proxy可以使用curl （7.52.0以上版本）:
 
-可以使用curl （7.52.0以上版本）来测试
-
-```shell
-curl  https://ip.im/info --proxy-user "username:password" -x https://localhost:7788  --proxy-insecure
+```bash
+curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --proxy-insecure
 ```
 
-## 反向代理配置
+### 反向代理配置
 
 ```yaml
 YOUR_DOMAIN:
@@ -89,9 +122,9 @@ YOUR_DOMAIN:
       version: AUTO # 可以填H1、H2、AUTO，默认为AUTO
 ```
 
-如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效
+> 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效
 
-**例子1:** Github Proxy
+#### 例子1: Github Proxy
 
 在github原始url前加上`https://YOUR_DOMAIN`，以便在国内访问raw.githubusercontent.com和github.com
 
@@ -117,7 +150,7 @@ default_host:
       replacement:
 ```
 
-**例子2:** 将Github Models的url改写成openai api的url格式
+#### 例子2: 改写Github Models的url为openai api的url格式
 
 ```yaml
 default_host:
@@ -127,47 +160,7 @@ default_host:
       replacement: /chat/completions
 ```
 
-## 安装说明
-
-### linux amd64 可执行文件
-
-```shell
-curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy -o /tmp/rust_http_proxy
-install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
-/usr/bin/rust_http_proxy -p 8888
-```
-
-### Docker 安装 
-
-> 通过Github Action自动更新release，永远是最新版，可放心使用
-
-```shell
-docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 8888
-```
-
-### ebpf版本安装
-
-> 注意：ebpf版本并没有什么新特性，只是为了学习下新技术的自嗨。
-
-```bash
-curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/bpf/rust_http_proxy -o /tmp/rust_http_proxy
-install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
-/usr/bin/rust_http_proxy -p 8888
-```
-
-或者
-
-```bash
-docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf -p 8888
-```
-
 ## 可观测
-
-### Linux运行时的网速监控
-
-在linux运行时，会监控网卡网速，并展示在 `/speed` 。
-
-![](speed.png)
 
 ### Prometheus Exporter
 
@@ -187,22 +180,46 @@ req_from_out_total{referer="all",path="all"} 4
 ![alt text](grafana-template1.png)
 ![alt text](grafana-template2.png)
 
+### Linux运行时的网速监控
+
+在linux运行时，会监控网卡网速，并展示在 `/speed` 。
+
+![](speed.png)
+
 ## 客户端
 
 - Clash系列
-    - [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev) 
-    - [ClashMetaForAndroid](https://github.com/MetaCubeX/ClashMetaForAndroid)
-    - [mihomo(clash-meta)](https://github.com/MetaCubeX/mihomo/tree/Meta) 
+  - [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev) 
+  - [ClashMetaForAndroid](https://github.com/MetaCubeX/ClashMetaForAndroid)
+  - [mihomo(clash-meta)](https://github.com/MetaCubeX/mihomo/tree/Meta) 
 - 自研玩具
-    - Rust：[sslocal(fork shadowsocks-rust)](https://github.com/arloor/shadowsocks-rust)
-    - Golang：[forward](https://github.com/arloor/forward)
-    - Java: [connect](https://github.com/arloor/connect)
-        
-
-
-
+  - Rust：[sslocal(fork shadowsocks-rust)](https://github.com/arloor/shadowsocks-rust)
+  - Golang：[forward](https://github.com/arloor/forward)
+  - Java: [connect](https://github.com/arloor/connect)
 
 ## Cargo Features
+
+### bpf
+
+使用ebpf来统计网卡出流量，仅在 `x86_64-unknown-linux-gnu` 上测试过。激活方式:
+
+```bash
+cargo build --features bpf
+```
+
+需要安装 `libbpf-rs` 所需的依赖：
+
+**ubuntu 22.04 安装：**
+
+```bash
+apt-get install -y libbpf-dev libz-dev libelf-dev pkg-config clang bpftool
+```
+
+**centos stream 9 安装：**
+
+```bash
+yum install -y libbpf zlib-devel elfutils-libelf-devel pkgconf-pkg-config clang bpftool 
+```
 
 ### jemalloc
 
@@ -224,31 +241,11 @@ cargo build --features jemalloc
 | 依赖的包 | 是否必须 |安装方式 |
 | --- | --- | --- |
 | `cmake` | 必须 | `apt-get install cmake` |
-| `clang` | 非必需。仅在 `aws_lc_rs` 没有提供pre-generated bindings的target上需要，详见：[the requirements for rust-bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html)。另外还需要激活 `aws-lc-rs/bindgen`（见备注）。 |`apt-get install clang` |
 
 激活方式：
 
 ```bash
 cargo build --no-default-features --features aws_lc_rs
-```
-
-**备注**：激活 `aws-lc-rs/bindgen`:
-
-```toml
-[target.'cfg(target_env = "musl")'.dependencies]
-aws-lc-rs= { version = "1.6", features = ["bindgen"],optional = true }
-
-[features]
-# aws_lc_rs = ["tokio-rustls/aws-lc-rs"]
-aws_lc_rs = ["tokio-rustls/aws-lc-rs","aws-lc-rs/bindgen"]
-```
-
-### bpf
-
-使用ebpf来统计网卡出流量，仅在 `x86_64-unknown-linux-gnu` 上测试过。激活方式:
-
-```bash
-cargo build --features bpf
 ```
 
 ## 高匿实现
@@ -270,11 +267,3 @@ Nginx收到的消息：
 ![](traffic_at_nginx.png)
 
 可以看到请求URL和`Proxy-Connection`都被正确处理了。
-
-## 一些例子
-
-- [tls-listener example](https://github.com/tmccombs/tls-listener/blob/main/examples/http.rs)
-- [tls-listener change-certificate](https://github.com/tmccombs/tls-listener/blob/main/examples/http-change-certificate.rs)
-- [hyper example http_proxy](https://github.com/hyperium/hyper/blob/master/examples/http_proxy.rs)
-- [rustls async Acceptor for hyper v0.14](https://github.com/rustls/hyper-rustls/blob/286e1fa57ff5cac99994fab355f91c3454d6d83d/src/acceptor.rs)
-- ~~[rustls async Acceptor for hyper v1](https://github.com/Gelbpunkt/hyper-rustls/blob/3d88d7d76c2e91e39b028dbbb92db917aa051092/src/acceptor.rs)已删除~~ [Update hyper to 1.x and integrate with hyper-util #232](https://github.com/rustls/hyper-rustls/pull/232#issuecomment-1878924476)的PR中hyper-rustls已删除tls acceptor，因为无必要
