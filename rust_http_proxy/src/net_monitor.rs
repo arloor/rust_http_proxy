@@ -36,7 +36,7 @@ impl NetMonitor {
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
             #[cfg(all(target_os = "linux", feature = "bpf"))]
-            cgroup_transmit_counter: cgroup_traffic::init_self_cgroup_skb_monitor()?,
+            cgroup_transmit_counter: cgroup_traffic::init_cgroup_skb_monitor(cgroup_traffic::SELF)?,
         })
     }
 
