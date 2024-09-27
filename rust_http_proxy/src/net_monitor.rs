@@ -94,7 +94,6 @@ use socket_filter::TransmitCounter;
 static SOCKET_FILTER: std::sync::LazyLock<Arc<TransmitCounter>> = std::sync::LazyLock::new(|| {
     Arc::new(TransmitCounter::new(
         &IGNORED_INTERFACES,
-        Box::leak(Box::new(std::mem::MaybeUninit::uninit())),
     ))
 });
 
