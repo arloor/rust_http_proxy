@@ -5,19 +5,19 @@ use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ProxyHandler;
 use crate::proxy::ReqLabels;
-use http::response::Builder;
-use prom_label::LabelImpl;
-
 use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
+use http::response::Builder;
 use http::{Error, HeaderValue};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, StreamBody};
+use httpdate::fmt_http_date;
 use hyper::body::{Body, Bytes, Frame};
 use hyper::header::{CONTENT_ENCODING, REFERER};
 use hyper::{http, Method, Request, Response, StatusCode};
 use log::{info, warn};
 use mime_guess::from_path;
+use prom_label::LabelImpl;
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
@@ -251,8 +251,8 @@ async fn serve_path(
     };
     let file_len = meta.len();
     let file_etag = cal_file_etag(last_modified, file_len);
-    if let Some(value) = handle_etag_match(req, &file_etag) {
-        return value;
+    if let Some(response) = return_304_if_not_modified(req, &file_etag, last_modified) {
+        return response;
     }
     let mime_type = from_path(&path).first_or_octet_stream();
     let content_type = mime_type.as_ref();
@@ -263,6 +263,7 @@ async fn serve_path(
     };
     let mut builder = Response::builder()
         .header(http::header::CONTENT_TYPE, content_type.as_str())
+        .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::ETAG, file_etag)
         .header(http::header::ACCEPT_RANGES, "bytes")
         .header(http::header::SERVER, SERVER_NAME);
@@ -314,22 +315,44 @@ async fn serve_path(
     }
 }
 
-fn handle_etag_match(
+fn return_304_if_not_modified(
     req: &Request<impl Body>,
     file_etag: &str,
+    last_modified: SystemTime,
 ) -> Option<Result<Response<BoxBody<Bytes, io::Error>>, Error>> {
-    let etag_header = req.headers().get(http::header::IF_NONE_MATCH)?;
-    let etag_of_req = etag_header.to_str().ok()?;
-    if etag_of_req == file_etag {
-        return Some(
-            Response::builder()
-                .status(StatusCode::NOT_MODIFIED)
-                .header(http::header::ETAG, file_etag)
-                .header(http::header::SERVER, SERVER_NAME)
-                .body(empty_body()),
-        );
+    match req.headers().get(http::header::IF_NONE_MATCH) {
+        Some(if_none_match) => {
+            // use if-none-match
+            let if_none_match = if_none_match.to_str().ok()?;
+            if if_none_match == file_etag {
+                Some(not_modified(last_modified, file_etag))
+            } else {
+                None
+            }
+        }
+        None => {
+            // fallback to if-modified-since
+            let if_modified_since = req.headers().get(http::header::IF_MODIFIED_SINCE)?;
+            let if_modified_since = if_modified_since.to_str().ok()?;
+            if if_modified_since == fmt_http_date(last_modified.to_owned()).as_str() {
+                Some(not_modified(last_modified, file_etag))
+            } else {
+                None
+            }
+        }
     }
-    None
+}
+
+fn not_modified(
+    last_modified: SystemTime,
+    file_etag: &str,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+    Response::builder()
+        .status(StatusCode::NOT_MODIFIED)
+        .header(http::header::ETAG, file_etag)
+        .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
+        .header(http::header::SERVER, SERVER_NAME)
+        .body(empty_body())
 }
 
 fn cal_file_etag(last_modified: SystemTime, file_len: u64) -> String {
@@ -447,12 +470,13 @@ fn serve_favico(
     let last_modified = BOOTUP_TIME.to_owned();
     let file_len = FAV_ICO.len() as u64;
     let file_etag = cal_file_etag(last_modified, file_len);
-    if let Some(value) = handle_etag_match(req, &file_etag) {
-        return value;
+    if let Some(response) = return_304_if_not_modified(req, &file_etag, last_modified) {
+        return response;
     }
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
+        .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::ETAG, file_etag)
         .header(http::header::CONTENT_TYPE, "image/x-icon")
         .body(if need_body {
