@@ -13,7 +13,6 @@ use futures_util::TryStreamExt;
 use http::{Error, HeaderValue};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, StreamBody};
-use httpdate::fmt_http_date;
 use hyper::body::{Body, Bytes, Frame};
 use hyper::header::{CONTENT_ENCODING, REFERER};
 use hyper::{http, Method, Request, Response, StatusCode};
@@ -250,15 +249,12 @@ async fn serve_path(
         Ok(time) => time,
         Err(_) => return not_found(),
     };
-    let mime_type = from_path(&path).first_or_octet_stream();
-    if let Some(request_if_modified_since) = req.headers().get(http::header::IF_MODIFIED_SINCE) {
-        if let Ok(request_if_modified_since) = request_if_modified_since.to_str() {
-            if request_if_modified_since == fmt_http_date(last_modified).as_str() {
-                return not_modified(last_modified);
-            }
-        }
+    let file_len = meta.len();
+    let file_etag = cal_file_etag(last_modified, file_len);
+    if let Some(value) = handle_etag_match(req, &file_etag) {
+        return value;
     }
-
+    let mime_type = from_path(&path).first_or_octet_stream();
     let content_type = mime_type.as_ref();
     let content_type = if !content_type.to_ascii_lowercase().contains("charset") {
         format!("{}{}", &content_type, "; charset=utf-8")
@@ -267,7 +263,7 @@ async fn serve_path(
     };
     let mut builder = Response::builder()
         .header(http::header::CONTENT_TYPE, content_type.as_str())
-        .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
+        .header(http::header::ETAG, file_etag)
         .header(http::header::ACCEPT_RANGES, "bytes")
         .header(http::header::SERVER, SERVER_NAME);
 
@@ -294,9 +290,8 @@ async fn serve_path(
         Err(_) => return not_found(),
     };
 
-    let file_size = meta.len();
     let (start, end, builder) =
-        match parse_range(req.headers().get(http::header::RANGE), file_size, builder) {
+        match parse_range(req.headers().get(http::header::RANGE), file_len, builder) {
             Ok((start, end, builder)) => (start, end, builder),
             Err(e) => {
                 return Response::builder()
@@ -312,11 +307,37 @@ async fn serve_path(
             return Ok(build_500_resp());
         };
     }
-    if end != file_size - 1 {
+    if end != file_len - 1 {
         final_build(need_gzip, file.take(end - start + 1), builder)
     } else {
         final_build(need_gzip, file, builder)
     }
+}
+
+fn handle_etag_match(
+    req: &Request<impl Body>,
+    file_etag: &str,
+) -> Option<Result<Response<BoxBody<Bytes, io::Error>>, Error>> {
+    let etag_header = req.headers().get(http::header::IF_NONE_MATCH)?;
+    let etag_of_req = etag_header.to_str().ok()?;
+    if etag_of_req == file_etag {
+        return Some(
+            Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header(http::header::ETAG, file_etag)
+                .header(http::header::SERVER, SERVER_NAME)
+                .body(empty_body()),
+        );
+    }
+    None
+}
+
+fn cal_file_etag(last_modified: SystemTime, file_len: u64) -> String {
+    let last_modified_secs = last_modified
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("\"{:x}-{:x}\"", last_modified_secs, file_len)
 }
 
 fn final_build<T>(
@@ -423,20 +444,16 @@ fn serve_favico(
     req: &Request<impl Body>,
     need_body: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    if let Some(request_if_modified_since) = req.headers().get(http::header::IF_MODIFIED_SINCE) {
-        if let Ok(request_if_modified_since) = request_if_modified_since.to_str() {
-            if request_if_modified_since == fmt_http_date(BOOTUP_TIME.to_owned()).as_str() {
-                return not_modified(BOOTUP_TIME.to_owned());
-            }
-        }
+    let last_modified = BOOTUP_TIME.to_owned();
+    let file_len = FAV_ICO.len() as u64;
+    let file_etag = cal_file_etag(last_modified, file_len);
+    if let Some(value) = handle_etag_match(req, &file_etag) {
+        return value;
     }
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .header(
-            http::header::LAST_MODIFIED,
-            fmt_http_date(BOOTUP_TIME.to_owned()),
-        )
+        .header(http::header::ETAG, file_etag)
         .header(http::header::CONTENT_TYPE, "image/x-icon")
         .body(if need_body {
             full_body(FAV_ICO.to_vec())
@@ -460,14 +477,6 @@ fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
         .body(full_body(H404))
-}
-
-fn not_modified(last_modified: SystemTime) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    Response::builder()
-        .status(StatusCode::NOT_MODIFIED)
-        .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
-        .header(http::header::SERVER, SERVER_NAME)
-        .body(empty_body())
 }
 const H404: &str = include_str!("../html/404.html");
 const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
