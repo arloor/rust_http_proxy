@@ -4,6 +4,7 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
+    sync::LazyLock,
     time::Duration,
 };
 
@@ -60,6 +61,7 @@ pub struct ProxyHandler {
 pub(crate) struct Metrics {
     pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
+    pub(crate) reverse_proxy_req: Family<LabelImpl<ReverseProxyReqLabel>, Counter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -142,6 +144,18 @@ impl ProxyHandler {
                         &upstream_req.uri(),
                         upstream_req.version(),
                     );
+                    self.metrics
+                        .reverse_proxy_req
+                        .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
+                            client: client_socket_addr.ip().to_canonical().to_string(),
+                            upstream: location_config.upstream.scheme_and_authority.clone()
+                                + location_config.upstream.replacement.as_str(),
+                        }))
+                        .inc();
+                    self.metrics
+                        .reverse_proxy_req
+                        .get_or_create(&ALL_REVERSE_PROXY_REQ)
+                        .inc();
                     return self
                         .reverse_proxy(
                             upstream_req,
@@ -715,6 +729,12 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
         "Number of HTTP requests received",
         http_req_counter.clone(),
     );
+    let reverse_proxy_req = Family::<LabelImpl<ReverseProxyReqLabel>, Counter>::default();
+    registry.register(
+        "reverse_proxy_req",
+        "Number of reverse proxy requests",
+        reverse_proxy_req.clone(),
+    );
     let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
     registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
     #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -740,6 +760,7 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
     Metrics {
         http_req_counter,
         proxy_traffic,
+        reverse_proxy_req,
         #[cfg(all(target_os = "linux", feature = "bpf"))]
         net_bytes,
         #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -851,6 +872,20 @@ pub struct AccessLabel {
     pub target: String,
     pub username: String,
 }
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
+pub struct ReverseProxyReqLabel {
+    pub client: String,
+    pub upstream: String,
+}
+
+static ALL_REVERSE_PROXY_REQ: LazyLock<prom_label::LabelImpl<ReverseProxyReqLabel>> =
+    LazyLock::new(|| {
+        LabelImpl::new(ReverseProxyReqLabel {
+            client: "all".to_string(),
+            upstream: "all".to_string(),
+        })
+    });
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct NetDirectionLabel {

@@ -147,15 +147,17 @@ fn incr_counter_if_need(
                     path: path.to_string(),
                 }))
                 .inc();
-            http_req_counter
-                .get_or_create(&LabelImpl::new(ReqLabels {
-                    referer: "all".to_string(),
-                    path: "all".to_string(),
-                }))
-                .inc();
+            http_req_counter.get_or_create(&ALL_HTTP_REQ).inc();
         }
     }
 }
+
+static ALL_HTTP_REQ: LazyLock<prom_label::LabelImpl<ReqLabels>> = LazyLock::new(|| {
+    LabelImpl::new(ReqLabels {
+        referer: "all".to_string(),
+        path: "all".to_string(),
+    })
+});
 
 fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Error> {
     if let Some(caps) = Regex::new("^https?://(.+?)(/|$)")?.captures(referer) {
