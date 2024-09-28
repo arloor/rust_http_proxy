@@ -2,6 +2,9 @@
 members = ["rust_http_proxy", "log_x", "io_x", "prom_label"]
 resolver = "2"
 
+[workspace.package]
+license = "LGPL-2.1-only OR BSD-2-Clause"
+
 [workspace.dependencies]
 prometheus-client = "0.22"
 pin-project-lite = "0.2"
