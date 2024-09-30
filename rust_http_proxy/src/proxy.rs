@@ -120,7 +120,7 @@ impl ProxyHandler {
         let never_ask_for_auth = self.config.never_ask_for_auth;
         // 1. serve stage (static files|reverse proxy)
         if Method::CONNECT != req.method() {
-            let req_basic = extract_requst_basic_info(
+            let origin_scheme_host_port = extract_requst_basic_info(
                 &req,
                 match self.config.over_tls {
                     true => "https",
@@ -130,7 +130,7 @@ impl ProxyHandler {
             if let Some(locations) = self
                 .config
                 .reverse_proxy_config
-                .get(&req_basic.host)
+                .get(&origin_scheme_host_port.host)
                 .or(self.config.reverse_proxy_config.get(DEFAULT_HOST))
             {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
@@ -138,7 +138,7 @@ impl ProxyHandler {
                     info!(
                         "[reverse proxy] {:^35} => {}{}** ==> [{}] {:?} [{:?}]",
                         SocketAddrFormat(&client_socket_addr).to_string(),
-                        req_basic,
+                        origin_scheme_host_port,
                         location_config.location,
                         upstream_req.method(),
                         &upstream_req.uri(),
@@ -148,6 +148,7 @@ impl ProxyHandler {
                         .reverse_proxy_req
                         .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
                             client: client_socket_addr.ip().to_canonical().to_string(),
+                            origin: origin_scheme_host_port.to_string() + location_config.location.as_str(),
                             upstream: location_config.upstream.scheme_and_authority.clone()
                                 + location_config.upstream.replacement.as_str(),
                         }))
@@ -158,7 +159,7 @@ impl ProxyHandler {
                         .inc();
                     let context = ReverseReqContext {
                         upstream: &location_config.upstream,
-                        oringin_req_basic: &req_basic,
+                        origin_scheme_host_port: &origin_scheme_host_port,
                     };
                     return self.reverse_proxy(upstream_req, &context).await;
                 }
@@ -387,7 +388,7 @@ impl ProxyHandler {
 
                     let absolute_redirect_location = ensure_absolute(redirect_location, context)?;
                     if let Some(replacement) = lookup_replacement(
-                        context.oringin_req_basic,
+                        context.origin_scheme_host_port,
                         absolute_redirect_location,
                         &self.redirect_bachpaths,
                     ) {
@@ -545,13 +546,13 @@ fn build_upstream_req(
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
 }
 
-struct ReqBasic {
+struct SchemeHostPort {
     scheme: String,
     host: String,
     port: Option<u16>,
 }
 
-impl Display for ReqBasic {
+impl Display for SchemeHostPort {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self.port {
             Some(port) => write!(f, "{}://{}:{}", self.scheme, self.host, port),
@@ -563,12 +564,12 @@ impl Display for ReqBasic {
 fn extract_requst_basic_info(
     req: &Request<Incoming>,
     default_scheme: &str,
-) -> io::Result<ReqBasic> {
+) -> io::Result<SchemeHostPort> {
     let uri = req.uri();
     let scheme = uri.scheme_str().unwrap_or(default_scheme);
     if req.version() == Version::HTTP_2 {
         //H2，信息全在uri中
-        Ok(ReqBasic {
+        Ok(SchemeHostPort {
             scheme: scheme.to_owned(),
             host: uri
                 .host()
@@ -601,7 +602,7 @@ fn extract_requst_basic_info(
             ),
             None => None,
         };
-        Ok(ReqBasic {
+        Ok(SchemeHostPort {
             scheme: scheme.to_owned(),
             host,
             port,
@@ -625,7 +626,7 @@ fn is_schema_secure(uri: &Uri) -> bool {
 
 struct ReverseReqContext<'a> {
     upstream: &'a Upstream,
-    oringin_req_basic: &'a ReqBasic,
+    origin_scheme_host_port: &'a SchemeHostPort,
 }
 
 struct RedirectBackpaths {
@@ -635,7 +636,7 @@ struct RedirectBackpaths {
 }
 
 fn lookup_replacement(
-    req_basic: &ReqBasic,
+    origin_scheme_host_port: &SchemeHostPort,
     absolute_redirect_location: String,
     redirect_bachpaths: &[RedirectBackpaths],
 ) -> Option<String> {
@@ -647,16 +648,16 @@ fn lookup_replacement(
                 format!("*://{}:*{}**", ele.host, ele.location),
             );
             let host = match ele.host.as_str() {
-                DEFAULT_HOST => &req_basic.host, // 如果是default_host，就用当前host
+                DEFAULT_HOST => &origin_scheme_host_port.host, // 如果是default_host，就用当前host
                 other => other,
             };
-            let port_part = if let Some(port) = req_basic.port {
+            let port_part = if let Some(port) = origin_scheme_host_port.port {
                 format!(":{}", port)
             } else {
                 String::new()
             };
             return Some(
-                req_basic.scheme.to_owned() // use raw request's scheme
+                origin_scheme_host_port.scheme.to_owned() // use raw request's scheme
                 + "://"
                 + host // if it's default_host, use raw request's host
                 + &port_part // use raw request's port if available
@@ -875,6 +876,7 @@ pub struct AccessLabel {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
 pub struct ReverseProxyReqLabel {
     pub client: String,
+    pub origin: String,
     pub upstream: String,
 }
 
@@ -882,6 +884,7 @@ static ALL_REVERSE_PROXY_REQ: LazyLock<prom_label::LabelImpl<ReverseProxyReqLabe
     LazyLock::new(|| {
         LabelImpl::new(ReverseProxyReqLabel {
             client: "all".to_string(),
+            origin: "all".to_string(),
             upstream: "all".to_string(),
         })
     });
