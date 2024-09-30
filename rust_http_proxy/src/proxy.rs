@@ -12,7 +12,7 @@ use crate::{
     address::host_addr,
     http1_client::HttpClient,
     ip_x::SocketAddrFormat,
-    reverse::{self, LocationConfig},
+    reverse::{self, LocationConfig, Upstream},
     web_func, Config, LOCAL_IP,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
@@ -156,13 +156,11 @@ impl ProxyHandler {
                         .reverse_proxy_req
                         .get_or_create(&ALL_REVERSE_PROXY_REQ)
                         .inc();
-                    return self
-                        .reverse_proxy(
-                            upstream_req,
-                            &location_config.upstream.scheme_and_authority,
-                            &req_basic,
-                        )
-                        .await;
+                    let context = ReverseReqContext {
+                        upstream: &location_config.upstream,
+                        oringin_req_basic: &req_basic,
+                    };
+                    return self.reverse_proxy(upstream_req, &context).await;
                 }
             }
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
@@ -376,13 +374,8 @@ impl ProxyHandler {
     async fn reverse_proxy(
         &self,
         upstream_req: Request<Incoming>,
-        upstream_scheme_and_authority: &String,
-        origin_req_basic: &ReqBasic,
+        context: &ReverseReqContext<'_>,
     ) -> io::Result<Response<BoxBody<Bytes, io::Error>>> {
-        debug_assert!(upstream_req
-            .uri()
-            .to_string()
-            .starts_with(upstream_scheme_and_authority));
         match self.reverse_client.request(upstream_req).await {
             Ok(mut resp) => {
                 if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
@@ -392,10 +385,9 @@ impl ProxyHandler {
                         "LOCATION absent when 30x",
                     ))?;
 
-                    let absolute_redirect_location =
-                        ensure_absolute(redirect_location, upstream_scheme_and_authority)?;
+                    let absolute_redirect_location = ensure_absolute(redirect_location, context)?;
                     if let Some(replacement) = lookup_replacement(
-                        origin_req_basic,
+                        context.oringin_req_basic,
                         absolute_redirect_location,
                         &self.redirect_bachpaths,
                     ) {
@@ -506,12 +498,11 @@ fn build_upstream_req(
         Some(path_and_query) => path_and_query.as_str(),
         None => "",
     };
-    let path_and_query = location_config.upstream.replacement.clone()
-        + &path_and_query[location_config.location.len()..];
     let url = format!(
         "{}{}",
         location_config.upstream.scheme_and_authority.clone(),
-        path_and_query
+        location_config.upstream.replacement.clone()
+            + &path_and_query[location_config.location.len()..]
     );
 
     let mut builder = Request::builder().method(method).uri(url).version(
@@ -632,6 +623,11 @@ fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
+struct ReverseReqContext<'a> {
+    upstream: &'a Upstream,
+    oringin_req_basic: &'a ReqBasic,
+}
+
 struct RedirectBackpaths {
     redirect_url: String,
     host: String,
@@ -674,7 +670,7 @@ fn lookup_replacement(
 
 fn ensure_absolute(
     location_header: &mut HeaderValue,
-    upstream_scheme_and_authority: &String,
+    context: &ReverseReqContext<'_>,
 ) -> io::Result<String> {
     let location = location_header
         .to_str()
@@ -683,7 +679,10 @@ fn ensure_absolute(
         .parse::<Uri>()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     if redirect_url.scheme_str().is_none() {
-        Ok(format!("{}{}", upstream_scheme_and_authority, location))
+        Ok(format!(
+            "{}{}",
+            context.upstream.scheme_and_authority, location
+        ))
     } else {
         Ok(location.to_string())
     }
