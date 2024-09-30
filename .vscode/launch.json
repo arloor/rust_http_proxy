@@ -33,9 +33,9 @@
             //         "name": "rust_http_proxy"
             //     }
             // },
-            // "sourceLanguages": [
-            //     "rust"
-            // ],
+            "sourceLanguages": [
+                "rust"
+            ],
             // https://code.visualstudio.com/docs/editor/variables-reference
             "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
             "preLaunchTask": "rust: cargo build",
