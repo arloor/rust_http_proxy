@@ -220,7 +220,7 @@ cargo build --features bpf
 **ubuntu 22.04 安装：**
 
 ```bash
-apt-get install -y libbpf-dev libz-dev libelf-dev pkg-config clang bpftool
+apt-get install -y libbpf-dev bpftool cmake zlib1g-dev libelf-dev pkg-config clang autoconf autopoint flex bison gawk make
 ```
 
 **centos stream 9 安装：**
