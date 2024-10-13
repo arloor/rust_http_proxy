@@ -226,7 +226,7 @@ apt-get install -y libbpf-dev bpftool cmake zlib1g-dev libelf-dev pkg-config cla
 **centos stream 9 安装：**
 
 ```bash
-yum install -y libbpf zlib-devel elfutils-libelf-devel pkgconf-pkg-config clang bpftool cmake autoconf autopoint flex bison gawk make
+yum install -y libbpf zlib-devel elfutils-libelf-devel pkgconf-pkg-config clang bpftool cmake autoconf gettext flex bison gawk make
 ```
 
 ### jemalloc
