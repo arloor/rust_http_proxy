@@ -126,7 +126,7 @@ YOUR_DOMAIN:
 
 #### 例子1: Github Proxy
 
-在github原始url前加上`https://YOUR_DOMAIN`，以便在国内访问raw.githubusercontent.com和github.com
+在github原始url前加上`https://YOUR_DOMAIN`，以便在国内访问raw.githubusercontent.com、github.com和https://gist.githubusercontent.com
 
 ```bash
 curl https://YOUR_DOMAIN/https://raw.githubusercontent.com/arloor/iptablesUtils/master/natcfg.sh
@@ -136,6 +136,14 @@ curl https://YOUR_DOMAIN/https://raw.githubusercontent.com/arloor/iptablesUtils/
 
 ```yaml
 default_host:
+  - location: /https://gist.githubusercontent.com
+    upstream:
+      scheme_and_authority: https://gist.githubusercontent.com
+      replacement:
+  - location: /https://gist.github.com
+    upstream:
+      scheme_and_authority: https://gist.github.com
+      replacement:
   - location: /https://github.com
     upstream:
       scheme_and_authority: https://github.com
