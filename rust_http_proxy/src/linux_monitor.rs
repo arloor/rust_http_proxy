@@ -36,9 +36,9 @@ pub(crate) const IGNORED_INTERFACES: &[&str; 7] =
 #[derive(Clone)]
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     transmit_counter: Arc<socket_filter::TransmitCounter>,
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     cgroup_transmit_counter: Arc<cgroup_traffic::CgroupTransmitCounter>,
 }
 const TOTAL_SECONDS: u64 = 900;
@@ -48,21 +48,21 @@ impl NetMonitor {
     pub fn new() -> Result<NetMonitor, crate::DynError> {
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
-            #[cfg(feature = "bpf")]
+            #[cfg(all(target_os = "linux", feature = "bpf"))]
             cgroup_transmit_counter: Arc::new(cgroup_traffic::init_cgroup_skb_monitor(
                 cgroup_traffic::SELF,
             )?),
-            #[cfg(feature = "bpf")]
+            #[cfg(all(target_os = "linux", feature = "bpf"))]
             transmit_counter: Arc::new(socket_filter::TransmitCounter::new(IGNORED_INTERFACES)?),
         })
     }
 
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) fn get_cgroup_egress(&self) -> u64 {
         self.cgroup_transmit_counter.get_egress()
     }
 
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) fn get_cgroup_ingress(&self) -> u64 {
         self.cgroup_transmit_counter.get_ingress()
     }
@@ -102,11 +102,11 @@ impl NetMonitor {
         });
     }
 
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub fn get_egress(&self) -> u64 {
         self.transmit_counter.get_egress()
     }
-    #[cfg(feature = "bpf")]
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub fn get_ingress(&self) -> u64 {
         self.transmit_counter.get_ingress()
     }
