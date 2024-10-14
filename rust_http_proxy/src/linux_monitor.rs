@@ -46,14 +46,24 @@ const INTERVAL_SECONDS: u64 = 5;
 const SIZE: usize = TOTAL_SECONDS as usize / INTERVAL_SECONDS as usize;
 impl NetMonitor {
     pub fn new() -> Result<NetMonitor, crate::DynError> {
+        #[cfg(all(target_os = "linux", feature = "bpf"))]
+        use std::mem::MaybeUninit;
+        #[cfg(all(target_os = "linux", feature = "bpf"))]
+        let (cgroup_traffic_counter, links) = cgroup_traffic::init_cgroup_skb_monitor(
+            Box::leak(Box::new(MaybeUninit::uninit())),
+            cgroup_traffic::SELF,
+        )?;
+        #[cfg(all(target_os = "linux", feature = "bpf"))]
+        Box::leak(Box::new(links));
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
             #[cfg(all(target_os = "linux", feature = "bpf"))]
-            cgroup_transmit_counter: Arc::new(cgroup_traffic::init_cgroup_skb_monitor(
-                cgroup_traffic::SELF,
-            )?),
+            cgroup_transmit_counter: Arc::new(cgroup_traffic_counter),
             #[cfg(all(target_os = "linux", feature = "bpf"))]
-            transmit_counter: Arc::new(socket_filter::TransmitCounter::new(IGNORED_INTERFACES)?),
+            transmit_counter: Arc::new(socket_filter::TransmitCounter::new(
+                Box::leak(Box::new(MaybeUninit::uninit())),
+                IGNORED_INTERFACES,
+            )?),
         })
     }
 
