@@ -37,9 +37,9 @@ pub(crate) const IGNORED_INTERFACES: &[&str; 7] =
 static SOCKET_FILTER: std::sync::LazyLock<Option<socket_filter::TransmitCounter>> =
     std::sync::LazyLock::new(|| {
         let open_object = Box::leak(Box::new(std::mem::MaybeUninit::uninit())); // make the ebpf prog lives as long as the process.
-        match socket_filter::TransmitCounter::init(open_object, IGNORED_INTERFACES) {
-            Ok(skel) => {
-                return Option::Some(socket_filter::TransmitCounter(skel));
+        match socket_filter::TransmitCounter::new(open_object, IGNORED_INTERFACES) {
+            Ok(transmit_counter) => {
+                return Option::Some(transmit_counter);
             }
             Err(e) => {
                 warn!("socket_filter::TransmitCounter::init error: {}", e);

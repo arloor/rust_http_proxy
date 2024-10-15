@@ -50,7 +50,8 @@ serde_yaml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-socket_filter = { version = "0.2", optional = true }
+# socket_filter = { version = "0.2", optional = true }
+socket_filter = { git = "https://github.com/arloor/bpf_rs_hub", optional = true }
 cgroup_traffic = { version = "0.2", optional = true }
 libbpf-sys = { version = "1", optional = true }
 pnet = { version = "0.35", optional = true }
