@@ -56,7 +56,7 @@ libbpf-sys = { version = "1", optional = true }
 pnet = { version = "0.35", optional = true }
 
 [features]
-default = ["ring"]
+default = ["ring", "bpf"]
 jemalloc = ["jemallocator"]
 bpf = ["socket_filter", "cgroup_traffic"]
 bpf_vendored = ["bpf", "socket_filter/vendored"]

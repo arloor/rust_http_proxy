@@ -33,11 +33,24 @@ impl TimeValue {
 pub(crate) const IGNORED_INTERFACES: &[&str; 7] =
     &["lo", "podman", "veth", "flannel", "cni0", "utun", "docker"];
 
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+static SOCKET_FILTER: std::sync::LazyLock<Option<socket_filter::TransmitCounter>> =
+    std::sync::LazyLock::new(|| {
+        let open_object = Box::leak(Box::new(std::mem::MaybeUninit::uninit())); // make the ebpf prog lives as long as the process.
+        match socket_filter::TransmitCounter::init(open_object, IGNORED_INTERFACES) {
+            Ok(skel) => {
+                return Option::Some(socket_filter::TransmitCounter(skel));
+            }
+            Err(e) => {
+                warn!("socket_filter::TransmitCounter::init error: {}", e);
+                Option::None
+            }
+        }
+    });
+
 #[derive(Clone)]
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    transmit_counter: Arc<socket_filter::TransmitCounter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     cgroup_transmit_counter: Arc<cgroup_traffic::CgroupTransmitCounter>,
 }
@@ -59,11 +72,6 @@ impl NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
             #[cfg(all(target_os = "linux", feature = "bpf"))]
             cgroup_transmit_counter: Arc::new(cgroup_traffic_counter),
-            #[cfg(all(target_os = "linux", feature = "bpf"))]
-            transmit_counter: Arc::new(socket_filter::TransmitCounter::new(
-                Box::leak(Box::new(MaybeUninit::uninit())),
-                IGNORED_INTERFACES,
-            )?),
         })
     }
 
@@ -114,11 +122,17 @@ impl NetMonitor {
 
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub fn get_egress(&self) -> u64 {
-        self.transmit_counter.get_egress()
+        match SOCKET_FILTER.as_ref() {
+            Some(counter) => counter.get_egress(),
+            None => 0,
+        }
     }
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub fn get_ingress(&self) -> u64 {
-        self.transmit_counter.get_ingress()
+        match SOCKET_FILTER.as_ref() {
+            Some(counter) => counter.get_ingress(),
+            None => 0,
+        }
     }
 
     // Inter-|   Receive                                                |  Transmit
