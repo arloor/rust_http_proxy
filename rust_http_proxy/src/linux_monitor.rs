@@ -74,7 +74,7 @@ const SIZE: usize = TOTAL_SECONDS as usize / INTERVAL_SECONDS as usize;
 impl NetMonitor {
     pub fn new() -> Result<NetMonitor, crate::DynError> {
         #[cfg(all(target_os = "linux", feature = "bpf"))]
-        init_cgroup_skb_monitor_once();
+        init_bpf_once();
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
         })
@@ -165,11 +165,12 @@ impl NetMonitor {
 }
 
 #[cfg(all(target_os = "linux", feature = "bpf"))]
-fn init_cgroup_skb_monitor_once() {
+fn init_bpf_once() {
     static INIT_ONCE: std::sync::Once = std::sync::Once::new();
     INIT_ONCE.call_once(|| {
-        log::info!("init CGROUP_TRANSMIT_COUNTER");
+        log::info!("init bpf programs");
         CGROUP_TRANSMIT_COUNTER.as_ref(); // trigger the lazy init.
+        SOCKET_FILTER.as_ref(); // trigger the lazy init.
     });
 }
 
