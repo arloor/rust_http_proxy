@@ -55,7 +55,8 @@ static CGROUP_TRANSMIT_COUNTER: std::sync::LazyLock<Option<cgroup_traffic::Cgrou
         match cgroup_traffic::init_cgroup_skb_monitor(open_object, cgroup_traffic::SELF) {
             Ok((cgroup_transmit_counter, links)) => {
                 Box::leak(Box::new(links)); // make the ebpf prog lives as long as the process.
-                Option::Some(cgroup_transmit_counter)},
+                Option::Some(cgroup_transmit_counter)
+            }
             Err(e) => {
                 warn!("cgroup_traffic::init_cgroup_skb_monitor error: {}", e);
                 Option::None
@@ -72,6 +73,8 @@ const INTERVAL_SECONDS: u64 = 5;
 const SIZE: usize = TOTAL_SECONDS as usize / INTERVAL_SECONDS as usize;
 impl NetMonitor {
     pub fn new() -> Result<NetMonitor, crate::DynError> {
+        #[cfg(all(target_os = "linux", feature = "bpf"))]
+        init_cgroup_skb_monitor_once();
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
         })
@@ -159,6 +162,15 @@ impl NetMonitor {
             builder.body(full_body(body))
         }
     }
+}
+
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+fn init_cgroup_skb_monitor_once() {
+    static INIT_ONCE: std::sync::Once = std::sync::Once::new();
+    INIT_ONCE.call_once(|| {
+        log::info!("init CGROUP_TRANSMIT_COUNTER");
+        CGROUP_TRANSMIT_COUNTER.as_ref(); // trigger the lazy init.
+    });
 }
 
 pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
