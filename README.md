@@ -148,10 +148,10 @@ default_host:
     upstream:
       scheme_and_authority: https://github.com
       replacement:
-  - location: /github-production-release
+  - location: /https://objects.githubusercontent.com
     upstream:
       scheme_and_authority: https://objects.githubusercontent.com
-      replacement: /github-production-release
+      replacement: 
   - location: /https://raw.githubusercontent.com
     upstream:
       scheme_and_authority: https://raw.githubusercontent.com
