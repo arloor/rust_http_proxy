@@ -48,41 +48,33 @@ static SOCKET_FILTER: std::sync::LazyLock<Option<socket_filter::TransmitCounter>
         }
     });
 
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+static CGROUP_TRANSMIT_COUNTER: std::sync::LazyLock<Option<cgroup_traffic::CgroupTransmitCounter>> =
+    std::sync::LazyLock::new(|| {
+        let open_object = Box::leak(Box::new(std::mem::MaybeUninit::uninit())); // make the ebpf prog lives as long as the process.
+        match cgroup_traffic::init_cgroup_skb_monitor(open_object, cgroup_traffic::SELF) {
+            Ok((cgroup_transmit_counter, links)) => {
+                Box::leak(Box::new(links)); // make the ebpf prog lives as long as the process.
+                Option::Some(cgroup_transmit_counter)},
+            Err(e) => {
+                warn!("cgroup_traffic::init_cgroup_skb_monitor error: {}", e);
+                Option::None
+            }
+        }
+    });
+
 #[derive(Clone)]
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    cgroup_transmit_counter: Arc<cgroup_traffic::CgroupTransmitCounter>,
 }
 const TOTAL_SECONDS: u64 = 900;
 const INTERVAL_SECONDS: u64 = 5;
 const SIZE: usize = TOTAL_SECONDS as usize / INTERVAL_SECONDS as usize;
 impl NetMonitor {
     pub fn new() -> Result<NetMonitor, crate::DynError> {
-        #[cfg(all(target_os = "linux", feature = "bpf"))]
-        use std::mem::MaybeUninit;
-        #[cfg(all(target_os = "linux", feature = "bpf"))]
-        let (cgroup_traffic_counter, links) = cgroup_traffic::init_cgroup_skb_monitor(
-            Box::leak(Box::new(MaybeUninit::uninit())),
-            cgroup_traffic::SELF,
-        )?;
-        #[cfg(all(target_os = "linux", feature = "bpf"))]
-        Box::leak(Box::new(links));
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
-            #[cfg(all(target_os = "linux", feature = "bpf"))]
-            cgroup_transmit_counter: Arc::new(cgroup_traffic_counter),
         })
-    }
-
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) fn get_cgroup_egress(&self) -> u64 {
-        self.cgroup_transmit_counter.get_egress()
-    }
-
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) fn get_cgroup_ingress(&self) -> u64 {
-        self.cgroup_transmit_counter.get_ingress()
     }
 
     async fn fetch_all(&self) -> Vec<TimeValue> {
@@ -95,16 +87,16 @@ impl NetMonitor {
     }
 
     pub(crate) fn start(&self) {
-        let self_clone = self.clone();
+        let buffer_clone = self.buffer.clone();
         tokio::spawn(async move {
             let mut last: u64 = 0;
             loop {
                 {
-                    let new = self_clone.get_egress();
+                    let new = get_egress();
                     if last != 0 {
                         let system_time = SystemTime::now();
                         let datetime: DateTime<Local> = system_time.into();
-                        let mut buffer = self_clone.buffer.write().await;
+                        let mut buffer = buffer_clone.write().await;
                         buffer.push_back(TimeValue::new(
                             datetime.format("%H:%M:%S").to_string(),
                             (new - last) * 8 / INTERVAL_SECONDS,
@@ -118,52 +110,6 @@ impl NetMonitor {
                 tokio::time::sleep(Duration::from_secs(INTERVAL_SECONDS)).await;
             }
         });
-    }
-
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub fn get_egress(&self) -> u64 {
-        match SOCKET_FILTER.as_ref() {
-            Some(counter) => counter.get_egress(),
-            None => 0,
-        }
-    }
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub fn get_ingress(&self) -> u64 {
-        match SOCKET_FILTER.as_ref() {
-            Some(counter) => counter.get_ingress(),
-            None => 0,
-        }
-    }
-
-    // Inter-|   Receive                                                |  Transmit
-    //      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
-    //         lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
-    //       ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
-    #[cfg(not(feature = "bpf"))]
-    pub fn get_egress(&self) -> u64 {
-        use std::fs;
-        if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
-            content = content.replace("\r\n", "\n");
-            let strs = content.split('\n');
-            let mut new: u64 = 0;
-            for str in strs {
-                let array: Vec<&str> = str.split_whitespace().collect();
-
-                if array.len() == 17 {
-                    let interface = *array.first().unwrap_or(&"");
-                    if IGNORED_INTERFACES
-                        .iter()
-                        .any(|&ignored| interface.starts_with(ignored))
-                    {
-                        continue;
-                    }
-                    new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
-                }
-            }
-            new
-        } else {
-            0
-        }
     }
 
     pub async fn speed(
@@ -244,3 +190,65 @@ const PART1: &str = include_str!("../html/part1.html");
 const PART2: &str = include_str!("../html/part2.html");
 const PART3: &str = include_str!("../html/part3.html");
 const PART4: &str = include_str!("../html/part4.html");
+
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+pub(crate) fn get_cgroup_egress() -> u64 {
+    match CGROUP_TRANSMIT_COUNTER.as_ref() {
+        Some(counter) => counter.get_egress(),
+        None => 0,
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+pub(crate) fn get_cgroup_ingress() -> u64 {
+    match CGROUP_TRANSMIT_COUNTER.as_ref() {
+        Some(counter) => counter.get_ingress(),
+        None => 0,
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+pub fn get_egress() -> u64 {
+    match SOCKET_FILTER.as_ref() {
+        Some(counter) => counter.get_egress(),
+        None => 0,
+    }
+}
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+pub fn get_ingress() -> u64 {
+    match SOCKET_FILTER.as_ref() {
+        Some(counter) => counter.get_ingress(),
+        None => 0,
+    }
+}
+
+// Inter-|   Receive                                                |  Transmit
+//      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+//         lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
+//       ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
+#[cfg(not(feature = "bpf"))]
+pub fn get_egress() -> u64 {
+    use std::fs;
+    if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
+        content = content.replace("\r\n", "\n");
+        let strs = content.split('\n');
+        let mut new: u64 = 0;
+        for str in strs {
+            let array: Vec<&str> = str.split_whitespace().collect();
+
+            if array.len() == 17 {
+                let interface = *array.first().unwrap_or(&"");
+                if IGNORED_INTERFACES
+                    .iter()
+                    .any(|&ignored| interface.starts_with(ignored))
+                {
+                    continue;
+                }
+                new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
+            }
+        }
+        new
+    } else {
+        0
+    }
+}

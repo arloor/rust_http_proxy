@@ -148,7 +148,8 @@ impl ProxyHandler {
                         .reverse_proxy_req
                         .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
                             client: client_socket_addr.ip().to_canonical().to_string(),
-                            origin: origin_scheme_host_port.to_string() + location_config.location.as_str(),
+                            origin: origin_scheme_host_port.to_string()
+                                + location_config.location.as_str(),
                             upstream: location_config.upstream.scheme_and_authority.clone()
                                 + location_config.upstream.replacement.as_str(),
                         }))
@@ -417,6 +418,8 @@ impl ProxyHandler {
 
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) fn snapshot_metrics(&self) {
+        use crate::linux_monitor;
+
         {
             self.metrics
                 .net_bytes
@@ -425,7 +428,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    self.linux_monitor.get_egress(),
+                    linux_monitor::get_egress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
             self.metrics
@@ -435,7 +438,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    self.linux_monitor.get_ingress(),
+                    linux_monitor::get_ingress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
 
@@ -446,7 +449,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    self.linux_monitor.get_cgroup_egress(),
+                    linux_monitor::get_cgroup_egress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
             self.metrics
@@ -456,7 +459,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    self.linux_monitor.get_cgroup_ingress(),
+                    linux_monitor::get_cgroup_ingress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
         }
