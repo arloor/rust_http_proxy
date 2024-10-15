@@ -418,8 +418,7 @@ impl ProxyHandler {
 
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) fn snapshot_metrics(&self) {
-        use crate::linux_monitor;
-
+        use crate::ebpf;
         {
             self.metrics
                 .net_bytes
@@ -427,20 +426,14 @@ impl ProxyHandler {
                     direction: "egress",
                 }))
                 .inner()
-                .store(
-                    linux_monitor::get_egress(),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
             self.metrics
                 .net_bytes
                 .get_or_create(&LabelImpl::new(NetDirectionLabel {
                     direction: "ingress",
                 }))
                 .inner()
-                .store(
-                    linux_monitor::get_ingress(),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
 
             self.metrics
                 .cgroup_bytes
@@ -449,7 +442,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    linux_monitor::get_cgroup_egress(),
+                    ebpf::get_cgroup_egress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
             self.metrics
@@ -459,7 +452,7 @@ impl ProxyHandler {
                 }))
                 .inner()
                 .store(
-                    linux_monitor::get_cgroup_ingress(),
+                    ebpf::get_cgroup_ingress(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
         }

@@ -33,37 +33,6 @@ impl TimeValue {
 pub(crate) const IGNORED_INTERFACES: &[&str; 7] =
     &["lo", "podman", "veth", "flannel", "cni0", "utun", "docker"];
 
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-static SOCKET_FILTER: std::sync::LazyLock<Option<socket_filter::TransmitCounter>> =
-    std::sync::LazyLock::new(|| {
-        let open_object = Box::leak(Box::new(std::mem::MaybeUninit::uninit())); // make the ebpf prog lives as long as the process.
-        match socket_filter::TransmitCounter::new(open_object, IGNORED_INTERFACES) {
-            Ok(transmit_counter) => {
-                return Option::Some(transmit_counter);
-            }
-            Err(e) => {
-                warn!("socket_filter::TransmitCounter::init error: {}", e);
-                Option::None
-            }
-        }
-    });
-
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-static CGROUP_TRANSMIT_COUNTER: std::sync::LazyLock<Option<cgroup_traffic::CgroupTransmitCounter>> =
-    std::sync::LazyLock::new(|| {
-        let open_object = Box::leak(Box::new(std::mem::MaybeUninit::uninit())); // make the ebpf prog lives as long as the process.
-        match cgroup_traffic::init_cgroup_skb_monitor(open_object, cgroup_traffic::SELF) {
-            Ok((cgroup_transmit_counter, links)) => {
-                Box::leak(Box::new(links)); // make the ebpf prog lives as long as the process.
-                Option::Some(cgroup_transmit_counter)
-            }
-            Err(e) => {
-                warn!("cgroup_traffic::init_cgroup_skb_monitor error: {}", e);
-                Option::None
-            }
-        }
-    });
-
 #[derive(Clone)]
 pub struct NetMonitor {
     buffer: Arc<RwLock<VecDeque<TimeValue>>>,
@@ -73,8 +42,6 @@ const INTERVAL_SECONDS: u64 = 5;
 const SIZE: usize = TOTAL_SECONDS as usize / INTERVAL_SECONDS as usize;
 impl NetMonitor {
     pub fn new() -> Result<NetMonitor, crate::DynError> {
-        #[cfg(all(target_os = "linux", feature = "bpf"))]
-        init_bpf_once();
         Ok(NetMonitor {
             buffer: Arc::new(RwLock::new(VecDeque::<TimeValue>::new())),
         })
@@ -95,6 +62,9 @@ impl NetMonitor {
             let mut last: u64 = 0;
             loop {
                 {
+                    #[cfg(feature = "bpf")]
+                    let new = crate::ebpf::get_egress();
+                    #[cfg(not(feature = "bpf"))]
                     let new = get_egress();
                     if last != 0 {
                         let system_time = SystemTime::now();
@@ -164,16 +134,6 @@ impl NetMonitor {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-fn init_bpf_once() {
-    static INIT_ONCE: std::sync::Once = std::sync::Once::new();
-    INIT_ONCE.call_once(|| {
-        log::info!("init bpf programs");
-        CGROUP_TRANSMIT_COUNTER.as_ref(); // trigger the lazy init.
-        SOCKET_FILTER.as_ref(); // trigger the lazy init.
-    });
-}
-
 pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     match std::process::Command::new("sh")
             .arg("-c")
@@ -203,37 +163,6 @@ const PART1: &str = include_str!("../html/part1.html");
 const PART2: &str = include_str!("../html/part2.html");
 const PART3: &str = include_str!("../html/part3.html");
 const PART4: &str = include_str!("../html/part4.html");
-
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-pub(crate) fn get_cgroup_egress() -> u64 {
-    match CGROUP_TRANSMIT_COUNTER.as_ref() {
-        Some(counter) => counter.get_egress(),
-        None => 0,
-    }
-}
-
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-pub(crate) fn get_cgroup_ingress() -> u64 {
-    match CGROUP_TRANSMIT_COUNTER.as_ref() {
-        Some(counter) => counter.get_ingress(),
-        None => 0,
-    }
-}
-
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-pub fn get_egress() -> u64 {
-    match SOCKET_FILTER.as_ref() {
-        Some(counter) => counter.get_egress(),
-        None => 0,
-    }
-}
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-pub fn get_ingress() -> u64 {
-    match SOCKET_FILTER.as_ref() {
-        Some(counter) => counter.get_ingress(),
-        None => 0,
-    }
-}
 
 // Inter-|   Receive                                                |  Transmit
 //      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed

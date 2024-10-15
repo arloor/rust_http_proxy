@@ -4,6 +4,8 @@
 mod acceptor;
 mod address;
 mod config;
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+mod ebpf;
 mod http1_client;
 mod ip_x;
 #[cfg(target_os = "linux")]
@@ -61,7 +63,8 @@ async fn main() -> Result<(), DynError> {
     #[cfg(feature = "jemalloc")]
     info!("jemalloc is enabled");
     handle_signal()?;
-
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
+    crate::ebpf::init_once();
     let futures = ports
         .iter()
         .map(|port| {
