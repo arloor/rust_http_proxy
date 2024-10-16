@@ -15,6 +15,13 @@ use crate::tls_helper::tls_config;
 use crate::{DynError, IDLE_TIMEOUT, REFRESH_INTERVAL};
 
 pub(crate) const DEFAULT_HOST: &str = "default_host";
+const GITHUB_DOMAINS: [&str; 5] = [
+    "https://github.com",
+    "https://gist.githubusercontent.com",
+    "https://gist.github.com",
+    "https://objects.githubusercontent.com",
+    "https://raw.githubusercontent.com",
+];
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
 #[derive(Parser)]
@@ -87,6 +94,8 @@ pub struct Param {
         help = r#"是否开启github proxy"#
     )]
     enable_github_proxy: bool,
+    #[arg(long, value_name = "TRIM_DEFAULT_HOST_FOR")]
+    trim_default_host_for: Vec<String>,
 }
 
 pub(crate) struct Config {
@@ -143,21 +152,20 @@ impl TryFrom<Param> for Config {
                 Some(path) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
                 None => HashMap::new(),
             };
+        let mut trim_default_host_for = param.trim_default_host_for;
         if param.enable_github_proxy {
+            GITHUB_DOMAINS.iter().for_each(|domain| {
+                trim_default_host_for.push((*domain).to_owned());
+            });
+        }
+        if !trim_default_host_for.is_empty() {
             if !reverse_proxy_config.contains_key(DEFAULT_HOST) {
                 reverse_proxy_config.insert(DEFAULT_HOST.to_string(), vec![]);
             }
             if let Some(vec) = reverse_proxy_config.get_mut(DEFAULT_HOST) {
-                let github_domains = [
-                    "https://github.com",
-                    "https://gist.githubusercontent.com",
-                    "https://gist.github.com",
-                    "https://objects.githubusercontent.com",
-                    "https://raw.githubusercontent.com",
-                ];
-                github_domains.iter().for_each(|domain| {
+                trim_default_host_for.iter().for_each(|domain| {
                     vec.push(LocationConfig {
-                        location: "/".to_string() + *domain,
+                        location: "/".to_string() + domain,
                         upstream: crate::reverse::Upstream {
                             scheme_and_authority: (*domain).to_owned(),
                             replacement: "".to_string(),
