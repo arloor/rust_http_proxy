@@ -10,6 +10,7 @@ use std::{
 
 use crate::{
     address::host_addr,
+    config,
     http1_client::HttpClient,
     ip_x::SocketAddrFormat,
     reverse::{self, LocationConfig, Upstream},
@@ -67,7 +68,7 @@ pub(crate) struct Metrics {
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) cgroup_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
-const DEFAULT_HOST: &str = "default_host";
+
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
@@ -131,7 +132,7 @@ impl ProxyHandler {
                 .config
                 .reverse_proxy_config
                 .get(&origin_scheme_host_port.host)
-                .or(self.config.reverse_proxy_config.get(DEFAULT_HOST))
+                .or(self.config.reverse_proxy_config.get(config::DEFAULT_HOST))
             {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     let upstream_req = build_upstream_req(req, location_config)?;
@@ -644,7 +645,7 @@ fn lookup_replacement(
                 format!("*://{}:*{}**", ele.host, ele.location),
             );
             let host = match ele.host.as_str() {
-                DEFAULT_HOST => &origin_scheme_host_port.host, // 如果是default_host，就用当前host
+                config::DEFAULT_HOST => &origin_scheme_host_port.host, // 如果是default_host，就用当前host
                 other => other,
             };
             let port_part = if let Some(port) = origin_scheme_host_port.port {

@@ -3,26 +3,6 @@ default_host:
     upstream:
       scheme_and_authority: https://models.inference.ai.azure.com
       replacement: /chat/completions
-  - location: /https://gist.githubusercontent.com
-    upstream:
-      scheme_and_authority: https://gist.githubusercontent.com
-      replacement:
-  - location: /https://gist.github.com
-    upstream:
-      scheme_and_authority: https://gist.github.com
-      replacement:
-  - location: /https://github.com
-    upstream:
-      scheme_and_authority: https://github.com
-      replacement:
-  - location: /https://objects.githubusercontent.com
-    upstream:
-      scheme_and_authority: https://objects.githubusercontent.com
-      replacement: 
-  - location: /https://raw.githubusercontent.com
-    upstream:
-      scheme_and_authority: https://raw.githubusercontent.com
-      replacement:
 other_host:
   - location: / # 默认为 /
     upstream:

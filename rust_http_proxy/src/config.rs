@@ -14,6 +14,8 @@ use crate::reverse::LocationConfig;
 use crate::tls_helper::tls_config;
 use crate::{DynError, IDLE_TIMEOUT, REFRESH_INTERVAL};
 
+pub(crate) const DEFAULT_HOST: &str = "default_host";
+
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
 #[derive(Parser)]
 #[command(author, version=None, about, long_about = None)]
@@ -79,6 +81,12 @@ pub struct Param {
     hostname: String,
     #[arg(long, value_name = "REVERSE_PROXY", help = r#"反向代理配置文件"#)]
     reverse_proxy_config_file: Option<String>,
+    #[arg(
+        long,
+        value_name = "ENABLE_GITHUB_PROXY",
+        help = r#"是否开启github proxy"#
+    )]
+    enable_github_proxy: bool,
 }
 
 pub(crate) struct Config {
@@ -130,7 +138,7 @@ impl TryFrom<Param> for Config {
         } else {
             None
         };
-        let reverse_proxy_config: HashMap<String, Vec<LocationConfig>> =
+        let mut reverse_proxy_config: HashMap<String, Vec<LocationConfig>> =
             match param.reverse_proxy_config_file {
                 Some(path) => {
                     let mut result: HashMap<String, Vec<LocationConfig>> =
@@ -142,6 +150,30 @@ impl TryFrom<Param> for Config {
                 }
                 None => HashMap::new(),
             };
+        if param.enable_github_proxy {
+            if !reverse_proxy_config.contains_key(DEFAULT_HOST) {
+                reverse_proxy_config.insert(DEFAULT_HOST.to_string(), vec![]);
+            }
+            if let Some(vec) = reverse_proxy_config.get_mut(DEFAULT_HOST) {
+                let github_domains = [
+                    "https://github.com",
+                    "https://gist.githubusercontent.com",
+                    "https://gist.github.com",
+                    "https://objects.githubusercontent.com",
+                    "https://raw.githubusercontent.com",
+                ];
+                github_domains.iter().for_each(|domain| {
+                    vec.push(LocationConfig {
+                        location: "/".to_string() + *domain,
+                        upstream: crate::reverse::Upstream {
+                            scheme_and_authority: (*domain).to_owned(),
+                            replacement: "".to_string(),
+                            version: crate::reverse::Version::Auto,
+                        },
+                    });
+                });
+            }
+        }
         Ok(Config {
             cert: param.cert,
             key: param.key,

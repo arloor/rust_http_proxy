@@ -53,7 +53,8 @@
                 "-o",
                 "--never-ask-for-auth",
                 "-r=arloor",
-                "--reverse-proxy-config-file=.vscode/reverse_proxy.yaml"
+                "--reverse-proxy-config-file=.vscode/reverse_proxy.yaml",
+                "--enable-github-proxy"
             ],
             "env": {
                 "HOSTNAME": "test"
