@@ -140,14 +140,7 @@ impl TryFrom<Param> for Config {
         };
         let mut reverse_proxy_config: HashMap<String, Vec<LocationConfig>> =
             match param.reverse_proxy_config_file {
-                Some(path) => {
-                    let mut result: HashMap<String, Vec<LocationConfig>> =
-                        serde_yaml::from_str(&std::fs::read_to_string(path)?)?;
-                    result
-                        .iter_mut()
-                        .for_each(|(_, reverse_proxy_configs)| reverse_proxy_configs.sort());
-                    result
-                }
+                Some(path) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
                 None => HashMap::new(),
             };
         if param.enable_github_proxy {
@@ -174,6 +167,9 @@ impl TryFrom<Param> for Config {
                 });
             }
         }
+        reverse_proxy_config
+            .iter_mut()
+            .for_each(|(_, reverse_proxy_configs)| reverse_proxy_configs.sort());
         Ok(Config {
             cert: param.cert,
             key: param.key,
