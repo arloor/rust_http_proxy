@@ -68,7 +68,7 @@ pub struct Param {
         2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控\n\
         可以多次指定"
     )]
-    referers_point_to_self: Vec<String>,
+    referer_keywords_to_self: Vec<String>,
     #[arg(
         long,
         help = "if enable, never send '407 Proxy Authentication Required' to client。\n\
@@ -99,7 +99,7 @@ pub(crate) struct Config {
     pub(crate) key: String,
     pub(crate) basic_auth: HashMap<String, String>,
     pub(crate) web_content_path: String,
-    pub(crate) referers_point_to_self: Vec<String>,
+    pub(crate) referer_keywords_to_self: Vec<String>,
     pub(crate) never_ask_for_auth: bool,
     pub(crate) over_tls: bool,
     #[allow(dead_code)]
@@ -179,7 +179,7 @@ impl TryFrom<Param> for Config {
             key: param.key,
             basic_auth,
             web_content_path: param.web_content_path,
-            referers_point_to_self: param.referers_point_to_self,
+            referer_keywords_to_self: param.referer_keywords_to_self,
             never_ask_for_auth: param.never_ask_for_auth,
             over_tls: param.over_tls,
             hostname: param.hostname,
@@ -253,10 +253,10 @@ fn log_config(config: &Config) {
         warn!("do not serve web content to avoid being detected!");
     } else {
         info!("serve web content of \"{}\"", config.web_content_path);
-        if !config.referers_point_to_self.is_empty() {
+        if !config.referer_keywords_to_self.is_empty() {
             info!(
-                "Referer header to images must contain \"{:?}\"",
-                config.referers_point_to_self
+                "Referer header to images must contain {:?}",
+                config.referer_keywords_to_self
             );
         }
     }
