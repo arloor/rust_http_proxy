@@ -66,7 +66,7 @@ pub struct Param {
         help = "Http Referer请求头处理 \n\
         1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值\n\
         2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控\n\
-        可以多次指定"
+        可以多次指定，也可以不指定"
     )]
     referer_keywords_to_self: Vec<String>,
     #[arg(
@@ -89,7 +89,7 @@ pub struct Param {
         help = "便捷反向代理配置\n\
         例如：--append-upstream-url=https://cdnjs.cloudflare.com\n\
         则访问 https://your_domain/cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com\n\
-        通常，这个url不以'/'结尾"
+        注意！这个url的PATH需要为空"
     )]
     append_upstream_url: Vec<String>,
 }

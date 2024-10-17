@@ -79,7 +79,7 @@ Options:
           Http Referer请求头处理 
           1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值
           2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控
-          可以多次指定
+          可以多次指定，也可以不指定
       --never-ask-for-auth
           if enable, never send '407 Proxy Authentication Required' to client。
           不建议开启，否则有被嗅探的风险
@@ -95,7 +95,7 @@ Options:
           便捷反向代理配置
           例如：--append-upstream-url=https://cdnjs.cloudflare.com
           则访问 https://your_domain/cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
-          通常，这个url不以'/'结尾
+          注意！这个url的PATH需要为空
   -h, --help
           Print help
 ```
