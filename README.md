@@ -94,7 +94,7 @@ Options:
       --append-upstream-url <https://example.com>
           便捷反向代理配置
           例如：--append-upstream-url=https://cdnjs.cloudflare.com
-          则访问 https://your_domain/cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
+          则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
           注意！这个url的PATH需要为空
   -h, --help
           Print help
