@@ -73,7 +73,47 @@ Options:
           默认为空，表示不鉴权。
           格式为 'username:password'
           可以多次指定来实现多用户
-           [default: ]
+A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving
+
+Usage: rust_http_proxy [OPTIONS]
+
+Options:
+      --log-dir <LOG_DIR>
+          [default: /tmp]
+      --log-file <LOG_FILE>
+          [default: proxy.log]
+  -p, --port <PORT>
+          可以多次指定来实现多端口
+           [default: 3128]
+  -c, --cert <CERT>
+          [default: cert.pem]
+  -k, --key <KEY>
+          [default: privkey.pem]
+  -u, --users <USER>
+          默认为空，表示不鉴权。
+          格式为 'username:password'
+          可以多次指定来实现多用户
+          
+A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving
+
+Usage: rust_http_proxy [OPTIONS]
+
+Options:
+      --log-dir <LOG_DIR>
+          [default: /tmp]
+      --log-file <LOG_FILE>
+          [default: proxy.log]
+  -p, --port <PORT>
+          可以多次指定来实现多端口
+           [default: 3128]
+  -c, --cert <CERT>
+          [default: cert.pem]
+  -k, --key <KEY>
+          [default: privkey.pem]
+  -u, --users <USER>
+          默认为空，表示不鉴权。
+          格式为 'username:password'
+          可以多次指定来实现多用户
   -w, --web-content-path <WEB_CONTENT_PATH>
           [default: /usr/share/nginx/html]
   -r, --referer <REFERER>
@@ -84,13 +124,19 @@ Options:
       --never-ask-for-auth
           if enable, never send '407 Proxy Authentication Required' to client。
           不建议开启，否则有被嗅探的风险
-          
   -o, --over-tls
           if enable, proxy server will listen on https
       --hostname <HOSTNAME>
           [default: unknown]
-      --reverse-proxy-config-file <REVERSE_PROXY>
+      --reverse-proxy-config-file <FILE_PATH>
           反向代理配置文件
+      --enable-github-proxy
+          是否开启github proxy
+      --append-upstream-url <https://example.com>
+          便捷反向代理配置
+          例如：--append-upstream-url=https://cdnjs.cloudflare.com
+          则访问 https://your_domain/cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
+          通常，这个url不以'/'结尾
   -h, --help
           Print help
 ```
@@ -128,11 +174,8 @@ YOUR_DOMAIN:
 
 在github原始url前加上`https://YOUR_DOMAIN`，以便在国内访问raw.githubusercontent.com、github.com和gist.githubusercontent.com
 
-```bash
-curl https://YOUR_DOMAIN/https://raw.githubusercontent.com/arloor/iptablesUtils/master/natcfg.sh
-```
 
-配置文件如下：
+增加 `--enable-github-proxy`，或手动置顶下面的反向代理配置文件：
 
 ```yaml
 default_host:

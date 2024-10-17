@@ -49,7 +49,7 @@ pub struct Param {
         value_name = "USER",
         help = "默认为空，表示不鉴权。\n\
     格式为 'username:password'\n\
-    可以多次指定来实现多用户\n"
+    可以多次指定来实现多用户"
     )]
     users: Vec<String>,
     #[arg(
@@ -72,7 +72,7 @@ pub struct Param {
     #[arg(
         long,
         help = "if enable, never send '407 Proxy Authentication Required' to client。\n\
-    不建议开启，否则有被嗅探的风险\n"
+    不建议开启，否则有被嗅探的风险"
     )]
     never_ask_for_auth: bool,
     #[arg(short, long, help = "if enable, proxy server will listen on https")]
@@ -88,7 +88,8 @@ pub struct Param {
         value_name = "https://example.com",
         help = "便捷反向代理配置\n\
         例如：--append-upstream-url=https://cdnjs.cloudflare.com\n\
-        则访问 https://your_domain/cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com"
+        则访问 https://your_domain/cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com\n\
+        通常，这个url不以'/'结尾"
     )]
     append_upstream_url: Vec<String>,
 }
