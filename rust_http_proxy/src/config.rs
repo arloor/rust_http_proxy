@@ -15,7 +15,7 @@ use crate::tls_helper::tls_config;
 use crate::{DynError, IDLE_TIMEOUT, REFRESH_INTERVAL};
 
 pub(crate) const DEFAULT_HOST: &str = "default_host";
-const GITHUB_DOMAINS: [&str; 5] = [
+const GITHUB_BASE_URLS: [&str; 5] = [
     "https://github.com",
     "https://gist.githubusercontent.com",
     "https://gist.github.com",
@@ -47,7 +47,6 @@ pub struct Param {
         short,
         long,
         value_name = "USER",
-        default_value = "",
         help = "默认为空，表示不鉴权。\n\
     格式为 'username:password'\n\
     可以多次指定来实现多用户\n"
@@ -66,36 +65,32 @@ pub struct Param {
         value_name = "REFERER",
         default_value = "",
         help = "Http Referer请求头处理 \n\
-    1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么配置的值\n\
-    2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控\n"
+        1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么配置的值\n\
+        2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控\n"
     )]
     referer: String,
     #[arg(
         long,
-        value_name = "ASK_FOR_AUTH",
         help = "if enable, never send '407 Proxy Authentication Required' to client。\n\
     不建议开启，否则有被嗅探的风险\n"
     )]
     never_ask_for_auth: bool,
-    #[arg(
-        short,
-        long,
-        value_name = "OVER_TLS",
-        help = "if enable, proxy server will listen on https"
-    )]
+    #[arg(short, long, help = "if enable, proxy server will listen on https")]
     over_tls: bool,
     #[arg(long, value_name = "HOSTNAME", default_value = "unknown")]
     hostname: String,
-    #[arg(long, value_name = "REVERSE_PROXY", help = r#"反向代理配置文件"#)]
+    #[arg(long, value_name = "FILE_PATH", help = r#"反向代理配置文件"#)]
     reverse_proxy_config_file: Option<String>,
+    #[arg(long, help = r#"是否开启github proxy"#)]
+    enable_github_proxy: bool,
     #[arg(
         long,
-        value_name = "ENABLE_GITHUB_PROXY",
-        help = r#"是否开启github proxy"#
+        value_name = "https://example.com",
+        help = "便捷反向代理配置\n\
+        例如：--append-upstream-url=https://cdnjs.cloudflare.com\n\
+        则访问 https://your_domain/cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com"
     )]
-    enable_github_proxy: bool,
-    #[arg(long, value_name = "TRIM_DEFAULT_HOST_FOR")]
-    trim_default_host_for: Vec<String>,
+    append_upstream_url: Vec<String>,
 }
 
 pub(crate) struct Config {
@@ -152,18 +147,18 @@ impl TryFrom<Param> for Config {
                 Some(path) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
                 None => HashMap::new(),
             };
-        let mut trim_default_host_for = param.trim_default_host_for;
+        let mut append_upstream_urls = param.append_upstream_url;
         if param.enable_github_proxy {
-            GITHUB_DOMAINS.iter().for_each(|domain| {
-                trim_default_host_for.push((*domain).to_owned());
+            GITHUB_BASE_URLS.iter().for_each(|domain| {
+                append_upstream_urls.push((*domain).to_owned());
             });
         }
-        if !trim_default_host_for.is_empty() {
+        if !append_upstream_urls.is_empty() {
             if !reverse_proxy_config.contains_key(DEFAULT_HOST) {
                 reverse_proxy_config.insert(DEFAULT_HOST.to_string(), vec![]);
             }
             if let Some(vec) = reverse_proxy_config.get_mut(DEFAULT_HOST) {
-                trim_default_host_for.iter().for_each(|domain| {
+                append_upstream_urls.iter().for_each(|domain| {
                     vec.push(LocationConfig {
                         location: "/".to_string() + domain,
                         upstream: crate::reverse::Upstream {
