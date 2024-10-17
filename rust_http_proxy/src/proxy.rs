@@ -642,7 +642,7 @@ fn lookup_replacement(
             info!(
                 "redirect back path for {}** is {}",
                 ele.redirect_url,
-                format!("*://{}:*{}**", ele.host, ele.location),
+                format!("http(s)://{}:port{}**", ele.host, ele.location),
             );
             let host = match ele.host.as_str() {
                 config::DEFAULT_HOST => &origin_scheme_host_port.host, // 如果是default_host，就用当前host

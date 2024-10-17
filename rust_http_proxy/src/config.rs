@@ -271,7 +271,10 @@ fn log_config(config: &Config) {
             for ele in reverse_proxy_config.1 {
                 info!(
                     "    {:<70} -> {}{}**",
-                    format!("*://{}:*{}**", reverse_proxy_config.0, ele.location),
+                    format!(
+                        "http(s)://{}:port{}**",
+                        reverse_proxy_config.0, ele.location
+                    ),
                     ele.upstream.scheme_and_authority,
                     ele.upstream.replacement
                 );
