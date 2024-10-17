@@ -43,17 +43,20 @@ pub async fn serve_http_request(
     path: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let web_content_path = &proxy_handler.config.web_content_path;
-    let refer = &proxy_handler.config.referer;
+    let referers_point_to_self = &proxy_handler.config.referers_point_to_self;
     let referer_header = req
         .headers()
         .get(REFERER)
         .map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
-        && !refer.is_empty()
+        && !referers_point_to_self.is_empty()
         && !referer_header.is_empty()
     {
-        // 拒绝图片盗链
-        if !referer_header.contains(refer) {
+        // 如果referer_header不包含任何一个refers，则返回404
+        if !referers_point_to_self
+            .iter()
+            .any(|refer| referer_header.contains(refer))
+        {
             warn!(
                 "{} wrong Referer Header \"{}\" from [{}]",
                 path,
@@ -96,8 +99,9 @@ pub async fn serve_http_request(
         }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
-                && !referer_header.is_empty()
-                && !referer_header.contains(refer);
+                && !referer_header.is_empty() // 存在Referer Header
+                && !referers_point_to_self.is_empty() // Referer关键字不为空
+                && !referers_point_to_self.iter().any(|refer| referer_header.contains(refer));
             info!(
                 "{:>29} {:<5} {:^7} {} {:?} {}",
                 "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),

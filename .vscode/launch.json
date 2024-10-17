@@ -55,7 +55,7 @@
                 "-r=arloor",
                 "--reverse-proxy-config-file=.vscode/reverse_proxy.yaml",
                 "--enable-github-proxy",
-                "--trim-default-host-for=https://cdnjs.cloudflare.com"
+                "--append-upstream-url=https://cdnjs.cloudflare.com"
             ],
             "env": {
                 "HOSTNAME": "test"
