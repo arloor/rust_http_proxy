@@ -88,7 +88,7 @@ pub struct Param {
         value_name = "https://example.com",
         help = "便捷反向代理配置\n\
         例如：--append-upstream-url=https://cdnjs.cloudflare.com\n\
-        则访问 https://your_domain/cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com\n\
+        则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com\n\
         注意！这个url的PATH需要为空"
     )]
     append_upstream_url: Vec<String>,
