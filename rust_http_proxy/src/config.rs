@@ -64,7 +64,7 @@ pub struct Param {
         long,
         value_name = "REFERER",
         help = "Http Referer请求头处理 \n\
-        1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么配置的值\n\
+        1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值\n\
         2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控\n\
         可以多次指定"
     )]
