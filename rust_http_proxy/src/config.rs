@@ -15,7 +15,7 @@ use crate::tls_helper::tls_config;
 use crate::{DynError, IDLE_TIMEOUT, REFRESH_INTERVAL};
 
 pub(crate) const DEFAULT_HOST: &str = "default_host";
-const GITHUB_BASE_URLS: [&str; 5] = [
+const GITHUB_SCHEME_AND_AUTHORITY: [&str; 5] = [
     "https://github.com",
     "https://gist.githubusercontent.com",
     "https://gist.github.com",
@@ -150,7 +150,7 @@ impl TryFrom<Param> for Config {
             };
         let mut append_upstream_urls = param.append_upstream_url;
         if param.enable_github_proxy {
-            GITHUB_BASE_URLS.iter().for_each(|domain| {
+            GITHUB_SCHEME_AND_AUTHORITY.iter().for_each(|domain| {
                 append_upstream_urls.push((*domain).to_owned());
             });
         }
