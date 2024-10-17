@@ -73,54 +73,13 @@ Options:
           默认为空，表示不鉴权。
           格式为 'username:password'
           可以多次指定来实现多用户
-A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving
-
-Usage: rust_http_proxy [OPTIONS]
-
-Options:
-      --log-dir <LOG_DIR>
-          [default: /tmp]
-      --log-file <LOG_FILE>
-          [default: proxy.log]
-  -p, --port <PORT>
-          可以多次指定来实现多端口
-           [default: 3128]
-  -c, --cert <CERT>
-          [default: cert.pem]
-  -k, --key <KEY>
-          [default: privkey.pem]
-  -u, --users <USER>
-          默认为空，表示不鉴权。
-          格式为 'username:password'
-          可以多次指定来实现多用户
-          
-A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving
-
-Usage: rust_http_proxy [OPTIONS]
-
-Options:
-      --log-dir <LOG_DIR>
-          [default: /tmp]
-      --log-file <LOG_FILE>
-          [default: proxy.log]
-  -p, --port <PORT>
-          可以多次指定来实现多端口
-           [default: 3128]
-  -c, --cert <CERT>
-          [default: cert.pem]
-  -k, --key <KEY>
-          [default: privkey.pem]
-  -u, --users <USER>
-          默认为空，表示不鉴权。
-          格式为 'username:password'
-          可以多次指定来实现多用户
   -w, --web-content-path <WEB_CONTENT_PATH>
           [default: /usr/share/nginx/html]
-  -r, --referer <REFERER>
+  -r, --referer-keywords-to-self <REFERER>
           Http Referer请求头处理 
           1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么配置的值
           2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控
-           [default: ]
+          可以多次指定
       --never-ask-for-auth
           if enable, never send '407 Proxy Authentication Required' to client。
           不建议开启，否则有被嗅探的风险
