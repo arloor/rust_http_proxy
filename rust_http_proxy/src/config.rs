@@ -194,7 +194,7 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
     let mut param = Param::parse();
     param.hostname = get_hostname();
     if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
-        panic!("init log error:{}", log_init_error);
+        return Err(format!("init log error:{}", log_init_error).into());
     }
     #[cfg(all(feature = "ring", not(feature = "aws_lc_rs")))]
     {
@@ -213,33 +213,39 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
             match location_config.upstream.scheme_and_authority.parse::<Uri>() {
                 Ok(scheme_and_authority) => {
                     if scheme_and_authority.scheme().is_none() {
-                        panic!(
+                        return Err(format!(
                             "wrong scheme_and_authority: {} --- scheme is empty",
                             location_config.upstream.scheme_and_authority
-                        );
+                        )
+                        .into());
                     }
                     if scheme_and_authority.authority().is_none() {
-                        panic!(
+                        return Err(format!(
                             "wrong scheme_and_authority: {} --- authority is empty",
                             location_config.upstream.scheme_and_authority
-                        );
+                        )
+                        .into());
                     }
                     if scheme_and_authority.path() != "/"
                         || location_config.upstream.scheme_and_authority.ends_with("/")
                     {
-                        panic!(
+                        return Err(format!(
                             "wrong scheme_and_authority: {} --- path is not empty",
                             location_config.upstream.scheme_and_authority
-                        );
+                        )
+                        .into());
                     }
                     if scheme_and_authority.query().is_some() {
-                        panic!(
+                        return Err(format!(
                             "wrong scheme_and_authority: {} --- query is not empty",
                             location_config.upstream.scheme_and_authority
-                        );
+                        )
+                        .into());
                     }
                 }
-                Err(e) => panic!("parse upstream scheme_and_authority error:{}", e),
+                Err(e) => {
+                    return Err(format!("parse upstream scheme_and_authority error:{}", e).into())
+                }
             }
         }
     }
