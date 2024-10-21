@@ -37,7 +37,7 @@ use hyper::{
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use log::{info, trace, warn};
+use log::{info, warn};
 use percent_encoding::percent_decode_str;
 use prom_label::Label;
 use prometheus_client::{
@@ -56,7 +56,6 @@ pub struct ProxyHandler {
     pub(crate) linux_monitor: crate::linux_monitor::NetMonitor,
     http1_client: HttpClient<Incoming>,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
-    redirect_bachpaths: Vec<RedirectBackpaths>,
 }
 
 pub(crate) struct Metrics {
@@ -80,22 +79,6 @@ impl ProxyHandler {
         let reverse_client = build_hyper_legacy_client();
         let http1_client = HttpClient::<Incoming>::new();
 
-        let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
-        for (host, locations) in &config.reverse_proxy_config {
-            for location in locations {
-                redirect_bachpaths.push(RedirectBackpaths {
-                    redirect_url: location.upstream.scheme_and_authority.clone()
-                        + location.upstream.replacement.as_str(),
-                    host: host.clone(),
-                    location: location.location.clone(),
-                });
-            }
-        }
-        redirect_bachpaths.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
-        for ele in redirect_bachpaths.iter() {
-            trace!("find redirect back path for: {}**", ele.redirect_url);
-        }
-
         #[cfg(target_os = "linux")]
         let monitor = crate::linux_monitor::NetMonitor::new()?;
         #[cfg(target_os = "linux")]
@@ -109,7 +92,6 @@ impl ProxyHandler {
             reverse_client,
             http1_client,
             config,
-            redirect_bachpaths,
         })
     }
     pub async fn proxy(
@@ -131,8 +113,13 @@ impl ProxyHandler {
             if let Some(locations) = self
                 .config
                 .reverse_proxy_config
+                .locations
                 .get(&origin_scheme_host_port.host)
-                .or(self.config.reverse_proxy_config.get(config::DEFAULT_HOST))
+                .or(self
+                    .config
+                    .reverse_proxy_config
+                    .locations
+                    .get(config::DEFAULT_HOST))
             {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     let upstream_req = build_upstream_req(req, location_config)?;
@@ -392,7 +379,7 @@ impl ProxyHandler {
                     if let Some(replacement) = lookup_replacement(
                         context.origin_scheme_host_port,
                         absolute_redirect_location,
-                        &self.redirect_bachpaths,
+                        &self.config.reverse_proxy_config.redirect_bachpaths,
                     ) {
                         let origin = headers.insert(
                             LOCATION,
@@ -626,16 +613,10 @@ struct ReverseReqContext<'a> {
     origin_scheme_host_port: &'a SchemeHostPort,
 }
 
-struct RedirectBackpaths {
-    redirect_url: String,
-    host: String,
-    location: String,
-}
-
 fn lookup_replacement(
     origin_scheme_host_port: &SchemeHostPort,
     absolute_redirect_location: String,
-    redirect_bachpaths: &[RedirectBackpaths],
+    redirect_bachpaths: &[config::RedirectBackpaths],
 ) -> Option<String> {
     for ele in redirect_bachpaths.iter() {
         if absolute_redirect_location.starts_with(ele.redirect_url.as_str()) {

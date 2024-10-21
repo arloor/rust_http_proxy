@@ -105,13 +105,13 @@ pub(crate) struct Config {
     #[allow(dead_code)]
     pub(crate) hostname: String,
     pub(crate) port: Vec<u16>,
-    pub(crate) reverse_proxy_config: HashMap<String, Vec<LocationConfig>>,
+    pub(crate) reverse_proxy_config: ReverseProxyConfig,
     pub(crate) tls_config_broadcast: Option<broadcast::Sender<Arc<ServerConfig>>>,
 }
 
 impl TryFrom<Param> for Config {
     type Error = DynError;
-    fn try_from(param: Param) -> Result<Self, Self::Error> {
+    fn try_from(mut param: Param) -> Result<Self, Self::Error> {
         let mut basic_auth = HashMap::new();
         for raw_user in param.users {
             let mut user = raw_user.split(':');
@@ -143,37 +143,11 @@ impl TryFrom<Param> for Config {
         } else {
             None
         };
-        let mut reverse_proxy_config: HashMap<String, Vec<LocationConfig>> =
-            match param.reverse_proxy_config_file {
-                Some(path) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
-                None => HashMap::new(),
-            };
-        let mut append_upstream_urls = param.append_upstream_url;
-        if param.enable_github_proxy {
-            GITHUB_SCHEME_AND_AUTHORITY.iter().for_each(|domain| {
-                append_upstream_urls.push((*domain).to_owned());
-            });
-        }
-        if !append_upstream_urls.is_empty() {
-            if !reverse_proxy_config.contains_key(DEFAULT_HOST) {
-                reverse_proxy_config.insert(DEFAULT_HOST.to_string(), vec![]);
-            }
-            if let Some(vec) = reverse_proxy_config.get_mut(DEFAULT_HOST) {
-                append_upstream_urls.iter().for_each(|domain| {
-                    vec.push(LocationConfig {
-                        location: "/".to_string() + domain,
-                        upstream: crate::reverse::Upstream {
-                            scheme_and_authority: (*domain).to_owned(),
-                            replacement: "".to_string(),
-                            version: crate::reverse::Version::Auto,
-                        },
-                    });
-                });
-            }
-        }
-        reverse_proxy_config
-            .iter_mut()
-            .for_each(|(_, reverse_proxy_configs)| reverse_proxy_configs.sort());
+        let reverse_proxy_config = parse_reverse_proxy_config(
+            &param.reverse_proxy_config_file,
+            &mut param.append_upstream_url,
+            param.enable_github_proxy,
+        )?;
         Ok(Config {
             cert: param.cert,
             key: param.key,
@@ -188,6 +162,72 @@ impl TryFrom<Param> for Config {
             tls_config_broadcast,
         })
     }
+}
+
+pub(crate) struct ReverseProxyConfig {
+    pub(crate) locations: HashMap<String, Vec<LocationConfig>>,
+    pub(crate) redirect_bachpaths: Vec<RedirectBackpaths>,
+}
+
+fn parse_reverse_proxy_config(
+    reverse_proxy_config_file: &Option<String>,
+    append_upstream_url: &mut Vec<String>,
+    enable_github_proxy: bool,
+) -> Result<ReverseProxyConfig, <Config as TryFrom<Param>>::Error> {
+    let mut locations: HashMap<String, Vec<LocationConfig>> = match reverse_proxy_config_file {
+        Some(path) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
+        None => HashMap::new(),
+    };
+    if enable_github_proxy {
+        GITHUB_SCHEME_AND_AUTHORITY.iter().for_each(|domain| {
+            append_upstream_url.push((*domain).to_owned());
+        });
+    }
+    if !append_upstream_url.is_empty() {
+        if !locations.contains_key(DEFAULT_HOST) {
+            locations.insert(DEFAULT_HOST.to_string(), vec![]);
+        }
+        if let Some(vec) = locations.get_mut(DEFAULT_HOST) {
+            append_upstream_url.iter().for_each(|domain| {
+                vec.push(LocationConfig {
+                    location: "/".to_string() + domain,
+                    upstream: crate::reverse::Upstream {
+                        scheme_and_authority: (*domain).to_owned(),
+                        replacement: "".to_string(),
+                        version: crate::reverse::Version::Auto,
+                    },
+                });
+            });
+        }
+    }
+    locations
+        .iter_mut()
+        .for_each(|(_, reverse_proxy_configs)| reverse_proxy_configs.sort());
+    let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
+    for (host, locations) in &locations {
+        for location in locations {
+            redirect_bachpaths.push(RedirectBackpaths {
+                redirect_url: location.upstream.scheme_and_authority.clone()
+                    + location.upstream.replacement.as_str(),
+                host: host.clone(),
+                location: location.location.clone(),
+            });
+        }
+    }
+    redirect_bachpaths.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
+    for ele in redirect_bachpaths.iter() {
+        log::trace!("find redirect back path for: {}**", ele.redirect_url);
+    }
+    Ok(ReverseProxyConfig {
+        locations,
+        redirect_bachpaths,
+    })
+}
+
+pub(crate) struct RedirectBackpaths {
+    pub(crate) redirect_url: String,
+    pub(crate) host: String,
+    pub(crate) location: String,
 }
 
 pub(crate) fn load_config() -> Result<Config, DynError> {
@@ -208,7 +248,7 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
     }
     info!("hostname seems to be {}", param.hostname);
     let config = Config::try_from(param)?;
-    for ele in &config.reverse_proxy_config {
+    for ele in &config.reverse_proxy_config.locations {
         for location_config in ele.1 {
             match location_config.upstream.scheme_and_authority.parse::<Uri>() {
                 Ok(scheme_and_authority) => {
@@ -267,11 +307,12 @@ fn log_config(config: &Config) {
         }
     }
     info!("basic auth is {:?}", config.basic_auth);
-    if !config.reverse_proxy_config.is_empty() {
+    if !config.reverse_proxy_config.locations.is_empty() {
         info!("reverse proxy config: ");
     }
     config
         .reverse_proxy_config
+        .locations
         .iter()
         .for_each(|reverse_proxy_config| {
             for ele in reverse_proxy_config.1 {
