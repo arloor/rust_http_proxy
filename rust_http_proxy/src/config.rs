@@ -88,8 +88,7 @@ pub struct Param {
         value_name = "https://example.com",
         help = "便捷反向代理配置\n\
         例如：--append-upstream-url=https://cdnjs.cloudflare.com\n\
-        则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com\n\
-        注意！这个url的PATH需要为空"
+        则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com"
     )]
     append_upstream_url: Vec<String>,
 }
@@ -169,6 +168,15 @@ pub(crate) struct ReverseProxyConfig {
     pub(crate) redirect_bachpaths: Vec<RedirectBackpaths>,
 }
 
+fn truncate_string(s: &str, n: usize) -> &str {
+    let len = s.len();
+    if n >= len {
+        ""
+    } else {
+        &s[..len - n]
+    }
+}
+
 fn parse_reverse_proxy_config(
     reverse_proxy_config_file: &Option<String>,
     append_upstream_url: &mut Vec<String>,
@@ -188,15 +196,34 @@ fn parse_reverse_proxy_config(
             locations.insert(DEFAULT_HOST.to_string(), vec![]);
         }
         if let Some(vec) = locations.get_mut(DEFAULT_HOST) {
-            append_upstream_url.iter().for_each(|domain| {
-                vec.push(LocationConfig {
-                    location: "/".to_string() + domain,
-                    upstream: crate::reverse::Upstream {
-                        scheme_and_authority: (*domain).to_owned(),
-                        replacement: "".to_string(),
-                        version: crate::reverse::Version::Auto,
-                    },
-                });
+            append_upstream_url.iter().for_each(|upstream_url| {
+                match upstream_url.parse::<Uri>() {
+                    Ok(upstream_url) => {
+                        if upstream_url.query().is_some() {
+                            warn!("query is not supported in upstream_url:{}", upstream_url);
+                            return;
+                        }
+                        let upstream_url_tmp = upstream_url.to_string();
+                        let scheme_and_authority =
+                            truncate_string(upstream_url_tmp.as_str(), upstream_url.path().len());
+                        let path = match upstream_url.path() {
+                            "/" => "",
+                            other => other,
+                        };
+
+                        vec.push(LocationConfig {
+                            location: "/".to_string() + scheme_and_authority + path,
+                            upstream: crate::reverse::Upstream {
+                                scheme_and_authority: (*scheme_and_authority).to_owned(),
+                                replacement: path.to_string(),
+                                version: crate::reverse::Version::Auto,
+                            },
+                        });
+                    }
+                    Err(err) => {
+                        warn!("parse upstream_url error:{}", err);
+                    }
+                };
             });
         }
     }
