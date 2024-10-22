@@ -15,7 +15,7 @@ use crate::tls_helper::tls_config;
 use crate::{DynError, IDLE_TIMEOUT, REFRESH_INTERVAL};
 
 pub(crate) const DEFAULT_HOST: &str = "default_host";
-const GITHUB_SCHEME_AND_AUTHORITY: [&str; 5] = [
+const GITHUB_URL_BASE: [&str; 5] = [
     "https://github.com",
     "https://gist.githubusercontent.com",
     "https://gist.github.com",
@@ -187,7 +187,7 @@ fn parse_reverse_proxy_config(
         None => HashMap::new(),
     };
     if enable_github_proxy {
-        GITHUB_SCHEME_AND_AUTHORITY.iter().for_each(|domain| {
+        GITHUB_URL_BASE.iter().for_each(|domain| {
             append_upstream_url.push((*domain).to_owned());
         });
     }
@@ -204,7 +204,7 @@ fn parse_reverse_proxy_config(
                             return;
                         }
                         let upstream_url_tmp = upstream_url.to_string();
-                        let scheme_and_authority =
+                        let upstream_url_base =
                             truncate_string(upstream_url_tmp.as_str(), upstream_url.path().len());
                         let path = match upstream_url.path() {
                             "/" => "",
@@ -212,10 +212,9 @@ fn parse_reverse_proxy_config(
                         };
 
                         vec.push(LocationConfig {
-                            location: "/".to_string() + scheme_and_authority + path,
+                            location: "/".to_string() + upstream_url_base + path,
                             upstream: crate::reverse::Upstream {
-                                scheme_and_authority: (*scheme_and_authority).to_owned(),
-                                replacement: path.to_string(),
+                                url_base: (*upstream_url_base).to_owned() + path,
                                 version: crate::reverse::Version::Auto,
                             },
                         });
@@ -230,12 +229,55 @@ fn parse_reverse_proxy_config(
     locations
         .iter_mut()
         .for_each(|(_, reverse_proxy_configs)| reverse_proxy_configs.sort());
+    for ele in &locations {
+        for location_config in ele.1 {
+            if location_config.location.is_empty() {
+                return Err("location is empty, location should start with '/'".into());
+            }
+            if location_config.location.ends_with('/')
+                && !location_config.upstream.url_base.ends_with('/')
+            {
+                return Err(format!(
+                    "location ends with '/', but upstream_url_base not: {}",
+                    location_config.upstream.url_base
+                )
+                .into());
+            }
+            match location_config.upstream.url_base.parse::<Uri>() {
+                Ok(upstream_url_base) => {
+                    if upstream_url_base.scheme().is_none() {
+                        return Err(format!(
+                            "wrong upstream_url_base: {} --- scheme is empty",
+                            location_config.upstream.url_base
+                        )
+                        .into());
+                    }
+                    if upstream_url_base.authority().is_none() {
+                        return Err(format!(
+                            "wrong upstream_url_base: {} --- authority is empty",
+                            location_config.upstream.url_base
+                        )
+                        .into());
+                    }
+                    if upstream_url_base.query().is_some() {
+                        return Err(format!(
+                            "wrong upstream_url_base: {} --- query is not empty",
+                            location_config.upstream.url_base
+                        )
+                        .into());
+                    }
+                }
+                Err(e) => {
+                    return Err(format!("parse upstream upstream_url_base error:{}", e).into())
+                }
+            }
+        }
+    }
     let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
     for (host, locations) in &locations {
         for location in locations {
             redirect_bachpaths.push(RedirectBackpaths {
-                redirect_url: location.upstream.scheme_and_authority.clone()
-                    + location.upstream.replacement.as_str(),
+                redirect_url: location.upstream.url_base.clone(),
                 host: host.clone(),
                 location: location.location.clone(),
             });
@@ -275,47 +317,6 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
     }
     info!("hostname seems to be {}", param.hostname);
     let config = Config::try_from(param)?;
-    for ele in &config.reverse_proxy_config.locations {
-        for location_config in ele.1 {
-            match location_config.upstream.scheme_and_authority.parse::<Uri>() {
-                Ok(scheme_and_authority) => {
-                    if scheme_and_authority.scheme().is_none() {
-                        return Err(format!(
-                            "wrong scheme_and_authority: {} --- scheme is empty",
-                            location_config.upstream.scheme_and_authority
-                        )
-                        .into());
-                    }
-                    if scheme_and_authority.authority().is_none() {
-                        return Err(format!(
-                            "wrong scheme_and_authority: {} --- authority is empty",
-                            location_config.upstream.scheme_and_authority
-                        )
-                        .into());
-                    }
-                    if scheme_and_authority.path() != "/"
-                        || location_config.upstream.scheme_and_authority.ends_with("/")
-                    {
-                        return Err(format!(
-                            "wrong scheme_and_authority: {} --- path is not empty",
-                            location_config.upstream.scheme_and_authority
-                        )
-                        .into());
-                    }
-                    if scheme_and_authority.query().is_some() {
-                        return Err(format!(
-                            "wrong scheme_and_authority: {} --- query is not empty",
-                            location_config.upstream.scheme_and_authority
-                        )
-                        .into());
-                    }
-                }
-                Err(e) => {
-                    return Err(format!("parse upstream scheme_and_authority error:{}", e).into())
-                }
-            }
-        }
-    }
     log_config(&config);
     info!("auto close connection after idle for {:?}", IDLE_TIMEOUT);
     Ok(config)
@@ -344,13 +345,12 @@ fn log_config(config: &Config) {
         .for_each(|reverse_proxy_config| {
             for ele in reverse_proxy_config.1 {
                 info!(
-                    "    {:<70} -> {}{}**",
+                    "    {:<70} -> {}**",
                     format!(
                         "http(s)://{}:port{}**",
                         reverse_proxy_config.0, ele.location
                     ),
-                    ele.upstream.scheme_and_authority,
-                    ele.upstream.replacement
+                    ele.upstream.url_base,
                 );
             }
         });

@@ -138,8 +138,7 @@ impl ProxyHandler {
                             client: client_socket_addr.ip().to_canonical().to_string(),
                             origin: origin_scheme_host_port.to_string()
                                 + location_config.location.as_str(),
-                            upstream: location_config.upstream.scheme_and_authority.clone()
-                                + location_config.upstream.replacement.as_str(),
+                            upstream: location_config.upstream.url_base.clone(),
                         }))
                         .inc();
                     self.metrics
@@ -483,19 +482,11 @@ fn build_upstream_req(
         Some(path_and_query) => path_and_query.as_str(),
         None => "",
     };
-    let url = format!(
-        "{}{}",
-        location_config.upstream.scheme_and_authority.clone(),
-        location_config.upstream.replacement.clone()
-            + &path_and_query[location_config.location.len()..]
-    );
+    let url = location_config.upstream.url_base.clone()
+        + &path_and_query[location_config.location.len()..];
 
     let mut builder = Request::builder().method(method).uri(url).version(
-        if !location_config
-            .upstream
-            .scheme_and_authority
-            .starts_with("https:")
-        {
+        if !location_config.upstream.url_base.starts_with("https:") {
             match location_config.upstream.version {
                 reverse::Version::H1 => Version::HTTP_11,
                 reverse::Version::H2 => Version::HTTP_2,
@@ -658,10 +649,7 @@ fn ensure_absolute(
         .parse::<Uri>()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     if redirect_url.scheme_str().is_none() {
-        Ok(format!(
-            "{}{}",
-            context.upstream.scheme_and_authority, location
-        ))
+        Ok(format!("{}{}", context.upstream.url_base, location))
     } else {
         Ok(location.to_string())
     }
