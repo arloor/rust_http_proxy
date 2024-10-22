@@ -73,7 +73,7 @@ jobs:
         uses: arloor/rust_musl_action@latest
         with:
           use_musl: false
-          extra_deps: cmake zlib1g-dev libelf-dev libbpf-dev
+          extra_deps: cmake zlib1g-dev libelf-dev libbpf-dev pkg-config make
           after_install: |
             find / -name libelf.a
             find / -name libbpf.a
