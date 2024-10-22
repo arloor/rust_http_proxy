@@ -4,5 +4,4 @@
 proxy.log*
 .DS_Store
 vmlinux.h
-Cargo.lock
 .vscode/tasks.json
