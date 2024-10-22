@@ -206,6 +206,7 @@ fn parse_reverse_proxy_config(
                         let upstream_url_tmp = upstream_url.to_string();
                         let upstream_url_base =
                             truncate_string(upstream_url_tmp.as_str(), upstream_url.path().len());
+                        // 如果path==/，则去掉path
                         let path = match upstream_url.path() {
                             "/" => "",
                             other => other,
@@ -257,7 +258,7 @@ fn parse_reverse_proxy_config(
                         )
                         .into());
                     }
-                    // 在某些情况下，修正upstream.url_base
+                    // 在某些情况下，补全upstream.url_base最后的/
                     if location_config.location.ends_with('/')
                         && upstream_url_base.path() == "/"
                         && !location_config.upstream.url_base.ends_with('/')
