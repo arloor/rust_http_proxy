@@ -65,7 +65,7 @@ bpf_static = [
     "bpf",
     "libbpf-sys/static-zlib",
     "libbpf-sys/static-libelf",
-    "libbpf-sys/vendored-libbpf",
+    "libbpf-sys/static-libbpf",
 ]
 aws_lc_rs = ["tokio-rustls/aws-lc-rs", "hyper-rustls/aws-lc-rs"]
 ring = ["tokio-rustls/ring", "hyper-rustls/ring"]
