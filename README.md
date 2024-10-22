@@ -121,7 +121,7 @@ curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --pro
 YOUR_DOMAIN:
   - location: / # 默认为 /
     upstream:
-      url_base: https://www.baidu.com/ # 当location以/结尾时，url_base也必须以/结尾
+      url_base: https://www.baidu.com
       version: H1 # 可以填H1、H2、AUTO，默认为AUTO
 ```
 

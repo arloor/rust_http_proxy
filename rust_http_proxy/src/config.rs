@@ -229,19 +229,10 @@ fn parse_reverse_proxy_config(
     locations
         .iter_mut()
         .for_each(|(_, reverse_proxy_configs)| reverse_proxy_configs.sort());
-    for ele in &locations {
+    for ele in &mut locations {
         for location_config in ele.1 {
-            if location_config.location.is_empty() {
-                return Err("location is empty, location should start with '/'".into());
-            }
-            if location_config.location.ends_with('/')
-                && !location_config.upstream.url_base.ends_with('/')
-            {
-                return Err(format!(
-                    "location ends with '/', but upstream_url_base not: {}",
-                    location_config.upstream.url_base
-                )
-                .into());
+            if !location_config.location.starts_with('/') {
+                return Err("location should start with '/'".into());
             }
             match location_config.upstream.url_base.parse::<Uri>() {
                 Ok(upstream_url_base) => {
@@ -265,6 +256,13 @@ fn parse_reverse_proxy_config(
                             location_config.upstream.url_base
                         )
                         .into());
+                    }
+                    // 在某些情况下，修正upstream.url_base
+                    if location_config.location.ends_with('/')
+                        && upstream_url_base.path() == "/"
+                        && !location_config.upstream.url_base.ends_with('/')
+                    {
+                        location_config.upstream.url_base = upstream_url_base.to_string()
                     }
                 }
                 Err(e) => {
