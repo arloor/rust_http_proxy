@@ -50,17 +50,15 @@ serde_yaml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-socket_filter = { version = "0.2", optional = true }
-# socket_filter = { git = "https://github.com/arloor/bpf_rs_hub", optional = true }
-cgroup_traffic = { version = "0.2", optional = true }
-libbpf-sys = { version = "1", optional = true }
+socket_filter = { version = "0.2", optional = true, default-features = false }
+cgroup_traffic = { version = "0.2", optional = true, default-features = false }
 pnet = { version = "0.35", optional = true }
 
 [features]
 default = ["ring"]
 jemalloc = ["jemallocator"]
-bpf = ["socket_filter", "cgroup_traffic"]
-bpf_vendored = ["bpf", "socket_filter/vendored"]
-bpf_static = ["bpf", "socket_filter/static"]
+bpf = ["socket_filter/default", "cgroup_traffic/default"]
+bpf_vendored = ["socket_filter/vendored", "cgroup_traffic/vendored"]
+bpf_static = ["socket_filter/static", "cgroup_traffic/static"]
 aws_lc_rs = ["tokio-rustls/aws-lc-rs", "hyper-rustls/aws-lc-rs"]
 ring = ["tokio-rustls/ring", "hyper-rustls/ring"]
