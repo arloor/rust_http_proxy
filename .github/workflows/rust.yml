@@ -76,9 +76,9 @@ jobs:
           extra_deps: cmake zlib1g-dev libelf-dev pkg-config clang autoconf autopoint flex bison gawk make libbpf-dev
           after_install: |
             # ls -lh /usr/lib/x86_64-linux-gnu/libelf.a
-            export LIBBPF_SYS_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+            export LIBBPF_SYS_LIBRARY_PATH=/usr/lib:/usr/lib64
             echo LIBBPF_SYS_LIBRARY_PATH=$LIBBPF_SYS_LIBRARY_PATH
-          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,bpf_static -v
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,bpf_static
           apt_mirror: mirrors.mit.edu
           rust_flags: -C target-feature=+crt-static
           debug: false
