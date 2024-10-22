@@ -21,9 +21,7 @@ impl std::cmp::Ord for LocationConfig {
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, PartialOrd)]
 pub(crate) struct Upstream {
-    pub(crate) scheme_and_authority: String, // https://google.com
-    #[serde(default = "root")]
-    pub(crate) replacement: String, // /
+    pub(crate) url_base: String, // https://google.com
     #[serde(default = "default_version")]
     pub(crate) version: Version,
 }

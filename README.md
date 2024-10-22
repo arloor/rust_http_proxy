@@ -95,7 +95,6 @@ Options:
           便捷反向代理配置
           例如：--append-upstream-url=https://cdnjs.cloudflare.com
           则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
-          注意！这个url的PATH需要为空
   -h, --help
           Print help
 ```
@@ -122,9 +121,8 @@ curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --pro
 YOUR_DOMAIN:
   - location: / # 默认为 /
     upstream:
-      scheme_and_authority: https://www.baidu.com # 末尾不包含 /
-      replacement: / # 默认为 /
-      version: AUTO # 可以填H1、H2、AUTO，默认为AUTO
+      url_base: https://www.baidu.com/ # 当location以/结尾时，url_base也必须以/结尾
+      version: H1 # 可以填H1、H2、AUTO，默认为AUTO
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效
@@ -133,41 +131,45 @@ YOUR_DOMAIN:
 
 在github原始url前加上`https://YOUR_DOMAIN`，以便在国内访问raw.githubusercontent.com、github.com和gist.githubusercontent.com
 
-
-增加 `--enable-github-proxy`，或手动置顶下面的反向代理配置文件：
+启动参数中增加 `--enable-github-proxy`，相当于以下配置：
 
 ```yaml
 default_host:
   - location: /https://gist.githubusercontent.com
     upstream:
-      scheme_and_authority: https://gist.githubusercontent.com
-      replacement:
+      url_base: https://gist.githubusercontent.com
   - location: /https://gist.github.com
     upstream:
-      scheme_and_authority: https://gist.github.com
-      replacement:
+      url_base: https://gist.github.com
   - location: /https://github.com
     upstream:
-      scheme_and_authority: https://github.com
-      replacement:
+      url_base: https://github.com
   - location: /https://objects.githubusercontent.com
     upstream:
-      scheme_and_authority: https://objects.githubusercontent.com
-      replacement: 
+      url_base: https://objects.githubusercontent.com
   - location: /https://raw.githubusercontent.com
     upstream:
-      scheme_and_authority: https://raw.githubusercontent.com
-      replacement:
+      url_base: https://raw.githubusercontent.com
 ```
 
-#### 例子2: 改写Github Models的url为openai api的url格式
+#### 例子2： 反向代理https://cdnjs.cloudflare.com
+
+启动参数中增加 `--append-upstream-url=https://cdnjs.cloudflare.com`，相当于以下配置：
+
+```yaml
+default_host:
+  - location: /https://cdnjs.cloudflare.com
+    upstream:
+      url_base: https://cdnjs.cloudflare.com
+```
+
+#### 例子3: 改写Github Models的url为openai api的url格式
 
 ```yaml
 default_host:
   - location: /v1/chat/completions
     upstream:
-      scheme_and_authority: https://models.inference.ai.azure.com
-      replacement: /chat/completions
+      url_base: https://models.inference.ai.azure.com/chat/completions
 ```
 
 ## 可观测
