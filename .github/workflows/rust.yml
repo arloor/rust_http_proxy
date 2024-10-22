@@ -73,11 +73,11 @@ jobs:
         uses: arloor/rust_musl_action@latest
         with:
           use_musl: false
-          extra_deps: cmake zlib1g-dev libelf-dev libbpf-dev pkg-config make
+          extra_deps: cmake zlib1g-dev libelf-dev libbpf-dev pkg-config make clang
           after_install: |
-            find / -name libelf.a
-            find / -name libbpf.a
-            find / -name libz.a
+            # find / -name libelf.a
+            # find / -name libbpf.a
+            # find / -name libz.a
             export LIBBPF_SYS_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/x86_64-linux-gnu
             echo -e "\e[31mLIBBPF_SYS_LIBRARY_PATH=$LIBBPF_SYS_LIBRARY_PATH\e[0m"
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs,bpf_static -v
