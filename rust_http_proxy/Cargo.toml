@@ -61,11 +61,6 @@ default = ["ring"]
 jemalloc = ["jemallocator"]
 bpf = ["socket_filter", "cgroup_traffic"]
 bpf_vendored = ["bpf", "libbpf-sys/vendored"]
-bpf_static = [
-    "bpf",
-    "libbpf-sys/static-zlib",
-    "libbpf-sys/static-libelf",
-    "libbpf-sys/static-libbpf",
-]
+bpf_static = ["bpf", "libbpf-sys/static"]
 aws_lc_rs = ["tokio-rustls/aws-lc-rs", "hyper-rustls/aws-lc-rs"]
 ring = ["tokio-rustls/ring", "hyper-rustls/ring"]
