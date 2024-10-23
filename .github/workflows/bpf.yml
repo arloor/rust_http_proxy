@@ -1,0 +1,53 @@
+name: auto_release
+on:
+  push:
+    branches: [ "**"]
+  pull_request:
+    branches: [ "master" ]
+permissions:
+  contents: write
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  bpf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build bpf
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        id: build_bpf
+        uses: arloor/rust_musl_action@latest
+        with:
+          use_musl: false
+          extra_deps: cmake zlib1g-dev libelf-dev clang pkg-config make
+          after_install: |
+            # find / -name libelf.a
+            # find / -name libbpf.a
+            # find / -name libz.a
+            export LIBBPF_SYS_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/x86_64-linux-gnu
+            echo -e "\e[31mLIBBPF_SYS_LIBRARY_PATH=$LIBBPF_SYS_LIBRARY_PATH\e[0m"
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,bpf_static
+          apt_mirror: mirrors.mit.edu
+          rust_flags: -C target-feature=+crt-static
+          debug: false
+      - name: docker build and push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        run: |
+          ls -lh ${{ steps.build_bpf.outputs.release_dir }}
+          dockerfile="Dockerfile.static"
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf --build-arg TARGET_PATH=/x86_64-unknown-linux-gnu
+          podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
+          podman push docker.io/arloor/rust_http_proxy:bpf
+      - name: create bpf release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version='bpf'
+          if $(gh release delete ${version} -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
+          git config --local user.email "admin@arloor.com"
+          git config --local user.name "arloor"
+          gh release create ${version} ${{ steps.build_bpf.outputs.release_dir }}rust_http_proxy -n "$version" -t "$version" --prerelease

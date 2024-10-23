@@ -1,6 +1,7 @@
 {
     "github-actions.workflows.pinned.workflows": [
-        ".github/workflows/rust.yml"
+        ".github/workflows/standard.yml",
+        ".github/workflows/bpf.yml"
     ],
     "remote.autoForwardPorts": false
 }
