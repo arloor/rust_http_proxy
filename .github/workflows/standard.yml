@@ -1,4 +1,4 @@
-name: auto_release
+name: build_standard
 on:
   push:
     branches: [ "**"]

@@ -1,4 +1,4 @@
-name: auto_release
+name: build_bpf
 on:
   push:
     branches: [ "**"]
