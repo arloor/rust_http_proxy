@@ -24,7 +24,6 @@ function formatDataRateIEC(num, precision = -1) {
         } else {
             value = (num / Math.pow(k, c)).toPrecision(precision) + ' ' + sizes[c];
         }
-        console.log(value);
     }
     return value;
 }
