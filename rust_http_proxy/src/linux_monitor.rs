@@ -8,7 +8,7 @@ use log::warn;
 use std::collections::VecDeque;
 
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
@@ -109,10 +109,15 @@ impl NetMonitor {
         if max_up / interval > 10 {
             interval = (max_up / interval / 10) * interval;
         }
-        let body = format!(
-            "{} {}网速 {} {:?} {} {} {}  {:?} {}",
-            PART0, hostname, PART1, scales, PART2, interval, PART3, series_up, PART4
-        );
+        // 创建上下文并插入数据
+        let mut context = tera::Context::new();
+        context.insert("hostname", hostname);
+        context.insert("interval", &interval);
+        context.insert("series_up", format!("{:?}", series_up).as_str());
+        context.insert("scales", format!("{:?}", scales).as_str());
+
+        // 渲染模板
+        let body: String = TERA.render(NET_HTML, &context).unwrap_or("".to_string());
         let builder = Response::builder()
             .status(StatusCode::OK)
             .header(http::header::SERVER, SERVER_NAME)
@@ -158,11 +163,14 @@ pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     }
 }
 
-const PART0: &str = include_str!("../html/part0.html");
-const PART1: &str = include_str!("../html/part1.html");
-const PART2: &str = include_str!("../html/part2.html");
-const PART3: &str = include_str!("../html/part3.html");
-const PART4: &str = include_str!("../html/part4.html");
+const NET_HTML: &str = "net.html";
+const NET_HTML_TEMPLATE: &str = include_str!("../html/net.html");
+static TERA: LazyLock<tera::Tera> = LazyLock::new(|| {
+    let mut tmp = tera::Tera::default();
+    tmp.add_raw_template(NET_HTML, NET_HTML_TEMPLATE)
+        .unwrap_or(());
+    tmp
+});
 
 // Inter-|   Receive                                                |  Transmit
 //      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed

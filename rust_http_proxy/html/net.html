@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>{{ hostname }}网速</title>
+    <script src="https://www.arloor.com/echarts.min.js"></script>
+</head>
+
+<body style="margin: 0;height:100%;">
+    <div id="main" style="width: 100%;height: 100vh;"></div>
+    <script type="text/javascript" >
+        function formatDataRateIEC(num, precision = -1) {
+    if (num <= 0) {
+        value = '0b/s';
+    } else {
+        var k = 1024;
+        var sizes = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s', 'Pb/s', 'Eb/s', 'Zb/s', 'Yb/s'];
+        //这里是取自然对数，也就是log（k）（num），求出以k为底的多少次方是num
+        var c = Math.floor(Math.log(num) / Math.log(k));
+        if (precision == -1) {
+            value = (num / Math.pow(k, c)) + ' ' + sizes[c];
+        } else {
+            value = (num / Math.pow(k, c)).toPrecision(precision) + ' ' + sizes[c];
+        }
+        console.log(value);
+    }
+    return value;
+}
+var baseSeries = {
+    itemStyle: {
+        color: '#ef0000',
+    },
+    "markLine": {
+        "data": [{
+            "type": "average",
+            "name": "平均值"
+        }],
+        "label": {
+            formatter: value => formatDataRateIEC(value.value, 4)
+        }
+    },
+    "markPoint": {
+        "data": [{
+            "type": "max",
+            "name": "最大值"
+        }],
+        symbol: "roundRect",
+        symbolSize: [70, 30],
+        "label": {
+            formatter: value => formatDataRateIEC(value.value, 4)
+        }
+    },
+    "smooth": true,
+    "type": "line"
+}
+var xAxisData = {{ scales | safe }}
+var series = [
+    {
+        ...baseSeries,
+        "data": {{ series_up }},
+        "name": "上行网速",
+    },
+];
+// 指定图表的配置项和数据
+var option = {
+    title: {
+        text: ''
+    },
+    tooltip: {
+        trigger: 'axis',
+        formatter: series => {
+            return series[0].name + series.map(s => '<br/>' + s.seriesName + ': ' + formatDataRateIEC(s.value, 4)).join('');
+        }
+    },
+    legend: {
+        data: series.map(s => s.name)
+    },
+    toolbox: {
+        feature: {
+            mark: {
+                show: true
+            },
+            dataView: {
+                show: true,
+                readOnly: false
+            },
+            magicType: {
+                show: true,
+                type: ['line', 'bar']
+            },
+            restore: {
+                show: true
+            },
+            saveAsImage: {
+                show: true
+            }
+        }
+    },
+    xAxis: {
+        type: 'category',
+        boundaryGap: false,
+        data: xAxisData
+    },
+    yAxis: {
+        type: "value",
+        max: value => {
+            var k = 1024;
+            var c = Math.floor(Math.log(value.max) / Math.log(k));
+            interval = Math.pow(k, c);
+            return Math.ceil(value.max / interval) * interval;
+        },
+        interval: {{ interval }},
+        axisLabel: {
+            formatter: (value, index) => formatDataRateIEC(value)
+        },
+    },
+    series: series,
+    animation: false,
+    animationDuration: 5
+};
+// 基于准备好的dom，初始化echarts实例
+var myChart = echarts.init(document.getElementById('main'));
+// 使用刚指定的配置项和数据显示图表。
+myChart.setOption(option);
+    </script>
+</body>
+
+</html>
