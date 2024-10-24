@@ -262,7 +262,9 @@ async fn serve_path(
     }
     let mime_type = from_path(&path).first_or_octet_stream();
     let content_type = mime_type.as_ref();
-    let content_type = if !content_type.to_ascii_lowercase().contains("charset") {
+    let content_type = if !content_type.to_ascii_lowercase().contains("charset")
+        && !content_type.contains("wasm")
+    {
         format!("{}{}", &content_type, "; charset=utf-8")
     } else {
         String::from(content_type)
