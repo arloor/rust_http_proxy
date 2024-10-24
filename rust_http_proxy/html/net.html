@@ -62,6 +62,14 @@ var series = [
         "data": {{ series_up }},
         "name": "上行网速",
     },
+    {
+        ...baseSeries,
+        "data": {{ series_down }},
+        "name": "下行网速",
+        itemStyle: {
+            color: '#0f00f0',
+        },
+    },
 ];
 // 指定图表的配置项和数据
 var option = {

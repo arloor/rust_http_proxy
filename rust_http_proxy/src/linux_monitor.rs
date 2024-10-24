@@ -17,15 +17,17 @@ use crate::web_func::{build_500_resp, GZIP, SERVER_NAME};
 
 #[derive(Debug, Clone)]
 pub struct TimeValue {
-    pub _time: String,
-    pub _value: u64,
+    pub time: String,
+    pub egress: u64,
+    pub ingress: u64,
 }
 
 impl TimeValue {
-    pub fn new(time: String, value: u64) -> TimeValue {
+    pub fn new(time: String, egress: u64, ingress: u64) -> TimeValue {
         TimeValue {
-            _time: time,
-            _value: value,
+            time,
+            egress,
+            ingress,
         }
     }
 }
@@ -59,26 +61,29 @@ impl NetMonitor {
     pub(crate) fn start(&self) {
         let buffer_clone = self.buffer.clone();
         tokio::spawn(async move {
-            let mut last: u64 = 0;
+            let mut last_egress: u64 = 0;
+            let mut last_ingress: u64 = 0;
             loop {
                 {
                     #[cfg(feature = "bpf")]
-                    let new = crate::ebpf::get_egress();
+                    let new = (crate::ebpf::get_egress(), crate::ebpf::get_ingress());
                     #[cfg(not(feature = "bpf"))]
-                    let new = get_egress();
-                    if last != 0 {
+                    let new = get_egress_ingress();
+                    if last_egress != 0 || last_ingress != 0 {
                         let system_time = SystemTime::now();
                         let datetime: DateTime<Local> = system_time.into();
                         let mut buffer = buffer_clone.write().await;
                         buffer.push_back(TimeValue::new(
                             datetime.format("%H:%M:%S").to_string(),
-                            (new - last) * 8 / INTERVAL_SECONDS,
+                            (new.0 - last_egress) * 8 / INTERVAL_SECONDS,
+                            (new.1 - last_ingress) * 8 / INTERVAL_SECONDS,
                         ));
                         if buffer.len() > SIZE {
                             buffer.pop_front();
                         }
                     }
-                    last = new;
+                    last_egress = new.0;
+                    last_ingress = new.1;
                 }
                 tokio::time::sleep(Duration::from_secs(INTERVAL_SECONDS)).await;
             }
@@ -93,27 +98,33 @@ impl NetMonitor {
         let r = self.fetch_all().await;
         let mut scales = vec![];
         let mut series_up = vec![];
-        let mut max_up = 0;
+        let mut series_down = vec![];
+        let mut max = 0;
         for x in r {
-            scales.push(x._time);
-            series_up.push(x._value);
-            if x._value > max_up {
-                max_up = x._value;
+            scales.push(x.time);
+            series_up.push(x.egress);
+            series_down.push(x.ingress);
+            if x.egress > max {
+                max = x.egress;
+            }
+            if x.ingress > max {
+                max = x.ingress;
             }
         }
-        let mut interval = if max_up > 1024 * 1024 * 8 {
+        let mut interval = if max > 1024 * 1024 * 8 {
             1024 * 1024 * 8
         } else {
             1024 * 1024
         };
-        if max_up / interval > 10 {
-            interval = (max_up / interval / 10) * interval;
+        if max / interval > 10 {
+            interval = (max / interval / 10) * interval;
         }
         // 创建上下文并插入数据
         let mut context = tera::Context::new();
         context.insert("hostname", hostname);
         context.insert("interval", &interval);
         context.insert("series_up", format!("{:?}", series_up).as_str());
+        context.insert("series_down", format!("{:?}", series_down).as_str());
         context.insert("scales", format!("{:?}", scales).as_str());
 
         // 渲染模板
@@ -177,12 +188,13 @@ static TERA: LazyLock<tera::Tera> = LazyLock::new(|| {
 //         lo: 199123505  183957    0    0    0     0          0         0 199123505  183957    0    0    0     0       0          0
 //       ens5: 194703959  424303    0    0    0     0          0         0 271636211  425623    0    0    0     0       0          0
 #[cfg(not(feature = "bpf"))]
-pub fn get_egress() -> u64 {
+pub fn get_egress_ingress() -> (u64, u64) {
     use std::fs;
     if let Ok(mut content) = fs::read_to_string("/proc/net/dev") {
         content = content.replace("\r\n", "\n");
         let strs = content.split('\n');
-        let mut new: u64 = 0;
+        let mut egress: u64 = 0;
+        let mut ingress: u64 = 0;
         for str in strs {
             let array: Vec<&str> = str.split_whitespace().collect();
 
@@ -194,11 +206,12 @@ pub fn get_egress() -> u64 {
                 {
                     continue;
                 }
-                new += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
+                egress += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);
+                ingress += array.get(1).unwrap_or(&"").parse::<u64>().unwrap_or(0);
             }
         }
-        new
+        (egress, ingress)
     } else {
-        0
+        (0, 0)
     }
 }
