@@ -78,7 +78,7 @@
             interval = 1024 * 1024
         };
         if (max / interval > 10) {
-            interval = (max / interval / 10) * interval;
+            interval = Math.floor(max / interval / 10) * interval;
         }
         console.log("interval is", interval);
         // 指定图表的配置项和数据
