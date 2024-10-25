@@ -71,16 +71,12 @@
             },
         ];
         let max = series.map(s => s.data).flat().reduce((a, b) => Math.max(a, b));
-        let interval = 0;
-        if (max > 1024 * 1024 * 8) {
-            interval = 1024 * 1024 * 8
-        } else {
-            interval = 1024 * 1024
-        };
-        if (max / interval > 10) {
-            interval = Math.floor(max / interval / 10) * interval;
+        var c = Math.floor(Math.log(max) / Math.log(1024));
+        let interval = Math.pow(1024, c);
+        while (max / interval > 10) {
+            interval *= 2;
         }
-        console.log("interval is", interval);
+        console.log("interval is", formatDataRateIEC(interval));
         // 指定图表的配置项和数据
         var option = {
             title: {
@@ -123,12 +119,7 @@
             },
             yAxis: {
                 type: "value",
-                max: value => {
-                    var k = 1024;
-                    var c = Math.floor(Math.log(value.max) / Math.log(k));
-                    interval = Math.pow(k, c);
-                    return Math.ceil(value.max / interval) * interval;
-                },
+                max: value => Math.ceil(value.max / interval) * interval,
                 interval: interval,
                 axisLabel: {
                     formatter: (value, index) => formatDataRateIEC(value)
