@@ -99,30 +99,15 @@ impl NetMonitor {
         let mut scales = vec![];
         let mut series_up = vec![];
         let mut series_down = vec![];
-        let mut max = 0;
         for x in r {
             scales.push(x.time);
             series_up.push(x.egress);
             series_down.push(x.ingress);
-            if x.egress > max {
-                max = x.egress;
-            }
-            if x.ingress > max {
-                max = x.ingress;
-            }
         }
-        let mut interval = if max > 1024 * 1024 * 8 {
-            1024 * 1024 * 8
-        } else {
-            1024 * 1024
-        };
-        if max / interval > 10 {
-            interval = (max / interval / 10) * interval;
-        }
+
         // 创建上下文并插入数据
         let mut context = tera::Context::new();
         context.insert("hostname", hostname);
-        context.insert("interval", &interval);
         context.insert("series_up", format!("{:?}", series_up).as_str());
         context.insert("series_down", format!("{:?}", series_down).as_str());
         context.insert("scales", format!("{:?}", scales).as_str());

@@ -70,6 +70,17 @@ var series = [
         },
     },
 ];
+let max = series.map(s => s.data).flat().reduce((a, b) => Math.max(a, b));
+let interval = 0;
+if (max > 1024 * 1024 * 8) {
+    interval = 1024 * 1024 * 8
+} else {
+    interval = 1024 * 1024
+};
+if (max / interval > 10) {
+    interval = (max / interval / 10) * interval;
+}
+console.log("interval is", interval);
 // 指定图表的配置项和数据
 var option = {
     title: {
@@ -118,7 +129,7 @@ var option = {
             interval = Math.pow(k, c);
             return Math.ceil(value.max / interval) * interval;
         },
-        interval: {{ interval }},
+        interval: interval,
         axisLabel: {
             formatter: (value, index) => formatDataRateIEC(value)
         },
