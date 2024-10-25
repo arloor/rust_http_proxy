@@ -34,6 +34,21 @@
         <h1 class="in"></h1>
     </div>
     <script type="text/javascript">
+        function recreateMainDiv() {
+            // 获取现有的 main div
+            var mainDiv = document.getElementById('main');
+            // 移除现有的 main div
+            if (mainDiv) {
+                mainDiv.parentNode.removeChild(mainDiv);
+            }
+            // 创建一个新的 main div
+            var newMainDiv = document.createElement('div');
+            newMainDiv.id = 'main';
+            newMainDiv.className = 'out';
+            // 将新的 main div 添加到文档中
+            document.body.appendChild(newMainDiv);
+            return newMainDiv;
+        }
         function formatDataRateIEC(num, precision = -1) {
             if (num <= 0) {
                 value = '0b/s';
@@ -158,18 +173,7 @@
                 animation: false,
                 animationDuration: 5
             };
-            // 获取现有的 main div
-            var mainDiv = document.getElementById('main');
-            // 移除现有的 main div
-            if (mainDiv) {
-                mainDiv.parentNode.removeChild(mainDiv);
-            }
-            // 创建一个新的 main div
-            var newMainDiv = document.createElement('div');
-            newMainDiv.id = 'main';
-            newMainDiv.className = 'out';
-            // 将新的 main div 添加到文档中
-            document.body.appendChild(newMainDiv);
+            var newMainDiv = recreateMainDiv();
             var myChart = echarts.init(newMainDiv);
             // 使用刚指定的配置项和数据显示图表。
             myChart.setOption(option);
