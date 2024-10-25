@@ -36,6 +36,11 @@
     </div>
     <script type="text/javascript">
         let myChart = null;
+        window.addEventListener('resize', function () {
+            if (myChart) {
+                myChart.resize();
+            }
+        });
         const intervalInSecond = 5;
         function recreateMainDivAndClearChart() {
             // 获取现有的 main div
