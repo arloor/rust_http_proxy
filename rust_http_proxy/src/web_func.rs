@@ -83,7 +83,14 @@ pub async fn serve_http_request(
         #[cfg(target_os = "linux")]
         (_, "/nt") => crate::linux_monitor::count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/net") => proxy_handler.linux_monitor.speed(hostname, can_gzip).await,
+        (_, "/net") => {
+            proxy_handler
+                .linux_monitor
+                .net_html(hostname, can_gzip)
+                .await
+        }
+        #[cfg(target_os = "linux")]
+        (_, "/net.json") => proxy_handler.linux_monitor.net_json(can_gzip).await,
         (_, "/metrics") => {
             if let (_, false) = check_auth(
                 &proxy_handler.config.basic_auth,

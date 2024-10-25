@@ -4,13 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <title>{{ hostname }}网速</title>
-    <meta http-equiv="refresh" content="5">
     <script src="https://www.arloor.com/echarts.min.js"></script>
 </head>
 
-<body style="margin: 0;height:100%;">
-    <div id="main" style="width: 100%;height: 100vh;"></div>
-    <script type="text/javascript" >
+<body>
+    <div id="main" class="out">
+        <h1 class="in">等待数据...预计需要5秒钟</h1>
+    </div>
+    <script type="text/javascript">
         function formatDataRateIEC(num, precision = -1) {
             if (num <= 0) {
                 value = '0b/s';
@@ -54,86 +55,112 @@
             "smooth": true,
             "type": "line"
         }
-        var xAxisData = {{ scales | safe }}
-        var series = [
-            {
-                ...baseSeries,
-                "data": {{ series_up }},
-                "name": "上行网速",
-            },
-            {
-                ...baseSeries,
-                "data": {{ series_down }},
-                "name": "下行网速",
-                itemStyle: {
-                    color: '#5bf',
+        const refresh = () => fetch("/net.json").then(res => res.json()).then(data => {
+            var xAxisData = data.scales;
+            var series = [
+                {
+                    ...baseSeries,
+                    "data": data.series_up,
+                    "name": "上行网速",
                 },
-            },
-        ];
-        let max = series.map(s => s.data).flat().reduce((a, b) => Math.max(a, b));
-        var c = Math.floor(Math.log(max) / Math.log(1024));
-        let interval = Math.pow(1024, c);
-        while (max / interval > 10) {
-            interval *= 2;
-        }
-        console.log("interval is", formatDataRateIEC(interval));
-        // 指定图表的配置项和数据
-        var option = {
-            title: {
-                text: ''
-            },
-            tooltip: {
-                trigger: 'axis',
-                formatter: series => {
-                    return series[0].name + series.map(s => '<br/>' + s.seriesName + ': ' + formatDataRateIEC(s.value, 4)).join('');
-                }
-            },
-            legend: {
-                data: series.map(s => s.name)
-            },
-            toolbox: {
-                feature: {
-                    mark: {
-                        show: true
+                {
+                    ...baseSeries,
+                    "data": data.series_down,
+                    "name": "下行网速",
+                    itemStyle: {
+                        color: '#5bf',
                     },
-                    dataView: {
-                        show: true,
-                        readOnly: false
-                    },
-                    magicType: {
-                        show: true,
-                        type: ['line', 'bar']
-                    },
-                    restore: {
-                        show: true
-                    },
-                    saveAsImage: {
-                        show: true
+                },
+            ];
+            let max = series.map(s => s.data).flat().reduce((a, b) => Math.max(a, b));
+            var c = Math.floor(Math.log(max) / Math.log(1024));
+            let interval = Math.pow(1024, c);
+            while (max / interval > 10) {
+                interval *= 2;
+            }
+            console.log("interval is", formatDataRateIEC(interval));
+            // 指定图表的配置项和数据
+            var option = {
+                title: {
+                    text: ''
+                },
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: series => {
+                        return series[0].name + series.map(s => '<br/>' + s.seriesName + ': ' + formatDataRateIEC(s.value, 4)).join('');
                     }
-                }
-            },
-            xAxis: {
-                type: 'category',
-                boundaryGap: false,
-                data: xAxisData
-            },
-            yAxis: {
-                type: "value",
-                max: value => Math.ceil(value.max / interval) * interval,
-                interval: interval,
-                axisLabel: {
-                    formatter: (value, index) => formatDataRateIEC(value)
                 },
-            },
-            series: series,
-            animation: false,
-            animationDuration: 5
-        };
-        // 基于准备好的dom，初始化echarts实例
-        var myChart = echarts.init(document.getElementById('main'));
-        // 使用刚指定的配置项和数据显示图表。
-        myChart.setOption(option);
+                legend: {
+                    data: series.map(s => s.name)
+                },
+                toolbox: {
+                    feature: {
+                        mark: {
+                            show: true
+                        },
+                        dataView: {
+                            show: true,
+                            readOnly: false
+                        },
+                        magicType: {
+                            show: true,
+                            type: ['line', 'bar']
+                        },
+                        restore: {
+                            show: true
+                        },
+                        saveAsImage: {
+                            show: true
+                        }
+                    }
+                },
+                xAxis: {
+                    type: 'category',
+                    boundaryGap: false,
+                    data: xAxisData
+                },
+                yAxis: {
+                    type: "value",
+                    max: value => Math.ceil(value.max / interval) * interval,
+                    interval: interval,
+                    axisLabel: {
+                        formatter: (value, index) => formatDataRateIEC(value)
+                    },
+                },
+                series: series,
+                animation: false,
+                animationDuration: 5
+            };
+            // 基于准备好的dom，初始化echarts实例
+            var myChart = echarts.init(document.getElementById('main'));
+            // 使用刚指定的配置项和数据显示图表。
+            myChart.setOption(option);
+        });
+        refresh();
+        setInterval(refresh, 5000);
     </script>
 </body>
+<style>
+    html,
+    body {
+        margin: 0;
+    }
+
+    .out {
+        min-height: 100vh;
+        margin: 0;
+        display: flex;
+        justify-content: center;
+        flex-direction: column;
+        align-items: center;
+        font-size: calc(10px + 1vmin);
+    }
+
+    .in {
+        padding: 10px;
+        margin: 0;
+        font-family: "JetBrains Mono", "SFMono-Regular", "SF-Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Ubuntu Mono", "Courier New", Courier, monospace;
+    }
+</style>
 
 </html>

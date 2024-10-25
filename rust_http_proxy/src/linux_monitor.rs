@@ -5,6 +5,7 @@ use http::{Error, Response, StatusCode};
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use log::warn;
+use serde::Serialize;
 use std::collections::VecDeque;
 
 use std::io;
@@ -49,13 +50,26 @@ impl NetMonitor {
         })
     }
 
-    async fn fetch_all(&self) -> Vec<TimeValue> {
+    async fn fetch_all(&self) -> Snapshot {
         let buffer = self.buffer.read().await;
         let x = buffer.as_slices();
         let mut r = vec![];
         r.extend_from_slice(x.0);
         r.extend_from_slice(x.1);
-        r
+
+        let mut scales = vec![];
+        let mut series_up = vec![];
+        let mut series_down = vec![];
+        for x in r {
+            scales.push(x.time);
+            series_up.push(x.egress);
+            series_down.push(x.ingress);
+        }
+        Snapshot {
+            scales,
+            series_up,
+            series_down,
+        }
     }
 
     pub(crate) fn start(&self) {
@@ -90,27 +104,14 @@ impl NetMonitor {
         });
     }
 
-    pub async fn speed(
+    pub async fn net_html(
         &self,
         hostname: &str,
         can_gzip: bool,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-        let r = self.fetch_all().await;
-        let mut scales = vec![];
-        let mut series_up = vec![];
-        let mut series_down = vec![];
-        for x in r {
-            scales.push(x.time);
-            series_up.push(x.egress);
-            series_down.push(x.ingress);
-        }
-
         // 创建上下文并插入数据
         let mut context = tera::Context::new();
         context.insert("hostname", hostname);
-        context.insert("series_up", format!("{:?}", series_up).as_str());
-        context.insert("series_down", format!("{:?}", series_down).as_str());
-        context.insert("scales", format!("{:?}", scales).as_str());
 
         // 渲染模板
         let body: String = TERA.render(NET_HTML, &context).unwrap_or("".to_string());
@@ -133,6 +134,42 @@ impl NetMonitor {
             builder.body(full_body(body))
         }
     }
+
+    pub async fn net_json(
+        &self,
+        can_gzip: bool,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+        let snapshot = self.fetch_all().await;
+        let body = serde_json::to_string(&snapshot).unwrap_or("{}".to_string());
+        let builder = Response::builder()
+            .status(StatusCode::OK)
+            .header(http::header::SERVER, SERVER_NAME)
+            .header(
+                http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            );
+        if can_gzip {
+            let compressed_data = match crate::web_func::compress_string(&body) {
+                Ok(compressed_data) => compressed_data,
+                Err(e) => {
+                    warn!("compress body error: {}", e);
+                    return Ok(build_500_resp());
+                }
+            };
+            builder
+                .header(http::header::CONTENT_ENCODING, GZIP)
+                .body(full_body(compressed_data))
+        } else {
+            builder.body(full_body(body))
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct Snapshot {
+    scales: Vec<String>,
+    series_up: Vec<u64>,
+    series_down: Vec<u64>,
 }
 
 pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
