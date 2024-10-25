@@ -78,7 +78,7 @@
             "type": "line"
         }
         const refresh = () => fetch("/net.json").then(res => res.json()).then(data => {
-            console.log("net.json is",data);
+            console.log("net.json is", new Date(), JSON.stringify(data));
             var xAxisData = data.scales;
             if (data.scales.length == 0) {
                 document.getElementById('main').innerHTML = '<h1 class="in">暂无数据</h1>';
@@ -158,8 +158,19 @@
                 animation: false,
                 animationDuration: 5
             };
-            // 基于准备好的dom，初始化echarts实例
-            var myChart = echarts.init(document.getElementById('main'));
+            // 获取现有的 main div
+            var mainDiv = document.getElementById('main');
+            // 移除现有的 main div
+            if (mainDiv) {
+                mainDiv.parentNode.removeChild(mainDiv);
+            }
+            // 创建一个新的 main div
+            var newMainDiv = document.createElement('div');
+            newMainDiv.id = 'main';
+            newMainDiv.className = 'out';
+            // 将新的 main div 添加到文档中
+            document.body.appendChild(newMainDiv);
+            var myChart = echarts.init(newMainDiv);
             // 使用刚指定的配置项和数据显示图表。
             myChart.setOption(option);
         }).catch(e => {
