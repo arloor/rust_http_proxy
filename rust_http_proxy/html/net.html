@@ -78,6 +78,7 @@
             "type": "line"
         }
         const refresh = () => fetch("/net.json").then(res => res.json()).then(data => {
+            console.log("net.json is",data);
             var xAxisData = data.scales;
             if (data.scales.length == 0) {
                 document.getElementById('main').innerHTML = '<h1 class="in">暂无数据</h1>';
