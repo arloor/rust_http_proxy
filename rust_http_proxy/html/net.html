@@ -135,6 +135,9 @@
             var myChart = echarts.init(document.getElementById('main'));
             // 使用刚指定的配置项和数据显示图表。
             myChart.setOption(option);
+        }).catch(e => {
+            console.error(e);
+            document.getElementById('main').innerHTML = '<h1 class="in">获取数据失败</h1>';
         });
         refresh();
         setInterval(refresh, 5000);
