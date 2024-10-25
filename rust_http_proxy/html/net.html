@@ -34,6 +34,7 @@
         <h1 class="in"></h1>
     </div>
     <script type="text/javascript">
+        const intervalInSecond = 5;
         function recreateMainDiv() {
             // 获取现有的 main div
             var mainDiv = document.getElementById('main');
@@ -96,7 +97,7 @@
             console.log("net.json is", new Date(), JSON.stringify(data));
             var xAxisData = data.scales;
             if (data.scales.length == 0) {
-                document.getElementById('main').innerHTML = '<h1 class="in">暂无数据</h1>';
+                document.getElementById('main').innerHTML = '<h1 class="in">暂无数据，请等待' + intervalInSecond * 2 + '秒</h1>';
                 return;
             }
             var series = [
@@ -182,7 +183,7 @@
             document.getElementById('main').innerHTML = '<h1 class="in">获取数据失败</h1>';
         });
         refresh();
-        setInterval(refresh, 5000);
+        setInterval(refresh, intervalInSecond * 1000);
     </script>
 </body>
 
