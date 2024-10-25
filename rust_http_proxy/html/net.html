@@ -57,6 +57,10 @@
         }
         const refresh = () => fetch("/net.json").then(res => res.json()).then(data => {
             var xAxisData = data.scales;
+            if (data.scales.length == 0) {
+                document.getElementById('main').innerHTML = '<h1 class="in">暂无数据</h1>';
+                return;
+            }
             var series = [
                 {
                     ...baseSeries,
@@ -136,7 +140,7 @@
             // 使用刚指定的配置项和数据显示图表。
             myChart.setOption(option);
         }).catch(e => {
-            console.error(e);
+            console.error("fetch reject",e);
             document.getElementById('main').innerHTML = '<h1 class="in">获取数据失败</h1>';
         });
         refresh();
