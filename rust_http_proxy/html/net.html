@@ -55,7 +55,7 @@
             newMainDiv.className = 'out';
             // 将新的 main div 添加到文档中
             document.body.appendChild(newMainDiv);
-
+            myChart.dispose();
             myChart = null;
             return newMainDiv;
         }
