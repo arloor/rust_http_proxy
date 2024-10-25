@@ -34,8 +34,9 @@
         <h1 class="in"></h1>
     </div>
     <script type="text/javascript">
+        let myChart = null;
         const intervalInSecond = 5;
-        function recreateMainDiv() {
+        function recreateMainDivAndClearChart() {
             // 获取现有的 main div
             var mainDiv = document.getElementById('main');
             // 移除现有的 main div
@@ -48,6 +49,8 @@
             newMainDiv.className = 'out';
             // 将新的 main div 添加到文档中
             document.body.appendChild(newMainDiv);
+
+            myChart = null;
             return newMainDiv;
         }
         function formatDataRateIEC(num, precision = -1) {
@@ -94,10 +97,10 @@
             "type": "line"
         }
         const refresh = () => fetch("/net.json").then(res => res.json()).then(data => {
-            console.log("net.json is", new Date(), JSON.stringify(data));
+            // console.log("net.json is", new Date(), JSON.stringify(data));
             var xAxisData = data.scales;
             if (data.scales.length == 0) {
-                document.getElementById('main').innerHTML = '<h1 class="in">暂无数据，请等待' + intervalInSecond * 2 + '秒</h1>';
+                recreateMainDivAndClearChart().innerHTML = '<h1 class="in">暂无数据，请等待' + intervalInSecond * 2 + '秒</h1>';
                 return;
             }
             var series = [
@@ -121,7 +124,7 @@
             while (max / interval > 10) {
                 interval *= 2;
             }
-            console.log("interval is", formatDataRateIEC(interval));
+            // console.log("interval is", formatDataRateIEC(interval));
             // 指定图表的配置项和数据
             var option = {
                 title: {
@@ -174,13 +177,16 @@
                 animation: false,
                 animationDuration: 5
             };
-            var newMainDiv = recreateMainDiv();
-            var myChart = echarts.init(newMainDiv);
+            if (!myChart) {
+                console.log("create new chart");
+                var newMainDiv = recreateMainDivAndClearChart();
+                myChart = echarts.init(newMainDiv);
+            }
             // 使用刚指定的配置项和数据显示图表。
             myChart.setOption(option);
         }).catch(e => {
             console.error("fetch reject", e);
-            document.getElementById('main').innerHTML = '<h1 class="in">获取数据失败</h1>';
+            recreateMainDivAndClearChart().innerHTML = '<h1 class="in">获取数据失败</h1>';
         });
         refresh();
         setInterval(refresh, intervalInSecond * 1000);
