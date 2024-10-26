@@ -78,8 +78,28 @@
             return value;
         }
         var baseSeries = {
-            itemStyle: {
-                color: '#ef0000',
+            // itemStyle: {
+            //     color: '#ef0000',
+            // },
+            "markLine": {
+                "data": [{
+                    "type": "average",
+                    "name": "平均值"
+                }],
+                "label": {
+                    formatter: value => formatDataRateIEC(value.value, 4)
+                }
+            },
+            "markPoint": {
+                "data": [{
+                    "type": "max",
+                    "name": "最大值"
+                }],
+                symbol: "roundRect",
+                symbolSize: [70, 30],
+                "label": {
+                    formatter: value => formatDataRateIEC(value.value, 4)
+                }
             },
             "smooth": true,
             "type": "line"
@@ -91,41 +111,14 @@
                 recreateMainDivAndClearChart().innerHTML = '<h1 class="in">暂无数据，请等待' + intervalInSecond * 2 + '秒</h1>';
                 return;
             }
-            var series = [
-                {
+            let series = []
+            data.series_vec.forEach(ele => {
+                series.push({
                     ...baseSeries,
-                    "data": data.series_up,
-                    "name": "上行网速",
-                    "markLine": {
-                        "data": [{
-                            "type": "average",
-                            "name": "平均值"
-                        }],
-                        "label": {
-                            formatter: value => formatDataRateIEC(value.value, 4)
-                        }
-                    },
-                    "markPoint": {
-                        "data": [{
-                            "type": "max",
-                            "name": "最大值"
-                        }],
-                        symbol: "roundRect",
-                        symbolSize: [70, 30],
-                        "label": {
-                            formatter: value => formatDataRateIEC(value.value, 4)
-                        }
-                    },
-                },
-                {
-                    ...baseSeries,
-                    "data": data.series_down,
-                    "name": "下行网速",
-                    itemStyle: {
-                        color: '#5bf',
-                    },
-                },
-            ];
+                    "data": ele.data,
+                    "name": ele.name,
+                });
+            });
             let max = series.map(s => s.data).flat().reduce((a, b) => Math.max(a, b));
             var c = Math.floor(Math.log(max) / Math.log(1024));
             let interval = Math.pow(1024, c);

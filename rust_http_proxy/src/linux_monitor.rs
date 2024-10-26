@@ -67,8 +67,16 @@ impl NetMonitor {
         }
         Snapshot {
             scales,
-            series_up,
-            series_down,
+            series_vec: vec![
+                Series {
+                    name: "上行网速".to_string(),
+                    data: series_up,
+                },
+                Series {
+                    name: "下行网速".to_string(),
+                    data: series_down,
+                },
+            ],
         }
     }
 
@@ -168,8 +176,13 @@ impl NetMonitor {
 #[derive(Serialize)]
 pub struct Snapshot {
     scales: Vec<String>,
-    series_up: Vec<u64>,
-    series_down: Vec<u64>,
+    series_vec: Vec<Series>,
+}
+
+#[derive(Serialize)]
+pub struct Series {
+    name: String,
+    data: Vec<u64>,
 }
 
 pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
