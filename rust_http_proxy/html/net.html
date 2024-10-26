@@ -81,29 +81,29 @@
             // itemStyle: {
             //     color: '#ef0000',
             // },
-            "markLine": {
-                "data": [{
-                    "type": "average",
-                    "name": "平均值"
-                }],
-                "label": {
-                    formatter: value => formatDataRateIEC(value.value, 4)
-                }
-            },
-            "markPoint": {
-                "data": [{
-                    "type": "max",
-                    "name": "最大值"
-                }],
-                symbol: "roundRect",
-                symbolSize: [70, 30],
-                "label": {
-                    formatter: value => formatDataRateIEC(value.value, 4)
-                }
-            },
             "smooth": true,
             "type": "line"
         }
+        const maxMarkPoint = {
+            "data": [{
+                "type": "max",
+                "name": "最大值"
+            }],
+            symbol: "roundRect",
+            symbolSize: [70, 30],
+            "label": {
+                formatter: value => formatDataRateIEC(value.value, 4)
+            }
+        }
+        const avgMarkLine = {
+            "data": [{
+                "type": "average",
+                "name": "平均值"
+            }],
+            "label": {
+                formatter: value => formatDataRateIEC(value.value, 4)
+            }
+        };
         const refresh = () => fetch("/net.json").then(res => res.json()).then(data => {
             // console.log("net.json is", new Date(), JSON.stringify(data));
             var xAxisData = data.scales;
@@ -113,11 +113,26 @@
             }
             let series = []
             data.series_vec.forEach(ele => {
-                series.push({
+                let tmpSeries = {
                     ...baseSeries,
                     "data": ele.data,
                     "name": ele.name,
-                });
+                };
+                if (ele.show_avg_line) {
+                    tmpSeries.markLine = avgMarkLine;
+                }
+                if (ele.show_max_point) {
+                    tmpSeries.markPoint = maxMarkPoint;
+                }
+                if (ele.color) {
+                    tmpSeries.itemStyle = {
+                        color: ele.color,
+                    }
+                }
+                if (ele.type) {
+                    tmpSeries.type = ele.type
+                }
+                series.push(tmpSeries);
             });
             let max = series.map(s => s.data).flat().reduce((a, b) => Math.max(a, b));
             var c = Math.floor(Math.log(max) / Math.log(1024));

@@ -71,10 +71,18 @@ impl NetMonitor {
                 Series {
                     name: "上行网速".to_string(),
                     data: series_up,
+                    show_avg_line: true,
+                    show_max_point: true,
+                    color: Some("#ef0000".to_string()),
+                    serires_type: None,
                 },
                 Series {
                     name: "下行网速".to_string(),
                     data: series_down,
+                    show_avg_line: false,
+                    show_max_point: false,
+                    color: None,
+                    serires_type: None,
                 },
             ],
         }
@@ -184,6 +192,20 @@ pub struct Snapshot {
 pub struct Series {
     name: String,
     data: Vec<u64>,
+    show_max_point: bool,
+    show_avg_line: bool,
+    color: Option<String>,
+    #[serde(rename = "type")]
+    serires_type: Option<SeriesType>,
+}
+#[derive(Serialize)]
+pub enum SeriesType {
+    #[allow(dead_code)]
+    #[serde(rename = "line")]
+    Line,
+    #[allow(dead_code)]
+    #[serde(rename = "bar")]
+    Bar,
 }
 
 pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
