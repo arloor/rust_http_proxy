@@ -152,6 +152,7 @@ impl NetMonitor {
         let builder = Response::builder()
             .status(StatusCode::OK)
             .header(http::header::SERVER, SERVER_NAME)
+            .header("Access-Control-Allow-Origin", "*")
             .header(
                 http::header::CONTENT_TYPE,
                 "application/json; charset=utf-8",
