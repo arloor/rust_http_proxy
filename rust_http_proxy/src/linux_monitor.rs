@@ -81,7 +81,7 @@ impl NetMonitor {
                     data: series_down,
                     show_avg_line: false,
                     show_max_point: false,
-                    color: None,
+                    color: Some("#5c7bd9".to_string()),
                     serires_type: None,
                 },
             ],
