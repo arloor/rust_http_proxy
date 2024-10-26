@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>{{ hostname }}网速</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+    }
+
+    .out {
+      min-height: 100vh;
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      flex-direction: column;
+      align-items: center;
+      font-size: calc(10px + 1vmin);
+    }
+
+    .in {
+      padding: 10px;
+      margin: 0;
+      font-family: "JetBrains Mono", "SFMono-Regular", "SF-Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Ubuntu Mono", "Courier New", Courier, monospace;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <!-- use babel to transform your JSX code into regular JavaScript. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.1/babel.min.js"></script>
+  <script src="https://us.arloor.dev/https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+  <!-- <script src="https://www.arloor.com/echarts.min.js"></script> -->
+</head>
+
+<body>
+  <div id="app"></div>
+
+  <script type="text/jsx">
+        const query = new URLSearchParams(window.location.search);
+        let dataUrl = query.get('data'); // 替换 'paramName' 为你需要的查询参数名称
+        if (!dataUrl) {
+          dataUrl = '/net.json';
+        }
+        
+        function App() {
+          React.useEffect(() => {
+            const mainDiv = document.getElementById('main');
+            let myChart = echarts.init(mainDiv);
+            myChart.showLoading();
+            window.addEventListener('resize', myChart.resize);
+            refresh(myChart, dataUrl);
+        
+            const intervalId = setInterval(() => {
+              // 在这里添加你想要定时执行的代码
+              refresh(myChart, dataUrl);
+            }, 5000); // 每秒执行一次
+        
+            // 清除定时器
+            return () => {
+              clearInterval(intervalId)
+              window.removeEventListener('resize', myChart.resize);
+              myChart.dispose();
+            };
+          }, []);
+        
+          return (
+            <div id='main' className='out'></div>
+          );
+        }
+        const refresh = (myChart, url) => fetch(url)
+          .then(res => res.json()).then(data => {
+            // console.log("net.json is", new Date(), JSON.stringify(data));
+            var xAxisData = data.scales;
+            if (data.scales.length === 0) {
+              myChart.showLoading();
+              return;
+            }
+            myChart.hideLoading();
+            let series = []
+            data.series_vec.forEach(ele => {
+              let tmpSeries = {
+                ...baseSeries,
+                "data": ele.data,
+                "name": ele.name,
+              };
+              if (ele.show_avg_line) {
+                tmpSeries.markLine = avgMarkLine;
+              }
+              if (ele.show_max_point) {
+                tmpSeries.markPoint = maxMarkPoint;
+              }
+              if (ele.color) {
+                tmpSeries.itemStyle = {
+                  color: ele.color,
+                }
+              }
+              if (ele.type) {
+                tmpSeries.type = ele.type
+              }
+              series.push(tmpSeries);
+            });
+            let max = series.map(s => s.data).flat().reduce((a, b) => Math.max(a, b));
+            var c = Math.floor(Math.log(max) / Math.log(1024));
+            let interval = Math.pow(1024, c);
+            while (max / interval > 10) {
+              interval *= 2;
+            }
+            // console.log("interval is", formatDataRateIEC(interval));
+            // 指定图表的配置项和数据
+            var option = {
+              title: {
+                text: ''
+              },
+              tooltip: {
+                trigger: 'axis',
+                formatter: series => {
+                  return series[0].name + series.map(s => '<br/>' + s.seriesName + ': ' + formatDataRateIEC(s.value, 4)).join('');
+                }
+              },
+              legend: {
+                data: series.map(s => s.name)
+              },
+              toolbox: {
+                feature: {
+                  mark: {
+                    show: true
+                  },
+                  dataView: {
+                    show: true,
+                    readOnly: false
+                  },
+                  magicType: {
+                    show: true,
+                    type: ['line', 'bar']
+                  },
+                  restore: {
+                    show: true
+                  },
+                  saveAsImage: {
+                    show: true
+                  }
+                }
+              },
+              xAxis: {
+                type: 'category',
+                boundaryGap: false,
+                data: xAxisData
+              },
+              yAxis: {
+                type: "value",
+                max: value => Math.ceil(value.max / interval) * interval,
+                interval: interval,
+                axisLabel: {
+                  formatter: (value, index) => formatDataRateIEC(value)
+                },
+                axisLine: {
+                  show: true,
+                },
+                axisTick: {
+                  show: true,
+                }
+              },
+              series: series,
+              animation: false,
+              animationDuration: 5
+            };
+            // 使用刚指定的配置项和数据显示图表。
+            myChart.setOption(option);
+          }).catch(e => {
+            console.error("更新失败", e);
+            myChart.showLoading();
+          });
+        
+        const baseSeries = {
+          // itemStyle: {
+          //     color: '#ef0000',
+          // },
+          "smooth": true,
+          "type": "line"
+        }
+        
+        const maxMarkPoint = {
+          "data": [{
+            "type": "max",
+            "name": "最大值"
+          }],
+          symbol: "roundRect",
+          symbolSize: [70, 30],
+          "label": {
+            formatter: value => formatDataRateIEC(value.value, 4)
+          }
+        }
+        const avgMarkLine = {
+          "data": [{
+            "type": "average",
+            "name": "平均值"
+          }],
+          "label": {
+            formatter: value => formatDataRateIEC(value.value, 4)
+          }
+        };
+        
+        
+        function formatDataRateIEC(num, precision = -1) {
+          let value = null;
+          if (num <= 0) {
+            value = '0b/s';
+          } else {
+            var k = 1024;
+            var sizes = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s', 'Pb/s', 'Eb/s', 'Zb/s', 'Yb/s'];
+            //这里是取自然对数，也就是log（k）（num），求出以k为底的多少次方是num
+            var c = Math.floor(Math.log(num) / Math.log(k));
+            if (precision === -1) {
+              value = (num / Math.pow(k, c)) + ' ' + sizes[c];
+            } else {
+              value = (num / Math.pow(k, c)).toPrecision(precision) + ' ' + sizes[c];
+            }
+          }
+          return value;
+        }
+        
+        window.onload = function () {
+          const root = ReactDOM.createRoot(app);
+          root.render(<App />);
+        };
+      </script>
+</body>
+
+</html>

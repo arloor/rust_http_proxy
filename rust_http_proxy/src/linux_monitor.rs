@@ -122,6 +122,7 @@ impl NetMonitor {
 
     pub async fn net_html(
         &self,
+        path: &str,
         hostname: &str,
         can_gzip: bool,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
@@ -130,7 +131,7 @@ impl NetMonitor {
         context.insert("hostname", hostname);
 
         // 渲染模板
-        let body: String = TERA.render(NET_HTML, &context).unwrap_or("".to_string());
+        let body: String = TERA.render(path, &context).unwrap_or("".to_string());
         let builder = Response::builder()
             .status(StatusCode::OK)
             .header(http::header::SERVER, SERVER_NAME)
@@ -232,12 +233,29 @@ pub fn count_stream() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     }
 }
 
-const NET_HTML: &str = "net.html";
-const NET_HTML_TEMPLATE: &str = include_str!("../html/net.html");
+pub(crate) struct TeraTemplate {
+    name: &'static str,
+    template_content: &'static str,
+}
+
+pub(crate) const NET_HTML: &str = "/net";
+pub(crate) const SPEED_HTML: &str = "/net-react";
+const TEMPLATES: &[TeraTemplate] = &[
+    TeraTemplate {
+        name: NET_HTML,
+        template_content: include_str!("../html/net.html"),
+    },
+    TeraTemplate {
+        name: SPEED_HTML,
+        template_content: include_str!("../html/net-react.html"),
+    },
+];
 static TERA: LazyLock<tera::Tera> = LazyLock::new(|| {
     let mut tmp = tera::Tera::default();
-    tmp.add_raw_template(NET_HTML, NET_HTML_TEMPLATE)
-        .unwrap_or(());
+    for ele in TEMPLATES {
+        tmp.add_raw_template(ele.name, ele.template_content)
+            .unwrap_or(());
+    }
     tmp
 });
 

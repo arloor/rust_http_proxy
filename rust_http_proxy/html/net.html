@@ -105,7 +105,12 @@
                 formatter: value => formatDataRateIEC(value.value, 4)
             }
         };
-        const refresh = () => fetch("/net.json").then(res => res.json()).then(data => {
+        const query = new URLSearchParams(window.location.search);
+        let dataUrl = query.get('data'); // 替换 'paramName' 为你需要的查询参数名称
+        if (!dataUrl) {
+            dataUrl = '/net.json';
+        }
+        const refresh = () => fetch(dataUrl).then(res => res.json()).then(data => {
             // console.log("net.json is", new Date(), JSON.stringify(data));
             var xAxisData = data.scales;
             if (data.scales.length == 0) {
