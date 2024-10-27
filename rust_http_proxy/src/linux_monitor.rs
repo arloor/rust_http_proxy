@@ -239,7 +239,7 @@ pub(crate) struct TeraTemplate {
 }
 
 pub(crate) const NET_HTML: &str = "/net";
-pub(crate) const SPEED_HTML: &str = "/net-react";
+pub(crate) const SPEED_HTML: &str = "/netx";
 const TEMPLATES: &[TeraTemplate] = &[
     TeraTemplate {
         name: NET_HTML,
@@ -247,7 +247,7 @@ const TEMPLATES: &[TeraTemplate] = &[
     },
     TeraTemplate {
         name: SPEED_HTML,
-        template_content: include_str!("../html/net-react.html"),
+        template_content: include_str!("../html/netx.html"),
     },
 ];
 static TERA: LazyLock<tera::Tera> = LazyLock::new(|| {

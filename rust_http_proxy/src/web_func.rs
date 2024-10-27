@@ -83,7 +83,7 @@ pub async fn serve_http_request(
         #[cfg(target_os = "linux")]
         (_, "/nt") => crate::linux_monitor::count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/net" | "/net-react") => {
+        (_, "/net" | "/netx") => {
             proxy_handler
                 .linux_monitor
                 .net_html(path, hostname, can_gzip)
