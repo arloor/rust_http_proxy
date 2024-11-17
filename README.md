@@ -82,7 +82,7 @@ Options:
           可以多次指定，也可以不指定
       --never-ask-for-auth
           if enable, never send '407 Proxy Authentication Required' to client。
-          不建议开启，否则有被嗅探的风险
+          建议设置为true，否则有被嗅探的风险
   -o, --over-tls
           if enable, proxy server will listen on https
       --hostname <HOSTNAME>

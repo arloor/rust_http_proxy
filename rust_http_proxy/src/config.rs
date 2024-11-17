@@ -72,7 +72,7 @@ pub struct Param {
     #[arg(
         long,
         help = "if enable, never send '407 Proxy Authentication Required' to client。\n\
-    不建议开启，否则有被嗅探的风险"
+    建议设置为true，否则有被嗅探的风险"
     )]
     never_ask_for_auth: bool,
     #[arg(short, long, help = "if enable, proxy server will listen on https")]
