@@ -78,6 +78,7 @@ pub async fn serve_http_request(
         .get(http::header::ACCEPT_ENCODING)
         .map_or("", |h| h.to_str().unwrap_or(""));
     let can_gzip = accept_encoding.contains(GZIP);
+    #[allow(clippy::needless_return)]
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
         #[cfg(target_os = "linux")]

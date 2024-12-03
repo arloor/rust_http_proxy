@@ -73,7 +73,7 @@ pub fn local_ip() -> io::Result<String> {
 
 pub struct SocketAddrFormat<'a>(pub &'a std::net::SocketAddr);
 
-impl<'a> std::fmt::Display for SocketAddrFormat<'a> {
+impl std::fmt::Display for SocketAddrFormat<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
