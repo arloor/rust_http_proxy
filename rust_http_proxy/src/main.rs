@@ -164,14 +164,15 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     proxy_handler: Arc<ProxyHandler>,
     client_socket_addr: SocketAddr,
 ) {
-    let binding = auto::Builder::new(TokioExecutor::new());
     let timed_io = TimeoutIO::new(io, IDLE_TIMEOUT);
     let timed_io = Box::pin(timed_io);
-    let connection = binding.serve_connection_with_upgrades(
-        TokioIo::new(timed_io),
-        service_fn(|req| proxy(req, client_socket_addr, proxy_handler.clone())),
-    );
-    if let Err(err) = connection.await {
+    if let Err(err) = auto::Builder::new(TokioExecutor::new())
+        .serve_connection_with_upgrades(
+            TokioIo::new(timed_io),
+            service_fn(|req| proxy(req, client_socket_addr, proxy_handler.clone())),
+        )
+        .await
+    {
         handle_hyper_error(client_socket_addr, err);
     }
 }
