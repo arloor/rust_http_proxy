@@ -280,7 +280,7 @@ impl ProxyHandler {
             let proxy_traffic = self.metrics.proxy_traffic.clone();
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
-                    Ok(upgraded) => {
+                    Ok(src_upgraded) => {
                         let access_label = AccessLabel {
                             client: client_socket_addr.ip().to_canonical().to_string(),
                             target: addr.clone().to_string(),
@@ -289,13 +289,27 @@ impl ProxyHandler {
                         // Connect to remote server
                         match TcpStream::connect(addr.to_string()).await {
                             Ok(target_stream) => {
+                                // if the DST server did not respond the FIN(shutdown) from the SRC client, then you will see a pair of FIN-WAIT-2 and CLOSE_WAIT in the proxy server
+                                // which two socketAddrs are in the true path.
+                                // use this command to check: 
+                                // netstat -ntp|grep -E "CLOSE_WAIT|FIN_WAIT"|sort
+                                // The DST server should answer for this problem, becasue it ignores the FIN
+                                // Dont worry, after the FIN_WAIT_2 timeout, the CLOSE_WAIT connection will close.
+                                info!(
+                                    "[tunnel {}], [true path: {} -> {}]",
+                                    access_label,
+                                    client_socket_addr.ip().to_canonical().to_string() + ":" + &client_socket_addr.port().to_string(),
+                                    target_stream.peer_addr().map(|addr| addr.ip().to_canonical().to_string() + ":" + &addr.port().to_string()).unwrap_or("failed".to_owned())
+                                );
                                 let access_tag = access_label.to_string();
-                                let target_stream = CounterIO::new(
+                                let dst_stream = CounterIO::new(
                                     target_stream,
                                     proxy_traffic,
                                     LabelImpl::new(access_label),
                                 );
-                                if let Err(e) = tunnel(upgraded, target_stream).await {
+                                if let Err(e) =
+                                    tunnel(src_upgraded, dst_stream).await
+                                {
                                     warn!(
                                         "[tunnel io error] [{}]: [{}] {} ",
                                         access_tag,
