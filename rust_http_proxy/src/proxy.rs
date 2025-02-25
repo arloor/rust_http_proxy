@@ -37,7 +37,7 @@ use hyper::{
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use log::{info, warn};
+use log::{debug, info, warn};
 use percent_encoding::percent_decode_str;
 use prom_label::Label;
 use prometheus_client::{
@@ -291,15 +291,22 @@ impl ProxyHandler {
                             Ok(target_stream) => {
                                 // if the DST server did not respond the FIN(shutdown) from the SRC client, then you will see a pair of FIN-WAIT-2 and CLOSE_WAIT in the proxy server
                                 // which two socketAddrs are in the true path.
-                                // use this command to check: 
+                                // use this command to check:
                                 // netstat -ntp|grep -E "CLOSE_WAIT|FIN_WAIT"|sort
                                 // The DST server should answer for this problem, becasue it ignores the FIN
                                 // Dont worry, after the FIN_WAIT_2 timeout, the CLOSE_WAIT connection will close.
-                                info!(
+                                debug!(
                                     "[tunnel {}], [true path: {} -> {}]",
                                     access_label,
-                                    client_socket_addr.ip().to_canonical().to_string() + ":" + &client_socket_addr.port().to_string(),
-                                    target_stream.peer_addr().map(|addr| addr.ip().to_canonical().to_string() + ":" + &addr.port().to_string()).unwrap_or("failed".to_owned())
+                                    client_socket_addr.ip().to_canonical().to_string()
+                                        + ":"
+                                        + &client_socket_addr.port().to_string(),
+                                    target_stream
+                                        .peer_addr()
+                                        .map(|addr| addr.ip().to_canonical().to_string()
+                                            + ":"
+                                            + &addr.port().to_string())
+                                        .unwrap_or("failed".to_owned())
                                 );
                                 let access_tag = access_label.to_string();
                                 let dst_stream = CounterIO::new(
@@ -307,9 +314,7 @@ impl ProxyHandler {
                                     proxy_traffic,
                                     LabelImpl::new(access_label),
                                 );
-                                if let Err(e) =
-                                    tunnel(src_upgraded, dst_stream).await
-                                {
+                                if let Err(e) = tunnel(src_upgraded, dst_stream).await {
                                     warn!(
                                         "[tunnel io error] [{}]: [{}] {} ",
                                         access_tag,
