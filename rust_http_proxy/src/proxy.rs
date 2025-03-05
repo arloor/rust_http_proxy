@@ -4,6 +4,7 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
+    str::FromStr,
     sync::LazyLock,
     time::Duration,
 };
@@ -668,7 +669,17 @@ fn ensure_absolute(
         .parse::<Uri>()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     if redirect_url.scheme_str().is_none() {
-        Ok(format!("{}{}", context.upstream.url_base, location))
+        let url_base = Uri::from_str(&context.upstream.url_base)
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        let base = if url_base.path().ends_with("/") && location.starts_with("/") {
+            let mut base = url_base.to_string();
+            base.truncate(url_base.to_string().len() - 1);
+            base
+        } else {
+            url_base.to_string()
+        };
+        let absolute_url = format!("{}{}", base, location);
+        Ok(absolute_url)
     } else {
         Ok(location.to_string())
     }
