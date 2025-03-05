@@ -123,34 +123,14 @@ impl ProxyHandler {
                     .get(config::DEFAULT_HOST))
             {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
-                    let upstream_req = build_upstream_req(req, location_config)?;
-                    info!(
-                        "[reverse proxy] {:^35} => {}{}** ==> [{}] {:?} [{:?}]",
-                        SocketAddrFormat(&client_socket_addr).to_string(),
-                        origin_scheme_host_port,
-                        location_config.location,
-                        upstream_req.method(),
-                        &upstream_req.uri(),
-                        upstream_req.version(),
-                    );
-                    self.metrics
-                        .reverse_proxy_req
-                        .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
-                            client: client_socket_addr.ip().to_canonical().to_string(),
-                            origin: origin_scheme_host_port.to_string()
-                                + location_config.location.as_str(),
-                            upstream: location_config.upstream.url_base.clone(),
-                        }))
-                        .inc();
-                    self.metrics
-                        .reverse_proxy_req
-                        .get_or_create(&ALL_REVERSE_PROXY_REQ)
-                        .inc();
-                    let context = ReverseReqContext {
-                        upstream: &location_config.upstream,
-                        origin_scheme_host_port: &origin_scheme_host_port,
-                    };
-                    return self.reverse_proxy(upstream_req, &context).await;
+                    return self
+                        .reverse_proxy(
+                            req,
+                            location_config,
+                            client_socket_addr,
+                            &origin_scheme_host_port,
+                        )
+                        .await;
                 }
             }
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
@@ -382,9 +362,37 @@ impl ProxyHandler {
 
     async fn reverse_proxy(
         &self,
-        upstream_req: Request<Incoming>,
-        context: &ReverseReqContext<'_>,
+        req: Request<hyper::body::Incoming>,
+        location_config: &LocationConfig,
+        client_socket_addr: SocketAddr,
+        origin_scheme_host_port: &SchemeHostPort,
     ) -> io::Result<Response<BoxBody<Bytes, io::Error>>> {
+        let upstream_req = build_upstream_req(req, location_config)?;
+        info!(
+            "[reverse proxy] {:^35} => {}{}** ==> [{}] {:?} [{:?}]",
+            SocketAddrFormat(&client_socket_addr).to_string(),
+            origin_scheme_host_port,
+            location_config.location,
+            upstream_req.method(),
+            &upstream_req.uri(),
+            upstream_req.version(),
+        );
+        self.metrics
+            .reverse_proxy_req
+            .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
+                client: client_socket_addr.ip().to_canonical().to_string(),
+                origin: origin_scheme_host_port.to_string() + location_config.location.as_str(),
+                upstream: location_config.upstream.url_base.clone(),
+            }))
+            .inc();
+        self.metrics
+            .reverse_proxy_req
+            .get_or_create(&ALL_REVERSE_PROXY_REQ)
+            .inc();
+        let context = ReverseReqContext {
+            upstream: &location_config.upstream,
+            origin_scheme_host_port,
+        };
         match self.reverse_client.request(upstream_req).await {
             Ok(mut resp) => {
                 if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
@@ -394,7 +402,7 @@ impl ProxyHandler {
                         "LOCATION absent when 30x",
                     ))?;
 
-                    let absolute_redirect_location = ensure_absolute(redirect_location, context)?;
+                    let absolute_redirect_location = ensure_absolute(redirect_location, &context)?;
                     if let Some(replacement) = lookup_replacement(
                         context.origin_scheme_host_port,
                         absolute_redirect_location,
