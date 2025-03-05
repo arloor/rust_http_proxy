@@ -102,7 +102,8 @@ impl ProxyHandler {
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let config_basic_auth = &self.config.basic_auth;
         let never_ask_for_auth = self.config.never_ask_for_auth;
-        // 1. serve stage (static files|reverse proxy)
+
+        // 对于非CONNECT请求，检查是否需要反向代理或服务
         if Method::CONNECT != req.method() {
             let origin_scheme_host_port = extract_requst_basic_info(
                 &req,
@@ -111,7 +112,9 @@ impl ProxyHandler {
                     false => "http",
                 },
             )?;
-            if let Some(locations) = self
+
+            // 尝试找到匹配的反向代理配置
+            let host_locations = self
                 .config
                 .reverse_proxy_config
                 .locations
@@ -120,8 +123,9 @@ impl ProxyHandler {
                     .config
                     .reverse_proxy_config
                     .locations
-                    .get(config::DEFAULT_HOST))
-            {
+                    .get(config::DEFAULT_HOST));
+
+            if let Some(locations) = host_locations {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
                         .reverse_proxy(
@@ -133,9 +137,9 @@ impl ProxyHandler {
                         .await;
                 }
             }
+
+            // 对于HTTP/2请求或URI中不包含host的请求，处理为普通服务请求
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
-                // http2.0肯定是over tls的，所以不是普通GET/POST代理请求。
-                // URL中不包含host（GET / HTTP/1.1）也不是普通GET/POST代理请求。
                 return self
                     .serve_request(
                         &req,
