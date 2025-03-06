@@ -7,22 +7,18 @@ pub(crate) fn init_once() {
     });
 }
 
-static SOCKET_FILTER: std::sync::LazyLock<Option<socket_filter::TransmitCounter>> =
-    std::sync::LazyLock::new(|| {
-        let open_object = Box::leak(Box::new(std::mem::MaybeUninit::uninit())); // make the ebpf prog lives as long as the process.
-        match socket_filter::TransmitCounter::new(
-            open_object,
-            crate::linux_monitor::IGNORED_INTERFACES,
-        ) {
-            Ok(transmit_counter) => {
-                return Option::Some(transmit_counter);
-            }
-            Err(e) => {
-                log::warn!("socket_filter::TransmitCounter::init error: {}", e);
-                Option::None
-            }
+static SOCKET_FILTER: std::sync::LazyLock<Option<socket_filter::TransmitCounter>> = std::sync::LazyLock::new(|| {
+    let open_object = Box::leak(Box::new(std::mem::MaybeUninit::uninit())); // make the ebpf prog lives as long as the process.
+    match socket_filter::TransmitCounter::new(open_object, crate::linux_monitor::IGNORED_INTERFACES) {
+        Ok(transmit_counter) => {
+            return Option::Some(transmit_counter);
         }
-    });
+        Err(e) => {
+            log::warn!("socket_filter::TransmitCounter::init error: {}", e);
+            Option::None
+        }
+    }
+});
 
 static CGROUP_TRANSMIT_COUNTER: std::sync::LazyLock<Option<cgroup_traffic::CgroupTransmitCounter>> =
     std::sync::LazyLock::new(|| {

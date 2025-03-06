@@ -48,18 +48,14 @@ where
     R: Label,
 {
     fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
+        self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         let pro = self.project();
         let traffic_counter = pro.traffic_counter;
         let label = pro.label;
         match pro.inner.poll_read(cx, buf) {
             Poll::Ready(Ok(_)) => {
-                traffic_counter
-                    .get_or_create(label)
-                    .inc_by(buf.filled().len() as u64);
+                traffic_counter.get_or_create(label).inc_by(buf.filled().len() as u64);
                 Poll::Ready(Ok(()))
             }
             other => other,
@@ -72,11 +68,7 @@ where
     T: AsyncWrite + AsyncRead,
     R: Label,
 {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, std::io::Error>> {
         let pro = self.project();
         let traffic_counter = pro.traffic_counter;
         let label = pro.label;
@@ -95,10 +87,7 @@ where
         self.project().inner.poll_flush(cx)
     }
 
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
         self.project().inner.poll_shutdown(cx)
     }
 
@@ -107,9 +96,7 @@ where
     }
 
     fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[std::io::IoSlice<'_>],
+        self: Pin<&mut Self>, cx: &mut Context<'_>, bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
         let pro = self.project();
         let count = bufs.iter().map(|buf| buf.len()).sum::<usize>() as u64;
@@ -148,10 +135,7 @@ where
     /// set timeout
     pub fn _set_timeout_pinned(mut self: Pin<&mut Self>, timeout: Duration) {
         *self.as_mut().project().timeout = timeout;
-        self.project()
-            .idle_future
-            .as_mut()
-            .reset(Instant::now() + timeout);
+        self.project().idle_future.as_mut().reset(Instant::now() + timeout);
     }
 }
 
@@ -160,9 +144,7 @@ where
     T: AsyncWrite + AsyncRead,
 {
     fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
+        self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         let pro = self.project();
         let idle_feature = pro.idle_future;
@@ -173,10 +155,7 @@ where
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
             // 没有读到内容，且已经timeout，则返回错误
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("read idle for {:?}", timeout),
-            )));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("read idle for {:?}", timeout))));
         }
         read_poll
     }
@@ -186,11 +165,7 @@ impl<T> AsyncWrite for TimeoutIO<T>
 where
     T: AsyncWrite + AsyncRead,
 {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, std::io::Error>> {
         let pro = self.project();
         let idle_feature = pro.idle_future;
         let timeout: &mut Duration = pro.timeout;
@@ -198,10 +173,7 @@ where
         if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("write idle for {:?}", timeout),
-            )));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {:?}", timeout))));
         }
         write_poll
     }
@@ -214,18 +186,12 @@ where
         if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("write idle for {:?}", timeout),
-            )));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {:?}", timeout))));
         }
         write_poll
     }
 
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
         let pro = self.project();
         let idle_feature = pro.idle_future;
         let timeout: &mut Duration = pro.timeout;
@@ -233,10 +199,7 @@ where
         if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("write idle for {:?}", timeout),
-            )));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {:?}", timeout))));
         }
         write_poll
     }
@@ -246,9 +209,7 @@ where
     }
 
     fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[std::io::IoSlice<'_>],
+        self: Pin<&mut Self>, cx: &mut Context<'_>, bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
         let pro = self.project();
         let idle_feature = pro.idle_future;
@@ -257,10 +218,7 @@ where
         if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("write idle for {:?}", timeout),
-            )));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {:?}", timeout))));
         }
         write_poll
     }

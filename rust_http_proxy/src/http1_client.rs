@@ -25,8 +25,7 @@ use tokio::{net::TcpStream, sync::Mutex};
 
 use crate::proxy::AccessLabel;
 
-const CONNECTION_EXPIRE_DURATION: Duration =
-    Duration::from_secs(if !cfg!(debug_assertions) { 30 } else { 10 });
+const CONNECTION_EXPIRE_DURATION: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 30 } else { 10 });
 
 /// HTTPClient, supporting HTTP/1.1 and H2, HTTPS.
 pub struct HttpClient<B> {
@@ -43,22 +42,15 @@ where
     /// Create a new HttpClient
     pub fn new() -> HttpClient<B> {
         HttpClient {
-            cache_conn: Arc::new(Mutex::new(LruCache::with_expiry_duration(
-                CONNECTION_EXPIRE_DURATION,
-            ))),
+            cache_conn: Arc::new(Mutex::new(LruCache::with_expiry_duration(CONNECTION_EXPIRE_DURATION))),
         }
     }
 
     /// Make HTTP requests
     #[inline]
     pub async fn send_request(
-        &self,
-        req: Request<B>,
-        access_label: &AccessLabel,
-        stream_map_func: impl FnOnce(
-            TcpStream,
-            AccessLabel,
-        ) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+        &self, req: Request<B>, access_label: &AccessLabel,
+        stream_map_func: impl FnOnce(TcpStream, AccessLabel) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
         if let Some(c) = self.get_cached_connection(access_label).await {
@@ -78,10 +70,7 @@ where
         let c = match HttpConnection::connect(scheme, access_label, stream_map_func).await {
             Ok(c) => c,
             Err(err) => {
-                error!(
-                    "failed to connect to host: {}, error: {}",
-                    &access_label.target, err
-                );
+                error!("failed to connect to host: {}, error: {}", &access_label.target, err);
                 return Err(io::Error::new(io::ErrorKind::InvalidData, err));
             }
         };
@@ -93,11 +82,7 @@ where
 
     async fn get_cached_connection(&self, access_label: &AccessLabel) -> Option<HttpConnection<B>> {
         if let Some(q) = self.cache_conn.lock().await.get_mut(access_label) {
-            debug!(
-                "HTTP client for host: {} found in cache, len: {}",
-                access_label,
-                q.len()
-            );
+            debug!("HTTP client for host: {} found in cache, len: {}", access_label, q.len());
             while let Some((c, inst)) = q.pop_front() {
                 let now = Instant::now();
                 if now - inst >= CONNECTION_EXPIRE_DURATION {
@@ -118,30 +103,15 @@ where
     }
 
     async fn send_request_conn(
-        &self,
-        access_label: &AccessLabel,
-        mut c: HttpConnection<B>,
-        req: Request<B>,
+        &self, access_label: &AccessLabel, mut c: HttpConnection<B>, req: Request<B>,
     ) -> hyper::Result<Response<body::Incoming>> {
-        trace!(
-            "HTTP making request to host: {}, request: {:?}",
-            access_label,
-            req
-        );
+        trace!("HTTP making request to host: {}, request: {:?}", access_label, req);
         let response = c.send_request(req).await?;
-        trace!(
-            "HTTP received response from host: {}, response: {:?}",
-            access_label,
-            response
-        );
+        trace!("HTTP received response from host: {}, response: {:?}", access_label, response);
 
         // Check keep-alive
         if check_keep_alive(response.version(), response.headers(), false) {
-            trace!(
-                "HTTP connection keep-alive for host: {}, response: {:?}",
-                access_label,
-                response
-            );
+            trace!("HTTP connection keep-alive for host: {}, response: {:?}", access_label, response);
             self.cache_conn
                 .lock()
                 .await
@@ -154,11 +124,7 @@ where
     }
 }
 
-pub fn check_keep_alive(
-    version: Version,
-    headers: &HeaderMap<HeaderValue>,
-    check_proxy: bool,
-) -> bool {
+pub fn check_keep_alive(version: Version, headers: &HeaderMap<HeaderValue>, check_proxy: bool) -> bool {
     // HTTP/1.1, HTTP/2, HTTP/3 keeps alive by default
     let mut conn_keep_alive = !matches!(version, Version::HTTP_09 | Version::HTTP_10);
 
@@ -214,34 +180,23 @@ where
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
     async fn connect(
-        scheme: &Scheme,
-        access_label: &AccessLabel,
-        stream_map_func: impl FnOnce(
-            TcpStream,
-            AccessLabel,
-        ) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+        scheme: &Scheme, access_label: &AccessLabel,
+        stream_map_func: impl FnOnce(TcpStream, AccessLabel) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         if *scheme != Scheme::HTTP && *scheme != Scheme::HTTPS {
             return Err(io::Error::new(ErrorKind::InvalidInput, "invalid scheme"));
         }
 
         let stream = TcpStream::connect(&access_label.target).await?;
-        let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> =
-            stream_map_func(stream, access_label.clone());
+        let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> = stream_map_func(stream, access_label.clone());
 
         HttpConnection::connect_http_http1(scheme, access_label, stream).await
     }
 
     async fn connect_http_http1(
-        scheme: &Scheme,
-        access_label: &AccessLabel,
-        stream: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+        scheme: &Scheme, access_label: &AccessLabel, stream: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        trace!(
-            "HTTP making new HTTP/1.1 connection to host: {}, scheme: {}",
-            access_label,
-            scheme
-        );
+        trace!("HTTP making new HTTP/1.1 connection to host: {}, scheme: {}", access_label, scheme);
         let stream = TimeoutIO::new(stream, CONNECTION_EXPIRE_DURATION);
 
         // HTTP/1.x
@@ -265,10 +220,7 @@ where
     }
 
     #[inline]
-    pub async fn send_request(
-        &mut self,
-        req: Request<B>,
-    ) -> hyper::Result<Response<body::Incoming>> {
+    pub async fn send_request(&mut self, req: Request<B>) -> hyper::Result<Response<body::Incoming>> {
         match self {
             HttpConnection::Http1(r) => r.send_request(req).await,
         }
@@ -286,19 +238,9 @@ fn handle_http1_connection_error(err: hyper::Error, access_label: AccessLabel) {
         if let Some(io_err) = source.downcast_ref::<io::Error>() {
             if io_err.kind() == ErrorKind::TimedOut {
                 // 由于超时导致的连接关闭（TimeoutIO）
-                info!(
-                    "[legacy proxy connection io closed]: [{}] {} to {}",
-                    io_err.kind(),
-                    io_err,
-                    access_label
-                );
+                info!("[legacy proxy connection io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
             } else {
-                warn!(
-                    "[legacy proxy io error]: [{}] {} to {}",
-                    io_err.kind(),
-                    io_err,
-                    access_label
-                );
+                warn!("[legacy proxy io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
             }
         } else {
             warn!("[legacy proxy io error]: [{}] to {}", source, access_label);

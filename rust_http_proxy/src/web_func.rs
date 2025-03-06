@@ -37,17 +37,11 @@ pub(crate) static GZIP: &str = "gzip";
 pub(crate) const SERVER_NAME: &str = "The Bad Server";
 
 pub async fn serve_http_request(
-    proxy_handler: &ProxyHandler,
-    req: &Request<impl Body>,
-    client_socket_addr: SocketAddr,
-    path: &str,
+    proxy_handler: &ProxyHandler, req: &Request<impl Body>, client_socket_addr: SocketAddr, path: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let web_content_path = &proxy_handler.config.web_content_path;
     let referer_keywords_to_self = &proxy_handler.config.referer_keywords_to_self;
-    let referer_header = req
-        .headers()
-        .get(REFERER)
-        .map_or("", |h| h.to_str().unwrap_or(""));
+    let referer_header = req.headers().get(REFERER).map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
         && !referer_keywords_to_self.is_empty()
         && !referer_header.is_empty()
@@ -70,9 +64,7 @@ pub async fn serve_http_request(
     let hostname = req
         .uri()
         .authority()
-        .map_or(proxy_handler.config.hostname.as_str(), |authority| {
-            authority.host()
-        });
+        .map_or(proxy_handler.config.hostname.as_str(), |authority| authority.host());
     let accept_encoding = req
         .headers()
         .get(http::header::ACCEPT_ENCODING)
@@ -84,21 +76,13 @@ pub async fn serve_http_request(
         #[cfg(target_os = "linux")]
         (_, "/nt") => crate::linux_monitor::count_stream(),
         #[cfg(target_os = "linux")]
-        (_, "/net" | "/netx") => {
-            proxy_handler
-                .linux_monitor
-                .net_html(path, hostname, can_gzip)
-                .await
-        }
+        (_, "/net" | "/netx") => proxy_handler.linux_monitor.net_html(path, hostname, can_gzip).await,
         #[cfg(target_os = "linux")]
         (_, "/net.json") => proxy_handler.linux_monitor.net_json(can_gzip).await,
         (_, "/metrics") => {
-            if let (_, false) = check_auth(
-                &proxy_handler.config.basic_auth,
-                req,
-                &client_socket_addr,
-                hyper::header::AUTHORIZATION,
-            ) {
+            if let (_, false) =
+                check_auth(&proxy_handler.config.basic_auth, req, &client_socket_addr, hyper::header::AUTHORIZATION)
+            {
                 return Ok(build_authenticate_resp(false));
             }
             #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -143,19 +127,14 @@ pub async fn serve_http_request(
 }
 
 fn incr_counter_if_need(
-    r: &Result<Response<BoxBody<Bytes, io::Error>>, Error>,
-    is_outer_view_html: bool,
-    _is_shell: bool,
-    http_req_counter: &Family<LabelImpl<ReqLabels>, Counter>,
-    referer_header: &str,
-    path: &str,
+    r: &Result<Response<BoxBody<Bytes, io::Error>>, Error>, is_outer_view_html: bool, _is_shell: bool,
+    http_req_counter: &Family<LabelImpl<ReqLabels>, Counter>, referer_header: &str, path: &str,
 ) {
     if let Ok(ref res) = *r {
         if is_outer_view_html && (res.status().is_success() || res.status().is_redirection()) {
             http_req_counter
                 .get_or_create(&LabelImpl::new(ReqLabels {
-                    referer: extract_search_engine_from_referer(referer_header)
-                        .unwrap_or("parse_failed".to_string()),
+                    referer: extract_search_engine_from_referer(referer_header).unwrap_or("parse_failed".to_string()),
                     path: path.to_string(),
                 }))
                 .inc();
@@ -175,8 +154,7 @@ fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Er
     if let Some(caps) = Regex::new("^https?://(.+?)(/|$)")?.captures(referer) {
         let address = caps.get(1).map_or(referer, |g| g.as_str());
         if let Some(caps) =
-            Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow|duckduckgo)")?
-                .captures(address)
+            Regex::new("(google|baidu|bing|yandex|v2ex|github|stackoverflow|duckduckgo)")?.captures(address)
         {
             Ok(caps.get(1).map_or(address, |g| g.as_str()).to_string())
         } else {
@@ -187,10 +165,7 @@ fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Er
     }
 }
 
-async fn serve_metrics(
-    prom_registry: &Registry,
-    can_gzip: bool,
-) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+async fn serve_metrics(prom_registry: &Registry, can_gzip: bool) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let mut buffer = String::new();
     if let Err(e) = encode(&mut buffer, prom_registry) {
         Response::builder()
@@ -220,11 +195,7 @@ async fn serve_metrics(
 }
 
 async fn serve_path(
-    web_content_path: &String,
-    url_path: &str,
-    req: &Request<impl Body>,
-    can_gzip: bool,
-    need_body: bool,
+    web_content_path: &String, url_path: &str, req: &Request<impl Body>, can_gzip: bool, need_body: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     if String::from(url_path).contains("/..") {
         return not_found();
@@ -270,9 +241,7 @@ async fn serve_path(
     }
     let mime_type = from_path(&path).first_or_octet_stream();
     let content_type = mime_type.as_ref();
-    let content_type = if !content_type.to_ascii_lowercase().contains("charset")
-        && !content_type.contains("wasm")
-    {
+    let content_type = if !content_type.to_ascii_lowercase().contains("charset") && !content_type.contains("wasm") {
         format!("{}{}", &content_type, "; charset=utf-8")
     } else {
         String::from(content_type)
@@ -307,16 +276,15 @@ async fn serve_path(
         Err(_) => return not_found(),
     };
 
-    let (start, end, builder) =
-        match parse_range(req.headers().get(http::header::RANGE), file_len, builder) {
-            Ok((start, end, builder)) => (start, end, builder),
-            Err(e) => {
-                return Response::builder()
-                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                    .header(http::header::SERVER, SERVER_NAME)
-                    .body(full_body(e.to_string()));
-            }
-        };
+    let (start, end, builder) = match parse_range(req.headers().get(http::header::RANGE), file_len, builder) {
+        Ok((start, end, builder)) => (start, end, builder),
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(http::header::SERVER, SERVER_NAME)
+                .body(full_body(e.to_string()));
+        }
+    };
 
     if start != 0 {
         if let Err(e) = file.seek(io::SeekFrom::Start(start)).await {
@@ -332,9 +300,7 @@ async fn serve_path(
 }
 
 fn return_304_if_not_modified(
-    req: &Request<impl Body>,
-    file_etag: &str,
-    last_modified: SystemTime,
+    req: &Request<impl Body>, file_etag: &str, last_modified: SystemTime,
 ) -> Option<Result<Response<BoxBody<Bytes, io::Error>>, Error>> {
     match req.headers().get(http::header::IF_NONE_MATCH) {
         Some(if_none_match) => {
@@ -359,10 +325,7 @@ fn return_304_if_not_modified(
     }
 }
 
-fn not_modified(
-    last_modified: SystemTime,
-    file_etag: &str,
-) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+fn not_modified(last_modified: SystemTime, file_etag: &str) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     Response::builder()
         .status(StatusCode::NOT_MODIFIED)
         .header(http::header::ETAG, file_etag)
@@ -380,21 +343,17 @@ fn cal_file_etag(last_modified: SystemTime, file_len: u64) -> String {
 }
 
 fn final_build<T>(
-    need_gzip: bool,
-    async_read: T,
-    builder: Builder,
+    need_gzip: bool, async_read: T, builder: Builder,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error>
 where
     T: AsyncRead + Send + Sync + Unpin + 'static,
 {
-    let stream_body =
-        StreamBody::new(build_reader_stream(async_read, need_gzip).map_ok(Frame::data));
+    let stream_body = StreamBody::new(build_reader_stream(async_read, need_gzip).map_ok(Frame::data));
     builder.body(stream_body.boxed())
 }
 
 fn build_reader_stream<T>(
-    async_read: T,
-    need_gzip: bool,
+    async_read: T, need_gzip: bool,
 ) -> ReaderStream<pin::Pin<Box<dyn AsyncRead + Send + Sync + Unpin>>>
 where
     T: AsyncRead + Send + Sync + Unpin + 'static,
@@ -410,9 +369,7 @@ where
 }
 
 fn parse_range(
-    range_header: Option<&HeaderValue>,
-    file_size: u64,
-    mut builder: Builder,
+    range_header: Option<&HeaderValue>, file_size: u64, mut builder: Builder,
 ) -> io::Result<(u64, u64, Builder)> {
     let mut start = 0;
     let mut end = file_size - 1;
@@ -421,8 +378,7 @@ fn parse_range(
             .to_str()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         // 仅支持单个range，不支持多个range
-        let re = Regex::new(r"^bytes=(\d*)-(\d*)$")
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let re = Regex::new(r"^bytes=(\d*)-(\d*)$").map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         // 使用正则表达式匹配字符串并捕获组
         let caps = re.captures(range_value);
         match caps {
@@ -456,10 +412,7 @@ fn parse_range(
                     }
                 }
                 builder = builder
-                    .header(
-                        http::header::CONTENT_RANGE,
-                        format!("bytes {}-{}/{}", start, end, file_size),
-                    )
+                    .header(http::header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end, file_size))
                     .status(http::StatusCode::PARTIAL_CONTENT);
             }
             None => {
@@ -479,10 +432,7 @@ fn parse_range(
     Ok((start, end, builder))
 }
 
-fn serve_favico(
-    req: &Request<impl Body>,
-    need_body: bool,
-) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+fn serve_favico(req: &Request<impl Body>, need_body: bool) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let last_modified = BOOTUP_TIME.to_owned();
     let file_len = FAV_ICO.len() as u64;
     let file_etag = cal_file_etag(last_modified, file_len);
@@ -506,9 +456,7 @@ fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io
     Response::builder()
         .status(StatusCode::OK)
         .header(http::header::SERVER, SERVER_NAME)
-        .body(full_body(
-            client_socket_addr.ip().to_canonical().to_string(),
-        ))
+        .body(full_body(client_socket_addr.ip().to_canonical().to_string()))
 }
 
 fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
@@ -554,18 +502,15 @@ mod tests {
     #[test]
     fn test_extract_domain_from_url() {
         assert_eq!(
-            extract_search_engine_from_referer("https://www.baidu.com/")
-                .unwrap_or("default".to_string()),
+            extract_search_engine_from_referer("https://www.baidu.com/").unwrap_or("default".to_string()),
             "baidu"
         );
         assert_eq!(
-            extract_search_engine_from_referer("https://www.baidu.com")
-                .unwrap_or("default".to_string()),
+            extract_search_engine_from_referer("https://www.baidu.com").unwrap_or("default".to_string()),
             "baidu"
         );
         assert_eq!(
-            extract_search_engine_from_referer("http://www.baidu.com/")
-                .unwrap_or("default".to_string()),
+            extract_search_engine_from_referer("http://www.baidu.com/").unwrap_or("default".to_string()),
             "baidu"
         );
         assert_eq!(
@@ -583,11 +528,16 @@ mod tests {
             "baidu"
         );
         assert_eq!(
-            extract_search_engine_from_referer("https://www.google.com.hk/")
-                .unwrap_or("default".to_string()),
+            extract_search_engine_from_referer("https://www.google.com.hk/").unwrap_or("default".to_string()),
             "google"
         );
-        assert_eq!(extract_search_engine_from_referer("https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE").unwrap_or("default".to_string()), "bing");
+        assert_eq!(
+            extract_search_engine_from_referer(
+                "https://www.bing.com/search?q=google%E6%9C%8D%E5%8A%A1%E4%B8%8B%E8%BD%BD+anzhuo11&qs=ds&form=QBRE"
+            )
+            .unwrap_or("default".to_string()),
+            "bing"
+        );
     }
 
     #[test]

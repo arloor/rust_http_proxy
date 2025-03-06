@@ -86,11 +86,7 @@ impl<C: AsyncRead + AsyncWrite + Unpin> TlsStream<C> {
 }
 
 impl<C: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsStream<C> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &mut ReadBuf,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut ReadBuf) -> Poll<io::Result<()>> {
         let pin = self.get_mut();
         let accept = match &mut pin.state {
             State::Handshaking(accept) => accept,
@@ -109,11 +105,7 @@ impl<C: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsStream<C> {
 }
 
 impl<C: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsStream<C> {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         let pin = self.get_mut();
         let accept = match &mut pin.state {
             State::Handshaking(accept) => accept,

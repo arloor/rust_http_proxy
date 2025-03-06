@@ -96,9 +96,7 @@ impl ProxyHandler {
         })
     }
     pub async fn proxy(
-        &self,
-        req: Request<hyper::body::Incoming>,
-        client_socket_addr: SocketAddr,
+        &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let config_basic_auth = &self.config.basic_auth;
         let never_ask_for_auth = self.config.never_ask_for_auth;
@@ -119,21 +117,12 @@ impl ProxyHandler {
                 .reverse_proxy_config
                 .locations
                 .get(&origin_scheme_host_port.host)
-                .or(self
-                    .config
-                    .reverse_proxy_config
-                    .locations
-                    .get(config::DEFAULT_HOST));
+                .or(self.config.reverse_proxy_config.locations.get(config::DEFAULT_HOST));
 
             if let Some(locations) = host_locations {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
-                        .reverse_proxy(
-                            req,
-                            location_config,
-                            client_socket_addr,
-                            &origin_scheme_host_port,
-                        )
+                        .reverse_proxy(req, location_config, client_socket_addr, &origin_scheme_host_port)
                         .await;
                 }
             }
@@ -141,23 +130,14 @@ impl ProxyHandler {
             // 对于HTTP/2请求或URI中不包含host的请求，处理为普通服务请求
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 return self
-                    .serve_request(
-                        &req,
-                        config_basic_auth,
-                        never_ask_for_auth,
-                        client_socket_addr,
-                    )
+                    .serve_request(&req, config_basic_auth, never_ask_for_auth, client_socket_addr)
                     .await;
             }
         }
 
         // 2. proxy stage
-        let (username, authed) = check_auth(
-            config_basic_auth,
-            &req,
-            &client_socket_addr,
-            http::header::PROXY_AUTHORIZATION,
-        );
+        let (username, authed) =
+            check_auth(config_basic_auth, &req, &client_socket_addr, http::header::PROXY_AUTHORIZATION);
         info!(
             "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
             "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
@@ -169,10 +149,7 @@ impl ProxyHandler {
         );
         if !authed {
             return if never_ask_for_auth {
-                Err(io::Error::new(
-                    ErrorKind::PermissionDenied,
-                    "wrong basic auth, closing socket...",
-                ))
+                Err(io::Error::new(ErrorKind::PermissionDenied, "wrong basic auth, closing socket..."))
             } else {
                 Ok(build_authenticate_resp(true))
             };
@@ -187,26 +164,15 @@ impl ProxyHandler {
     /// 代理普通请求
     /// HTTP/1.1 GET/POST/PUT/DELETE/HEAD
     async fn simple_proxy(
-        &self,
-        mut req: Request<Incoming>,
-        client_socket_addr: SocketAddr,
-        username: String,
+        &self, mut req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let access_label = self.build_access_label(&req, client_socket_addr, username)?;
         mod_http1_proxy_req(&mut req)?;
         match self
             .http1_client
-            .send_request(
-                req,
-                &access_label,
-                |stream: TcpStream, access_label: AccessLabel| {
-                    CounterIO::new(
-                        stream,
-                        self.metrics.proxy_traffic.clone(),
-                        LabelImpl::new(access_label),
-                    )
-                },
-            )
+            .send_request(req, &access_label, |stream: TcpStream, access_label: AccessLabel| {
+                CounterIO::new(stream, self.metrics.proxy_traffic.clone(), LabelImpl::new(access_label))
+            })
             .await
         {
             Ok(resp) => Ok(resp.map(|body| {
@@ -221,17 +187,10 @@ impl ProxyHandler {
     }
 
     fn build_access_label(
-        &self,
-        req: &Request<Incoming>,
-        client_socket_addr: SocketAddr,
-        username: String,
+        &self, req: &Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<AccessLabel, io::Error> {
-        let addr = host_addr(req.uri()).ok_or_else(|| {
-            io::Error::new(
-                ErrorKind::InvalidData,
-                format!("URI missing host: {}", req.uri()),
-            )
-        })?;
+        let addr = host_addr(req.uri())
+            .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("URI missing host: {}", req.uri())))?;
         let access_label = AccessLabel {
             client: client_socket_addr.ip().to_canonical().to_string(),
             target: addr.to_string(),
@@ -243,10 +202,7 @@ impl ProxyHandler {
     /// 代理CONNECT请求
     /// HTTP/1.1 CONNECT    
     fn tunnel_proxy(
-        &self,
-        req: Request<Incoming>,
-        client_socket_addr: SocketAddr,
-        username: String,
+        &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         // Received an HTTP request like:
         // ```
@@ -294,27 +250,14 @@ impl ProxyHandler {
                                         .unwrap_or("failed".to_owned())
                                 );
                                 let access_tag = access_label.to_string();
-                                let dst_stream = CounterIO::new(
-                                    target_stream,
-                                    proxy_traffic,
-                                    LabelImpl::new(access_label),
-                                );
+                                let dst_stream =
+                                    CounterIO::new(target_stream, proxy_traffic, LabelImpl::new(access_label));
                                 if let Err(e) = tunnel(src_upgraded, dst_stream).await {
-                                    warn!(
-                                        "[tunnel io error] [{}]: [{}] {} ",
-                                        access_tag,
-                                        e.kind(),
-                                        e
-                                    );
+                                    warn!("[tunnel io error] [{}]: [{}] {} ", access_tag, e.kind(), e);
                                 };
                             }
                             Err(e) => {
-                                warn!(
-                                    "[tunnel establish error] [{}]: [{}] {} ",
-                                    access_label,
-                                    e.kind(),
-                                    e
-                                )
+                                warn!("[tunnel establish error] [{}]: [{}] {} ", access_label, e.kind(), e)
                             }
                         }
                     }
@@ -341,10 +284,7 @@ impl ProxyHandler {
     }
 
     async fn serve_request(
-        &self,
-        req: &Request<Incoming>,
-        config_basic_auth: &HashMap<String, String>,
-        never_ask_for_auth: bool,
+        &self, req: &Request<Incoming>, config_basic_auth: &HashMap<String, String>, never_ask_for_auth: bool,
         client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let raw_path = req.uri().path();
@@ -365,10 +305,7 @@ impl ProxyHandler {
     }
 
     async fn reverse_proxy(
-        &self,
-        req: Request<hyper::body::Incoming>,
-        location_config: &LocationConfig,
-        client_socket_addr: SocketAddr,
+        &self, req: Request<hyper::body::Incoming>, location_config: &LocationConfig, client_socket_addr: SocketAddr,
         origin_scheme_host_port: &SchemeHostPort,
     ) -> io::Result<Response<BoxBody<Bytes, io::Error>>> {
         let upstream_req = build_upstream_req(req, location_config)?;
@@ -401,10 +338,9 @@ impl ProxyHandler {
             Ok(mut resp) => {
                 if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
                     let headers = resp.headers_mut();
-                    let redirect_location = headers.get_mut(LOCATION).ok_or(io::Error::new(
-                        ErrorKind::InvalidData,
-                        "LOCATION absent when 30x",
-                    ))?;
+                    let redirect_location = headers
+                        .get_mut(LOCATION)
+                        .ok_or(io::Error::new(ErrorKind::InvalidData, "LOCATION absent when 30x"))?;
 
                     let absolute_redirect_location = ensure_absolute(redirect_location, &context)?;
                     if let Some(replacement) = lookup_replacement(
@@ -441,54 +377,38 @@ impl ProxyHandler {
         {
             self.metrics
                 .net_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel {
-                    direction: "egress",
-                }))
+                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
                 .inner()
                 .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
             self.metrics
                 .net_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel {
-                    direction: "ingress",
-                }))
+                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
                 .inner()
                 .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
 
             self.metrics
                 .cgroup_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel {
-                    direction: "egress",
-                }))
+                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
                 .inner()
-                .store(
-                    ebpf::get_cgroup_egress(),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                .store(ebpf::get_cgroup_egress(), std::sync::atomic::Ordering::Relaxed);
             self.metrics
                 .cgroup_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel {
-                    direction: "ingress",
-                }))
+                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
                 .inner()
-                .store(
-                    ebpf::get_cgroup_ingress(),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                .store(ebpf::get_cgroup_ingress(), std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
 
 fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     // 删除代理特有的请求头
-    req.headers_mut()
-        .remove(http::header::PROXY_AUTHORIZATION.to_string());
+    req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
     req.headers_mut().remove("Proxy-Connection");
     // set host header
     let uri = req.uri().clone();
-    let hostname = uri.host().ok_or(io::Error::new(
-        ErrorKind::InvalidData,
-        "host is absent in HTTP/1.1",
-    ))?;
+    let hostname = uri
+        .host()
+        .ok_or(io::Error::new(ErrorKind::InvalidData, "host is absent in HTTP/1.1"))?;
     let host_header = if let Some(port) = get_non_default_port(&uri) {
         let s = format!("{}:{}", hostname, port);
         HeaderValue::from_str(&s)
@@ -505,17 +425,13 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     Ok(())
 }
 
-fn build_upstream_req(
-    req: Request<Incoming>,
-    location_config: &LocationConfig,
-) -> io::Result<Request<Incoming>> {
+fn build_upstream_req(req: Request<Incoming>, location_config: &LocationConfig) -> io::Result<Request<Incoming>> {
     let method = req.method().clone();
     let path_and_query = match req.uri().path_and_query() {
         Some(path_and_query) => path_and_query.as_str(),
         None => "",
     };
-    let url = location_config.upstream.url_base.clone()
-        + &path_and_query[location_config.location.len()..];
+    let url = location_config.upstream.url_base.clone() + &path_and_query[location_config.location.len()..];
 
     let mut builder = Request::builder().method(method).uri(url).version(
         if !location_config.upstream.url_base.starts_with("https:") {
@@ -568,10 +484,7 @@ impl Display for SchemeHostPort {
     }
 }
 
-fn extract_requst_basic_info(
-    req: &Request<Incoming>,
-    default_scheme: &str,
-) -> io::Result<SchemeHostPort> {
+fn extract_requst_basic_info(req: &Request<Incoming>, default_scheme: &str) -> io::Result<SchemeHostPort> {
     let uri = req.uri();
     let scheme = uri.scheme_str().unwrap_or(default_scheme);
     if req.version() == Version::HTTP_2 {
@@ -580,10 +493,7 @@ fn extract_requst_basic_info(
             scheme: scheme.to_owned(),
             host: uri
                 .host()
-                .ok_or(io::Error::new(
-                    ErrorKind::InvalidData,
-                    "authority is absent in HTTP/2",
-                ))?
+                .ok_or(io::Error::new(ErrorKind::InvalidData, "authority is absent in HTTP/2"))?
                 .to_string(),
             port: uri.port_u16(),
         })
@@ -591,10 +501,7 @@ fn extract_requst_basic_info(
         let mut split = req
             .headers()
             .get(http::header::HOST)
-            .ok_or(io::Error::new(
-                ErrorKind::InvalidData,
-                "Host Header is absent in HTTP/1.1",
-            ))?
+            .ok_or(io::Error::new(ErrorKind::InvalidData, "Host Header is absent in HTTP/1.1"))?
             .to_str()
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?
             .split(':');
@@ -637,8 +544,7 @@ struct ReverseReqContext<'a> {
 }
 
 fn lookup_replacement(
-    origin_scheme_host_port: &SchemeHostPort,
-    absolute_redirect_location: String,
+    origin_scheme_host_port: &SchemeHostPort, absolute_redirect_location: String,
     redirect_bachpaths: &[config::RedirectBackpaths],
 ) -> Option<String> {
     for ele in redirect_bachpaths.iter() {
@@ -670,10 +576,7 @@ fn lookup_replacement(
     None
 }
 
-fn ensure_absolute(
-    location_header: &mut HeaderValue,
-    context: &ReverseReqContext<'_>,
-) -> io::Result<String> {
+fn ensure_absolute(location_header: &mut HeaderValue, context: &ReverseReqContext<'_>) -> io::Result<String> {
     let location = location_header
         .to_str()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
@@ -681,8 +584,8 @@ fn ensure_absolute(
         .parse::<Uri>()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     if redirect_url.scheme_str().is_none() {
-        let url_base = Uri::from_str(&context.upstream.url_base)
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        let url_base =
+            Uri::from_str(&context.upstream.url_base).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         let base = if url_base.path().ends_with("/") && location.starts_with("/") {
             let mut base = url_base.to_string();
             base.truncate(url_base.to_string().len() - 1);
@@ -702,13 +605,10 @@ fn pick_location<'b>(path: &str, locations: &'b [LocationConfig]) -> Option<&'b 
     //     "" => "/",
     //     path => path,
     // };
-    locations
-        .iter()
-        .find(|&ele| path.starts_with(&ele.location))
+    locations.iter().find(|&ele| path.starts_with(&ele.location))
 }
 
-fn build_hyper_legacy_client(
-) -> legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
+fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
     let pool_idle_timeout = Duration::from_secs(90);
     // 创建一个 HttpConnector
     let mut http_connector = HttpConnector::new();
@@ -732,35 +632,19 @@ fn build_hyper_legacy_client(
 
 fn register_metrics(registry: &mut Registry) -> Metrics {
     let http_req_counter = Family::<LabelImpl<ReqLabels>, Counter>::default();
-    registry.register(
-        "req_from_out",
-        "Number of HTTP requests received",
-        http_req_counter.clone(),
-    );
+    registry.register("req_from_out", "Number of HTTP requests received", http_req_counter.clone());
     let reverse_proxy_req = Family::<LabelImpl<ReverseProxyReqLabel>, Counter>::default();
-    registry.register(
-        "reverse_proxy_req",
-        "Number of reverse proxy requests",
-        reverse_proxy_req.clone(),
-    );
+    registry.register("reverse_proxy_req", "Number of reverse proxy requests", reverse_proxy_req.clone());
     let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
     registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    registry.register(
-        "net_bytes",
-        "num hosts net traffic in bytes",
-        net_bytes.clone(),
-    );
+    registry.register("net_bytes", "num hosts net traffic in bytes", net_bytes.clone());
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     let cgroup_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    registry.register(
-        "cgroup_bytes",
-        "num this cgroup's net traffic in bytes",
-        cgroup_bytes.clone(),
-    );
+    registry.register("cgroup_bytes", "num this cgroup's net traffic in bytes", cgroup_bytes.clone());
 
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
     // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
@@ -779,11 +663,7 @@ fn register_metrics(registry: &mut Registry) -> Metrics {
 // 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（数据突降）的数据。
 // 不过，虽然能够处理reset，但increase会用最后一个出现的值-第一个出现的值。在我们清空的实现下，reset后第一个出现的值肯定不是0，所以increase的算出来的值会稍少（少第一次出现的值）
 // 因此对于准确性要求较高的http_req_counter，这里的清空间隔就放大一点
-fn register_metric_cleaner<T: Label + Send + Sync>(
-    counter: Family<T, Counter>,
-    name: String,
-    interval_in_hour: u64,
-) {
+fn register_metric_cleaner<T: Label + Send + Sync>(counter: Family<T, Counter>, name: String, interval_in_hour: u64) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(interval_in_hour * 60 * 60)).await;
@@ -794,9 +674,7 @@ fn register_metric_cleaner<T: Label + Send + Sync>(
 }
 
 pub(crate) fn check_auth(
-    config_basic_auth: &HashMap<String, String>,
-    req: &Request<impl Body>,
-    client_socket_addr: &SocketAddr,
+    config_basic_auth: &HashMap<String, String>, req: &Request<impl Body>, client_socket_addr: &SocketAddr,
     header_name: HeaderName,
 ) -> (String, bool) {
     let mut username = "unkonwn".to_string();
@@ -807,11 +685,7 @@ pub(crate) fn check_auth(
         let header_name_clone = header_name.clone();
         let header_name_str = header_name_clone.as_str();
         match req.headers().get(header_name) {
-            None => warn!(
-                "no {} from {}",
-                header_name_str,
-                SocketAddrFormat(client_socket_addr)
-            ),
+            None => warn!("no {} from {}", header_name_str, SocketAddrFormat(client_socket_addr)),
             Some(header) => match header.to_str() {
                 Err(e) => warn!("解header失败，{:?} {:?}", header, e),
                 Ok(request_auth) => match config_basic_auth.get(request_auth) {
@@ -851,18 +725,14 @@ fn origin_form(uri: &mut Uri) -> io::Result<()> {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(
-    upgraded: Upgraded,
-    target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
-) -> io::Result<()> {
+async fn tunnel(upgraded: Upgraded, target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>) -> io::Result<()> {
     let mut upgraded = TokioIo::new(upgraded);
     let timed_target_io = TimeoutIO::new(target_io, crate::IDLE_TIMEOUT);
     pin!(timed_target_io);
     // https://github.com/sfackler/tokio-io-timeout/issues/12
     // timed_target_io.as_mut() // 一定要as_mut()，否则会move所有权
     // ._set_timeout_pinned(Duration::from_secs(crate::IDLE_SECONDS));
-    let (_from_client, _from_server) =
-        tokio::io::copy_bidirectional(&mut upgraded, &mut timed_target_io).await?;
+    let (_from_client, _from_server) = tokio::io::copy_bidirectional(&mut upgraded, &mut timed_target_io).await?;
     Ok(())
 }
 
@@ -888,14 +758,13 @@ pub struct ReverseProxyReqLabel {
     pub upstream: String,
 }
 
-static ALL_REVERSE_PROXY_REQ: LazyLock<prom_label::LabelImpl<ReverseProxyReqLabel>> =
-    LazyLock::new(|| {
-        LabelImpl::new(ReverseProxyReqLabel {
-            client: "all".to_string(),
-            origin: "all".to_string(),
-            upstream: "all".to_string(),
-        })
-    });
+static ALL_REVERSE_PROXY_REQ: LazyLock<prom_label::LabelImpl<ReverseProxyReqLabel>> = LazyLock::new(|| {
+    LabelImpl::new(ReverseProxyReqLabel {
+        client: "all".to_string(),
+        origin: "all".to_string(),
+        upstream: "all".to_string(),
+    })
+});
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct NetDirectionLabel {
@@ -927,15 +796,11 @@ pub(crate) fn build_authenticate_resp(for_proxy: bool) -> Response<BoxBody<Bytes
 }
 
 pub fn empty_body() -> BoxBody<Bytes, io::Error> {
-    Empty::<Bytes>::new()
-        .map_err(|never| match never {})
-        .boxed()
+    Empty::<Bytes>::new().map_err(|never| match never {}).boxed()
 }
 
 pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
-    Full::new(chunk.into())
-        .map_err(|never| match never {})
-        .boxed()
+    Full::new(chunk.into()).map_err(|never| match never {}).boxed()
 }
 
 #[cfg(test)]

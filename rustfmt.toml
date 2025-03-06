@@ -1,0 +1,4 @@
+# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md
+max_width = 120
+fn_call_width = 120             # 增加这个值使参数更不容易换行
+fn_params_layout = "Compressed" # 这会尽量保持参数在一行

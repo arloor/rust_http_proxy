@@ -43,8 +43,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hour
-pub(crate) const IDLE_TIMEOUT: Duration =
-    Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 10 }); // 3 minutes
+pub(crate) const IDLE_TIMEOUT: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 10 }); // 3 minutes
 
 type DynError = Box<dyn stdError>; // wrapper for dyn Error
 
@@ -110,10 +109,8 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
         port
     );
     if config.over_tls {
-        let mut acceptor = TlsAcceptor::new(
-            tls_config(&config.key, &config.cert)?,
-            create_dual_stack_listener(port).await?,
-        );
+        let mut acceptor =
+            TlsAcceptor::new(tls_config(&config.key, &config.cert)?, create_dual_stack_listener(port).await?);
 
         let mut rx = match &config.tls_config_broadcast {
             Some(tls_config_broadcast) => tls_config_broadcast.subscribe(),
@@ -160,9 +157,7 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
 }
 
 async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
-    io: T,
-    proxy_handler: Arc<ProxyHandler>,
-    client_socket_addr: SocketAddr,
+    io: T, proxy_handler: Arc<ProxyHandler>, client_socket_addr: SocketAddr,
 ) {
     let timed_io = TimeoutIO::new(io, IDLE_TIMEOUT);
     let timed_io = Box::pin(timed_io);
@@ -186,17 +181,12 @@ async fn serve<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
 /// # Returns
 /// * `Result<Response<BoxBody<Bytes, io::Error>>, io::Error>` - hyper::Response
 async fn proxy(
-    req: Request<hyper::body::Incoming>,
-    client_socket_addr: SocketAddr,
-    proxy_handler: Arc<ProxyHandler>,
+    req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr, proxy_handler: Arc<ProxyHandler>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    proxy_handler
-        .proxy(req, client_socket_addr)
-        .await
-        .map_err(|e| {
-            warn!("proxy error:{}", e);
-            e
-        })
+    proxy_handler.proxy(req, client_socket_addr).await.map_err(|e| {
+        warn!("proxy error:{}", e);
+        e
+    })
 }
 
 /// 处理hyper错误
@@ -214,33 +204,16 @@ fn handle_hyper_error(client_socket_addr: SocketAddr, http_err: DynError) {
         };
         if http_err.is_user() {
             // 判断是否是用户错误
-            warn!(
-                "[hyper user error]: {:?} from {}",
-                cause,
-                SocketAddrFormat(&client_socket_addr)
-            );
+            warn!("[hyper user error]: {:?} from {}", cause, SocketAddrFormat(&client_socket_addr));
         } else {
             // 系统错误
-            log::debug!(
-                "[hyper system error]: {:?} from {}",
-                cause,
-                SocketAddrFormat(&client_socket_addr)
-            );
+            log::debug!("[hyper system error]: {:?} from {}", cause, SocketAddrFormat(&client_socket_addr));
         }
     } else if let Some(io_err) = http_err.downcast_ref::<io::Error>() {
         // 转换为io::Error
-        warn!(
-            "[hyper io error]: [{}] {} from {}",
-            io_err.kind(),
-            io_err,
-            SocketAddrFormat(&client_socket_addr)
-        );
+        warn!("[hyper io error]: [{}] {} from {}", io_err.kind(), io_err, SocketAddrFormat(&client_socket_addr));
     } else {
-        warn!(
-            "[hyper other error]: {} from {}",
-            http_err,
-            SocketAddrFormat(&client_socket_addr)
-        );
+        warn!("[hyper other error]: {} from {}", http_err, SocketAddrFormat(&client_socket_addr));
     }
 }
 

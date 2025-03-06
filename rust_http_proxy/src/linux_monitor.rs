@@ -25,16 +25,11 @@ pub struct TimeValue {
 
 impl TimeValue {
     pub fn new(time: String, egress: u64, ingress: u64) -> TimeValue {
-        TimeValue {
-            time,
-            egress,
-            ingress,
-        }
+        TimeValue { time, egress, ingress }
     }
 }
 
-pub(crate) const IGNORED_INTERFACES: &[&str; 7] =
-    &["lo", "podman", "veth", "flannel", "cni0", "utun", "docker"];
+pub(crate) const IGNORED_INTERFACES: &[&str; 7] = &["lo", "podman", "veth", "flannel", "cni0", "utun", "docker"];
 
 #[derive(Clone)]
 pub struct NetMonitor {
@@ -121,10 +116,7 @@ impl NetMonitor {
     }
 
     pub async fn net_html(
-        &self,
-        path: &str,
-        hostname: &str,
-        can_gzip: bool,
+        &self, path: &str, hostname: &str, can_gzip: bool,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
         // 创建上下文并插入数据
         let mut context = tera::Context::new();
@@ -152,20 +144,14 @@ impl NetMonitor {
         }
     }
 
-    pub async fn net_json(
-        &self,
-        can_gzip: bool,
-    ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+    pub async fn net_json(&self, can_gzip: bool) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
         let snapshot = self.fetch_all().await;
         let body = serde_json::to_string(&snapshot).unwrap_or("{}".to_string());
         let builder = Response::builder()
             .status(StatusCode::OK)
             .header(http::header::SERVER, SERVER_NAME)
             .header("Access-Control-Allow-Origin", "*")
-            .header(
-                http::header::CONTENT_TYPE,
-                "application/json; charset=utf-8",
-            );
+            .header(http::header::CONTENT_TYPE, "application/json; charset=utf-8");
         if can_gzip {
             let compressed_data = match crate::web_func::compress_string(&body) {
                 Ok(compressed_data) => compressed_data,
@@ -251,8 +237,7 @@ const TEMPLATES: &[TeraTemplate] = &[
 static TERA: LazyLock<tera::Tera> = LazyLock::new(|| {
     let mut tmp = tera::Tera::default();
     for ele in TEMPLATES {
-        tmp.add_raw_template(ele.name, ele.template_content)
-            .unwrap_or(());
+        tmp.add_raw_template(ele.name, ele.template_content).unwrap_or(());
     }
     tmp
 });
@@ -274,10 +259,7 @@ pub fn get_egress_ingress() -> (u64, u64) {
 
             if array.len() == 17 {
                 let interface = *array.first().unwrap_or(&"");
-                if IGNORED_INTERFACES
-                    .iter()
-                    .any(|&ignored| interface.starts_with(ignored))
-                {
+                if IGNORED_INTERFACES.iter().any(|&ignored| interface.starts_with(ignored)) {
                     continue;
                 }
                 egress += array.get(9).unwrap_or(&"").parse::<u64>().unwrap_or(0);

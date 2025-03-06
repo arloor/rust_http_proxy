@@ -7,19 +7,11 @@ pub(crate) fn _ipv6_mapped_to_ipv4(addr: IpAddr) -> IpAddr {
         IpAddr::V6(v6_addr) => {
             if v6_addr.segments()[..6] == [0, 0, 0, 0, 0, 0xFFFF] {
                 #[cfg(debug_assertions)]
-                log::info!(
-                    "found IPv4-mapped IPv6 address: \"{}\", converting to IPv4",
-                    addr
-                );
+                log::info!("found IPv4-mapped IPv6 address: \"{}\", converting to IPv4", addr);
                 // 提取IPv4部分并转换为SocketAddr::V4
                 let ip4_bits: [u16; 2] = [v6_addr.segments()[6], v6_addr.segments()[7]];
-                Ipv4Addr::new(
-                    (ip4_bits[0] >> 8) as u8,
-                    ip4_bits[0] as u8,
-                    (ip4_bits[1] >> 8) as u8,
-                    ip4_bits[1] as u8,
-                )
-                .into()
+                Ipv4Addr::new((ip4_bits[0] >> 8) as u8, ip4_bits[0] as u8, (ip4_bits[1] >> 8) as u8, ip4_bits[1] as u8)
+                    .into()
             } else {
                 // 不是IPv4映射的IPv6地址，直接返回原地址
                 addr
@@ -36,9 +28,7 @@ pub(crate) fn _ipv6_mapped_to_ipv4(addr: IpAddr) -> IpAddr {
 pub fn local_ip() -> io::Result<String> {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
-    socket
-        .local_addr()
-        .map(|local_addr| local_addr.ip().to_string())
+    socket.local_addr().map(|local_addr| local_addr.ip().to_string())
 }
 
 #[cfg(feature = "pnet")]
@@ -55,9 +45,7 @@ pub fn local_ip() -> io::Result<String> {
 
     let result = all_interfaces
         .iter()
-        .find(|interface| {
-            interface.is_up() && !interface.is_loopback() && !interface.ips.is_empty()
-        })
+        .find(|interface| interface.is_up() && !interface.is_loopback() && !interface.ips.is_empty())
         .map(|interface| {
             interface
                 .ips
@@ -75,11 +63,6 @@ pub struct SocketAddrFormat<'a>(pub &'a std::net::SocketAddr);
 
 impl std::fmt::Display for SocketAddrFormat<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "https://ip.im/{} {}",
-            self.0.ip().to_canonical(),
-            self.0.port()
-        )
+        write!(f, "https://ip.im/{} {}", self.0.ip().to_canonical(), self.0.port())
     }
 }

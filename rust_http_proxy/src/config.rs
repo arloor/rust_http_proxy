@@ -178,9 +178,7 @@ fn truncate_string(s: &str, n: usize) -> &str {
 }
 
 fn parse_reverse_proxy_config(
-    reverse_proxy_config_file: &Option<String>,
-    append_upstream_url: &mut Vec<String>,
-    enable_github_proxy: bool,
+    reverse_proxy_config_file: &Option<String>, append_upstream_url: &mut Vec<String>, enable_github_proxy: bool,
 ) -> Result<ReverseProxyConfig, <Config as TryFrom<Param>>::Error> {
     let mut locations: HashMap<String, Vec<LocationConfig>> = match reverse_proxy_config_file {
         Some(path) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
@@ -204,8 +202,7 @@ fn parse_reverse_proxy_config(
                             return;
                         }
                         let upstream_url_tmp = upstream_url.to_string();
-                        let upstream_url_base =
-                            truncate_string(upstream_url_tmp.as_str(), upstream_url.path().len());
+                        let upstream_url_base = truncate_string(upstream_url_tmp.as_str(), upstream_url.path().len());
                         // 如果path==/，则去掉path
                         let path = match upstream_url.path() {
                             "/" => "",
@@ -266,9 +263,7 @@ fn parse_reverse_proxy_config(
                         location_config.upstream.url_base = upstream_url_base.to_string()
                     }
                 }
-                Err(e) => {
-                    return Err(format!("parse upstream upstream_url_base error:{}", e).into())
-                }
+                Err(e) => return Err(format!("parse upstream upstream_url_base error:{}", e).into()),
             }
         }
     }
@@ -327,10 +322,7 @@ fn log_config(config: &Config) {
     } else {
         info!("serve web content of \"{}\"", config.web_content_path);
         if !config.referer_keywords_to_self.is_empty() {
-            info!(
-                "Referer header to images must contain {:?}",
-                config.referer_keywords_to_self
-            );
+            info!("Referer header to images must contain {:?}", config.referer_keywords_to_self);
         }
     }
     info!("basic auth is {:?}", config.basic_auth);
@@ -345,10 +337,7 @@ fn log_config(config: &Config) {
             for ele in reverse_proxy_config.1 {
                 info!(
                     "    {:<70} -> {}**",
-                    format!(
-                        "http(s)://{}:port{}**",
-                        reverse_proxy_config.0, ele.location
-                    ),
+                    format!("http(s)://{}:port{}**", reverse_proxy_config.0, ele.location),
                     ele.upstream.url_base,
                 );
             }

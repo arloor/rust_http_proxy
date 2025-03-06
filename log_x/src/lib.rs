@@ -1,8 +1,7 @@
 use std::{fs, io, path};
 
 use flexi_logger::{
-    Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, FlexiLoggerError, Logger, LoggerHandle,
-    Naming,
+    Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, FlexiLoggerError, Logger, LoggerHandle, Naming,
 };
 use log::{info, Record};
 
@@ -12,22 +11,17 @@ pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLogg
     if !log_dir_path.exists() {
         fs::create_dir_all(log_dir_path.clone())?;
     }
-    let log_dir = log_dir_path.as_path().to_str().ok_or(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        "error parse absolute path of log dir",
-    ))?;
+    let log_dir = log_dir_path
+        .as_path()
+        .to_str()
+        .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "error parse absolute path of log dir"))?;
     let logger = if cfg!(debug_assertions) {
         Logger::try_with_env_or_str("debug,rustls=error")?
     } else {
         Logger::try_with_env_or_str("info,rustls=error")?
     };
     let log = logger
-        .log_to_file(
-            FileSpec::default()
-                .directory(log_dir)
-                .basename(log_file)
-                .suffix(""),
-        )
+        .log_to_file(FileSpec::default().directory(log_dir).basename(log_file).suffix(""))
         .duplicate_to_stdout(Duplicate::All)
         .rotate(
             Criterion::Size(10_000_000), // 例如, 每 10MB 切割
@@ -46,11 +40,7 @@ pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLogg
     log
 }
 
-fn my_format(
-    w: &mut dyn std::io::Write,
-    now: &mut DeferredNow,
-    record: &Record,
-) -> Result<(), std::io::Error> {
+fn my_format(w: &mut dyn std::io::Write, now: &mut DeferredNow, record: &Record) -> Result<(), std::io::Error> {
     write!(
         w,
         "{} [{}] [{}:{}] {}",
