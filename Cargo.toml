@@ -6,7 +6,7 @@ resolver = "2"
 license = "LGPL-2.1-only OR BSD-2-Clause"
 
 [workspace.dependencies]
-prometheus-client = "0.22"
+prometheus-client = "0.23"
 pin-project-lite = "0.2"
 log = "0.4"
 tokio = { version = "1", features = ["full"] }

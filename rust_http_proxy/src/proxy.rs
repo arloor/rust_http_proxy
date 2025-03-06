@@ -267,7 +267,7 @@ impl ProxyHandler {
             let mut response = Response::new(empty_body());
             // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
             let max_num = 2048 / LOCAL_IP.len();
-            let count = rand::thread_rng().gen_range(1..max_num);
+            let count = rand::rng().random_range(1..max_num);
             for _ in 0..count {
                 response
                     .headers_mut()
