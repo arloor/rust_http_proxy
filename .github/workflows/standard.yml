@@ -35,8 +35,8 @@ jobs:
           # podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
           podman push docker.io/arloor/rust_http_proxy:latest
 
-          docker login ccr.ccs.tencentyun.com --username=1293181335 -p ${{ secrets.CCR_REGISTRY_PASSWORD }} 
-          podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:latest
+          # docker login ccr.ccs.tencentyun.com --username=1293181335 -p ${{ secrets.CCR_REGISTRY_PASSWORD }} 
+          # podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:latest
       - name: create master release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         env:

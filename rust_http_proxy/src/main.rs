@@ -24,7 +24,7 @@ use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
 use config::load_config;
 use futures_util::future::select_all;
 use http::{HeaderMap, HeaderValue, StatusCode};
-use log::{info, warn};
+use log::{debug, warn};
 
 use prometheus_client::encoding::text::encode;
 use proxy::ProxyHandler;
@@ -183,7 +183,7 @@ async fn serve_metrics(
     let mut header_map = HeaderMap::new();
     match check_auth(&headers, &state.basic_auth) {
         Ok(some_user) => {
-            info!("authorized request from [{some_user:?}]");
+            debug!("authorized request from [{some_user:?}]");
         }
         Err(e) => {
             warn!("authorization failed: {:?}", e);
