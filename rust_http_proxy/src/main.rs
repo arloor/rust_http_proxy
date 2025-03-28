@@ -20,7 +20,7 @@ use axum::Router;
 use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
 use config::load_config;
 use futures_util::future::select_all;
-use http::StatusCode;
+use http::{HeaderMap, StatusCode};
 use log::info;
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
@@ -93,7 +93,7 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
         }),
         false => None,
     };
-    axum_bootstrap::Server::<ProxyInterceptor>::new_with_interceptor(
+    axum_bootstrap::new_server_with_interceptor::<ProxyInterceptor>(
         port,
         tls_param,
         ProxyInterceptor {
@@ -101,6 +101,7 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
         },
         build_router(),
     )
+    .with_timeout(IDLE_TIMEOUT)
     .run()
     .await
 }
@@ -109,6 +110,12 @@ pub(crate) fn build_router() -> Router {
     // build our application with a route
     Router::new()
         .route("/", get(|| async { (StatusCode::OK, "OK") }))
+        .fallback(get(|| async {
+            let mut header_map = HeaderMap::new();
+            #[allow(clippy::expect_used)]
+            header_map.insert("content-type", "text/html; charset=utf-8".parse().expect("should be valid header"));
+            (StatusCode::NOT_FOUND, header_map, web_func::H404)
+        }))
         .layer((CorsLayer::permissive(), TimeoutLayer::new(Duration::from_secs(30)), CompressionLayer::new()))
 }
 
