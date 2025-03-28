@@ -80,7 +80,10 @@ impl ReqInterceptor for ProxyInterceptor {
         async move {
             let result = proxy_handler.proxy(req, ip).await;
             match result {
-                Ok(response) => axum_bootstrap::InterceptResult::Return(Response::new(Body::empty())),
+                Ok(response) => {
+                    let (parts, body) = response.into_parts();
+                    axum_bootstrap::InterceptResult::Return(Response::from_parts(parts, Body::new(body)))
+                }
                 Err(err) => {
                     log::error!("Error handling request: {}", err);
                     axum_bootstrap::InterceptResult::Error(AppError::new(err))
