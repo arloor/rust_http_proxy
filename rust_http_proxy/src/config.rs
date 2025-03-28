@@ -5,14 +5,9 @@ use http::Uri;
 use log::{info, warn};
 use log_x::init_log;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::broadcast;
-use tokio::time;
-use tokio_rustls::rustls::ServerConfig;
 
 use crate::reverse::LocationConfig;
-use crate::tls_helper::tls_config;
-use crate::{DynError, IDLE_TIMEOUT, REFRESH_INTERVAL};
+use crate::{DynError, IDLE_TIMEOUT};
 
 pub(crate) const DEFAULT_HOST: &str = "default_host";
 const GITHUB_URL_BASE: [&str; 5] = [
@@ -105,7 +100,6 @@ pub(crate) struct Config {
     pub(crate) hostname: String,
     pub(crate) port: Vec<u16>,
     pub(crate) reverse_proxy_config: ReverseProxyConfig,
-    pub(crate) tls_config_broadcast: Option<broadcast::Sender<Arc<ServerConfig>>>,
 }
 
 impl TryFrom<Param> for Config {
@@ -121,27 +115,6 @@ impl TryFrom<Param> for Config {
                 basic_auth.insert(format!("Basic {}", base64), username);
             }
         }
-        let tls_config_broadcast = if param.over_tls {
-            let (tx, _rx) = broadcast::channel::<Arc<ServerConfig>>(10);
-            let tx_clone = tx.clone();
-            let key_clone = param.key.clone();
-            let cert_clone = param.cert.clone();
-            tokio::spawn(async move {
-                info!("update tls config every {:?}", REFRESH_INTERVAL);
-                loop {
-                    time::sleep(REFRESH_INTERVAL).await;
-                    if let Ok(new_acceptor) = tls_config(&key_clone, &cert_clone) {
-                        info!("update tls config");
-                        if let Err(e) = tx_clone.send(new_acceptor) {
-                            warn!("send tls config error:{}", e);
-                        }
-                    }
-                }
-            });
-            Some(tx)
-        } else {
-            None
-        };
         let reverse_proxy_config = parse_reverse_proxy_config(
             &param.reverse_proxy_config_file,
             &mut param.append_upstream_url,
@@ -158,7 +131,6 @@ impl TryFrom<Param> for Config {
             hostname: param.hostname,
             port: param.port,
             reverse_proxy_config,
-            tls_config_broadcast,
         })
     }
 }

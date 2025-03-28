@@ -13,9 +13,9 @@ use crate::{
     address::host_addr,
     config,
     http1_client::HttpClient,
-    ip_x::SocketAddrFormat,
+    ip_x::{local_ip, SocketAddrFormat},
     reverse::{self, LocationConfig, Upstream},
-    web_func, Config, LOCAL_IP,
+    web_func, Config,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -48,7 +48,7 @@ use prometheus_client::{
 };
 use rand::Rng;
 use tokio::{net::TcpStream, pin};
-
+static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
     pub(crate) config: Config,
     pub(crate) prom_registry: Registry,
