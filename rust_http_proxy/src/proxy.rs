@@ -15,7 +15,7 @@ use crate::{
     http1_client::HttpClient,
     ip_x::{local_ip, SocketAddrFormat},
     reverse::{self, LocationConfig, Upstream},
-    web_func, Config, Metrics, METRICS,
+    web_func, Config, METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -737,7 +737,7 @@ pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
 }
 
 #[cfg(all(target_os = "linux", feature = "bpf"))]
-pub(crate) fn snapshot_metrics(metrics: &Metrics) {
+pub(crate) fn snapshot_metrics(metrics: &crate::metrics::Metrics) {
     use crate::ebpf;
     {
         metrics
