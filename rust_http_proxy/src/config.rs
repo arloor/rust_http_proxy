@@ -72,8 +72,6 @@ pub struct Param {
     never_ask_for_auth: bool,
     #[arg(short, long, help = "if enable, proxy server will listen on https")]
     over_tls: bool,
-    #[arg(long, value_name = "HOSTNAME", default_value = "unknown")]
-    hostname: String,
     #[arg(long, value_name = "FILE_PATH", help = r#"反向代理配置文件"#)]
     reverse_proxy_config_file: Option<String>,
     #[arg(long, help = r#"是否开启github proxy"#)]
@@ -96,8 +94,6 @@ pub(crate) struct Config {
     pub(crate) referer_keywords_to_self: Vec<String>,
     pub(crate) never_ask_for_auth: bool,
     pub(crate) over_tls: bool,
-    #[allow(dead_code)]
-    pub(crate) hostname: String,
     pub(crate) port: Vec<u16>,
     pub(crate) reverse_proxy_config: ReverseProxyConfig,
 }
@@ -128,7 +124,6 @@ impl TryFrom<Param> for Config {
             referer_keywords_to_self: param.referer_keywords_to_self,
             never_ask_for_auth: param.never_ask_for_auth,
             over_tls: param.over_tls,
-            hostname: param.hostname,
             port: param.port,
             reverse_proxy_config,
         })
@@ -266,8 +261,7 @@ pub(crate) struct RedirectBackpaths {
 }
 
 pub(crate) fn load_config() -> Result<Config, DynError> {
-    let mut param = Param::parse();
-    param.hostname = get_hostname();
+    let param = Param::parse();
     if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
         return Err(format!("init log error:{}", log_init_error).into());
     }
@@ -281,7 +275,6 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
         info!("use aws_lc_rs as default crypto provider");
         let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
     }
-    info!("hostname seems to be {}", param.hostname);
     let config = Config::try_from(param)?;
     log_config(&config);
     info!("auto close connection after idle for {:?}", IDLE_TIMEOUT);
@@ -314,44 +307,4 @@ fn log_config(config: &Config) {
                 );
             }
         });
-}
-
-#[cfg(unix)]
-fn get_hostname() -> String {
-    use std::process::Command;
-    let result = Command::new("sh")
-        .arg("-c")
-        .arg(
-            r#"
-                hostname
-                "#,
-        )
-        .output();
-    match result {
-        Ok(output) => {
-            let hostname = String::from_utf8(output.stdout)
-                .unwrap_or("unknown".to_string())
-                .trim()
-                .to_owned();
-            if hostname.is_empty() {
-                get_hostname_from_env()
-            } else {
-                hostname
-            }
-        }
-        Err(e) => {
-            warn!("get hostname error: {}", e);
-            "unknown".to_string()
-        }
-    }
-}
-
-#[cfg(windows)]
-fn get_hostname() -> String {
-    get_hostname_from_env()
-}
-
-fn get_hostname_from_env() -> String {
-    use std::env;
-    env::var("HOSTNAME").unwrap_or("unknown".to_string())
 }
