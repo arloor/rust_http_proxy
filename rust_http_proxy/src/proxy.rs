@@ -48,8 +48,6 @@ use tokio::{net::TcpStream, pin};
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
     pub(crate) config: Config,
-    #[cfg(target_os = "linux")]
-    pub(crate) linux_monitor: crate::linux_monitor::NetMonitor,
     http1_client: HttpClient<Incoming>,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
 }
@@ -79,14 +77,7 @@ impl ProxyHandler {
         let reverse_client = build_hyper_legacy_client();
         let http1_client = HttpClient::<Incoming>::new();
 
-        #[cfg(target_os = "linux")]
-        let monitor = crate::linux_monitor::NetMonitor::new()?;
-        #[cfg(target_os = "linux")]
-        monitor.start();
-
         Ok(ProxyHandler {
-            #[cfg(target_os = "linux")]
-            linux_monitor: monitor,
             reverse_client,
             http1_client,
             config,
@@ -734,34 +725,6 @@ pub fn empty_body() -> BoxBody<Bytes, io::Error> {
 
 pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
     Full::new(chunk.into()).map_err(|never| match never {}).boxed()
-}
-
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-pub(crate) fn snapshot_metrics(metrics: &crate::metrics::Metrics) {
-    use crate::ebpf;
-    {
-        metrics
-            .net_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
-            .inner()
-            .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
-        metrics
-            .net_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
-            .inner()
-            .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
-
-        metrics
-            .cgroup_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
-            .inner()
-            .store(ebpf::get_cgroup_egress(), std::sync::atomic::Ordering::Relaxed);
-        metrics
-            .cgroup_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
-            .inner()
-            .store(ebpf::get_cgroup_ingress(), std::sync::atomic::Ordering::Relaxed);
-    }
 }
 
 #[cfg(test)]

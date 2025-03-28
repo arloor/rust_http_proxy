@@ -24,13 +24,13 @@ use axum::{Json, Router};
 use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
 use axum_extra::extract::Host;
 use axum_macros::debug_handler;
-use chrono::Local;
 use config::load_config;
 use futures_util::future::select_all;
 use http::{HeaderMap, StatusCode};
-use linux_monitor::{NetMonitor, Snapshot};
+use linux_monitor::Snapshot;
 use log::warn;
 
+use prometheus_client::encoding::text::encode;
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use tower_http::compression::CompressionLayer;
@@ -56,6 +56,8 @@ async fn main() -> Result<(), DynError> {
     let proxy_handler = Arc::new(ProxyHandler::new(proxy_config)?);
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();
+    #[cfg(target_os = "linux")]
+    crate::linux_monitor::init_once();
     let futures = ports
         .iter()
         .map(|port| {
@@ -98,27 +100,24 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
         }),
         false => None,
     };
-    let net_monitor = proxy_handler.linux_monitor.clone();
     axum_bootstrap::new_server_with_interceptor::<ProxyInterceptor>(
         port,
         tls_param,
         ProxyInterceptor { proxy_handler },
-        build_router(net_monitor),
+        build_router(AppState {}),
     )
     .with_timeout(IDLE_TIMEOUT)
     .run()
     .await
 }
 
-pub(crate) struct AppState {
-    pub(crate) net_monitor: NetMonitor,
-}
+pub(crate) struct AppState {}
 
 pub(crate) const BODY404: &str = include_str!("../html/404.html");
-pub(crate) fn build_router(net_monitor: NetMonitor) -> Router {
+pub(crate) fn build_router(appstate: AppState) -> Router {
     // build our application with a route
     let router = Router::new()
-        .route("/time", get(|| async { (StatusCode::OK, format!("{}", Local::now())) }))
+        .route("/metrics", get(serve_metrics))
         .fallback(get(|| async {
             let mut header_map = HeaderMap::new();
             #[allow(clippy::expect_used)]
@@ -133,7 +132,15 @@ pub(crate) fn build_router(net_monitor: NetMonitor) -> Router {
         .route("/netx", get(netx_html))
         .route("/net.json", get(net_json));
 
-    router.with_state(Arc::new(AppState { net_monitor }))
+    router.with_state(Arc::new(appstate))
+}
+
+async fn serve_metrics(State(_): State<Arc<AppState>>) -> Result<String, AppError> {
+    #[cfg(all(target_os = "linux", feature = "bpf"))]
+    snapshot_metrics();
+    let mut buffer = String::new();
+    encode(&mut buffer, &METRICS.registry).map_err(AppError::new)?;
+    Ok(buffer)
 }
 
 #[debug_handler]
@@ -159,24 +166,57 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
         }
 }
 #[cfg(target_os = "linux")]
-async fn net_html(State(state): State<Arc<AppState>>, Host(host): Host) -> Result<Html<String>, AppError> {
-    state
-        .net_monitor
+async fn net_html(State(_): State<Arc<AppState>>, Host(host): Host) -> Result<Html<String>, AppError> {
+    use linux_monitor::NET_MONITOR;
+
+    NET_MONITOR
         .net_html("/net", &host)
         .await
         .map_err(AppError::new)
         .map(Html)
 }
 #[cfg(target_os = "linux")]
-async fn netx_html(State(state): State<Arc<AppState>>, Host(host): Host) -> Result<Html<String>, AppError> {
-    state
-        .net_monitor
+async fn netx_html(State(_): State<Arc<AppState>>, Host(host): Host) -> Result<Html<String>, AppError> {
+    use linux_monitor::NET_MONITOR;
+    NET_MONITOR
         .net_html("/netx", &host)
         .await
         .map_err(AppError::new)
         .map(Html)
 }
 #[cfg(target_os = "linux")]
-async fn net_json(State(state): State<Arc<AppState>>) -> Result<Json<Snapshot>, AppError> {
-    Ok(Json(state.net_monitor.net_json().await))
+async fn net_json(State(_): State<Arc<AppState>>) -> Result<Json<Snapshot>, AppError> {
+    use linux_monitor::NET_MONITOR;
+    Ok(Json(NET_MONITOR.net_json().await))
+}
+
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+pub(crate) fn snapshot_metrics() {
+    use prom_label::LabelImpl;
+    use proxy::NetDirectionLabel;
+
+    use crate::ebpf;
+    {
+        METRICS
+            .net_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
+            .inner()
+            .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
+        METRICS
+            .net_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
+            .inner()
+            .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
+
+        METRICS
+            .cgroup_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
+            .inner()
+            .store(ebpf::get_cgroup_egress(), std::sync::atomic::Ordering::Relaxed);
+        METRICS
+            .cgroup_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
+            .inner()
+            .store(ebpf::get_cgroup_ingress(), std::sync::atomic::Ordering::Relaxed);
+    }
 }

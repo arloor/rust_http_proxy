@@ -9,6 +9,20 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
+pub(crate) fn init_once() {
+    static INIT_ONCE: std::sync::Once = std::sync::Once::new();
+    INIT_ONCE.call_once(|| {
+        log::info!("init linux net monitor");
+        NET_MONITOR.start(); // This will ensure that the NetMonitor is initialized and starts monitoring.
+    });
+}
+
+pub(crate) static NET_MONITOR: LazyLock<NetMonitor> = LazyLock::new(|| {
+    // 创建 NetMonitor 实例
+    #[allow(clippy::expect_used)]
+    NetMonitor::new().expect("Failed to create NetMonitor")
+});
+
 #[derive(Debug, Clone)]
 pub struct TimeValue {
     pub time: String,
