@@ -69,21 +69,23 @@ pub async fn serve_http_request(
                 && !referer_header.is_empty() // 存在Referer Header
                 && !referer_keywords_to_self.is_empty() // Referer关键字不为空
                 && !referer_keywords_to_self.iter().any(|refer| referer_header.contains(refer));
-            info!(
-                "{:>29} {:<5} {:^7} {} {:?} {}",
-                "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
-                client_socket_addr.port(),
-                req.method().as_str(),
-                path,
-                req.version(),
-                if is_outer_view_html
-                //来自外链的点击，记录Referer
-                {
-                    format!("\"Referer: {}\"", referer_header)
-                } else {
-                    "".to_string()
-                },
-            );
+            if path != "/metrics" {
+                info!(
+                    "{:>29} {:<5} {:^7} {} {:?} {}",
+                    "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
+                    client_socket_addr.port(),
+                    req.method().as_str(),
+                    path,
+                    req.version(),
+                    if is_outer_view_html
+                    //来自外链的点击，记录Referer
+                    {
+                        format!("\"Referer: {}\"", referer_header)
+                    } else {
+                        "".to_string()
+                    },
+                );
+            }
             let r = serve_path(web_content_path, path, req, can_gzip, true).await;
             let is_shell = path.ends_with(".sh");
             incr_counter_if_need(&r, is_outer_view_html, is_shell, &METRICS.http_req_counter, referer_header, path);
