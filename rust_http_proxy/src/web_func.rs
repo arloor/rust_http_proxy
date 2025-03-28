@@ -6,6 +6,7 @@ use crate::proxy::empty_body;
 use crate::proxy::full_body;
 use crate::proxy::ProxyHandler;
 use crate::proxy::ReqLabels;
+use crate::METRICS;
 use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
 use http::response::Builder;
@@ -77,8 +78,8 @@ pub async fn serve_http_request(
                 return Ok(build_authenticate_resp(false));
             }
             #[cfg(all(target_os = "linux", feature = "bpf"))]
-            proxy::snapshot_metrics(&proxy_handler.metrics);
-            serve_metrics(&proxy_handler.prom_registry, can_gzip).await
+            proxy::snapshot_metrics(&METRICS);
+            serve_metrics(&METRICS.registry, can_gzip).await
         }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
@@ -102,14 +103,7 @@ pub async fn serve_http_request(
             );
             let r = serve_path(web_content_path, path, req, can_gzip, true).await;
             let is_shell = path.ends_with(".sh");
-            incr_counter_if_need(
-                &r,
-                is_outer_view_html,
-                is_shell,
-                &proxy_handler.metrics.http_req_counter,
-                referer_header,
-                path,
-            );
+            incr_counter_if_need(&r, is_outer_view_html, is_shell, &METRICS.http_req_counter, referer_header, path);
             r
         }
         (&Method::HEAD, path) => serve_path(web_content_path, path, req, false, false).await,
