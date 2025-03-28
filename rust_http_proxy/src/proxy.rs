@@ -15,7 +15,7 @@ use crate::{
     http1_client::HttpClient,
     ip_x::{local_ip, SocketAddrFormat},
     reverse::{self, LocationConfig, Upstream},
-    web_func, Config, METRICS,
+    web_func, METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -47,7 +47,6 @@ use rand::Rng;
 use tokio::{net::TcpStream, pin};
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
-    pub(crate) config: Config,
     http1_client: HttpClient<Incoming>,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
 }
@@ -73,39 +72,37 @@ impl From<InterceptResultAdapter> for InterceptResult {
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
-    pub fn new(config: Config) -> Result<Self, crate::DynError> {
+    pub fn new() -> Result<Self, crate::DynError> {
         let reverse_client = build_hyper_legacy_client();
         let http1_client = HttpClient::<Incoming>::new();
 
         Ok(ProxyHandler {
             reverse_client,
             http1_client,
-            config,
         })
     }
     pub async fn proxy(
         &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
     ) -> Result<InterceptResultAdapter, io::Error> {
-        let config_basic_auth = &self.config.basic_auth;
-        let never_ask_for_auth = self.config.never_ask_for_auth;
+        let config_basic_auth = &crate::CONFIG.basic_auth;
+        let never_ask_for_auth = crate::CONFIG.never_ask_for_auth;
 
         // 对于非CONNECT请求，检查是否需要反向代理或服务
         if Method::CONNECT != req.method() {
             let origin_scheme_host_port = extract_requst_basic_info(
                 &req,
-                match self.config.over_tls {
+                match crate::CONFIG.over_tls {
                     true => "https",
                     false => "http",
                 },
             )?;
 
             // 尝试找到匹配的反向代理配置
-            let host_locations = self
-                .config
+            let host_locations = crate::CONFIG
                 .reverse_proxy_config
                 .locations
                 .get(&origin_scheme_host_port.host)
-                .or(self.config.reverse_proxy_config.locations.get(config::DEFAULT_HOST));
+                .or(crate::CONFIG.reverse_proxy_config.locations.get(config::DEFAULT_HOST));
 
             if let Some(locations) = host_locations {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
@@ -301,7 +298,7 @@ impl ProxyHandler {
                 "reject http GET/POST when ask_for_auth and basic_auth not empty",
             ));
         }
-        web_func::serve_http_request(self, req, client_socket_addr, path)
+        web_func::serve_http_request(req, client_socket_addr, path)
             .await
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
@@ -345,7 +342,7 @@ impl ProxyHandler {
                     if let Some(replacement) = lookup_replacement(
                         context.origin_scheme_host_port,
                         absolute_redirect_location,
-                        &self.config.reverse_proxy_config.redirect_bachpaths,
+                        &crate::CONFIG.reverse_proxy_config.redirect_bachpaths,
                     ) {
                         let origin = headers.insert(
                             LOCATION,

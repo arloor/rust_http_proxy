@@ -34,7 +34,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 pub(crate) const IDLE_TIMEOUT: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 10 }); // 3 minutes
@@ -46,11 +46,17 @@ type DynError = Box<dyn stdError + Send + Sync>; // wrapper for dyn Error
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
+static CONFIG: LazyLock<Config> = LazyLock::new(|| {
+    // This will be initialized when the program starts
+    // to ensure we have a default configuration
+    #[allow(clippy::expect_used)]
+    load_config().expect("Failed to load config")
+});
+
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    let proxy_config: Config = load_config()?;
-    let ports = proxy_config.port.clone();
-    let proxy_handler = Arc::new(ProxyHandler::new(proxy_config)?);
+    let ports = CONFIG.port.clone();
+    let proxy_handler = Arc::new(ProxyHandler::new()?);
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();
     #[cfg(target_os = "linux")]
@@ -88,7 +94,7 @@ impl ReqInterceptor for ProxyInterceptor {
 }
 
 async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), DynError> {
-    let config = &proxy_handler.config;
+    let config = &crate::CONFIG;
     let basic_auth = config.basic_auth.clone();
     let tls_param = match config.over_tls {
         true => Some(TlsParam {
