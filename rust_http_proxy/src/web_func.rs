@@ -1,4 +1,5 @@
 use crate::ip_x::SocketAddrFormat;
+use crate::proxy;
 use crate::proxy::build_authenticate_resp;
 use crate::proxy::check_auth;
 use crate::proxy::empty_body;
@@ -76,7 +77,7 @@ pub async fn serve_http_request(
                 return Ok(build_authenticate_resp(false));
             }
             #[cfg(all(target_os = "linux", feature = "bpf"))]
-            proxy_handler.snapshot_metrics();
+            proxy::snapshot_metrics(&proxy_handler.metrics);
             serve_metrics(&proxy_handler.prom_registry, can_gzip).await
         }
         (&Method::GET, path) => {

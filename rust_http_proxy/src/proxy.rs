@@ -403,34 +403,6 @@ impl ProxyHandler {
             }
         }
     }
-
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) fn snapshot_metrics(&self) {
-        use crate::ebpf;
-        {
-            self.metrics
-                .net_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
-                .inner()
-                .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
-            self.metrics
-                .net_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
-                .inner()
-                .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
-
-            self.metrics
-                .cgroup_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
-                .inner()
-                .store(ebpf::get_cgroup_egress(), std::sync::atomic::Ordering::Relaxed);
-            self.metrics
-                .cgroup_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
-                .inner()
-                .store(ebpf::get_cgroup_ingress(), std::sync::atomic::Ordering::Relaxed);
-        }
-    }
 }
 
 fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
@@ -830,6 +802,34 @@ pub fn empty_body() -> BoxBody<Bytes, io::Error> {
 
 pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
     Full::new(chunk.into()).map_err(|never| match never {}).boxed()
+}
+
+#[cfg(all(target_os = "linux", feature = "bpf"))]
+pub(crate) fn snapshot_metrics(metrics: &Metrics) {
+    use crate::ebpf;
+    {
+        metrics
+            .net_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
+            .inner()
+            .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
+        metrics
+            .net_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
+            .inner()
+            .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
+
+        metrics
+            .cgroup_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
+            .inner()
+            .store(ebpf::get_cgroup_egress(), std::sync::atomic::Ordering::Relaxed);
+        metrics
+            .cgroup_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
+            .inner()
+            .store(ebpf::get_cgroup_ingress(), std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
