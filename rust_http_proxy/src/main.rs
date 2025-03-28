@@ -96,9 +96,7 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
     axum_bootstrap::new_server_with_interceptor::<ProxyInterceptor>(
         port,
         tls_param,
-        ProxyInterceptor {
-            proxy_handler: proxy_handler.clone(),
-        },
+        ProxyInterceptor { proxy_handler },
         build_router(),
     )
     .with_timeout(IDLE_TIMEOUT)
@@ -106,6 +104,7 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
     .await
 }
 
+pub(crate) const BODY404: &str = include_str!("../html/404.html");
 pub(crate) fn build_router() -> Router {
     // build our application with a route
     Router::new()
@@ -114,7 +113,7 @@ pub(crate) fn build_router() -> Router {
             let mut header_map = HeaderMap::new();
             #[allow(clippy::expect_used)]
             header_map.insert("content-type", "text/html; charset=utf-8".parse().expect("should be valid header"));
-            (StatusCode::NOT_FOUND, header_map, web_func::H404)
+            (StatusCode::NOT_FOUND, header_map, BODY404)
         }))
         .layer((CorsLayer::permissive(), TimeoutLayer::new(Duration::from_secs(30)), CompressionLayer::new()))
 }

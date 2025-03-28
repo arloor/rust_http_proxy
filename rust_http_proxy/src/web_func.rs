@@ -464,9 +464,8 @@ fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(full_body(H404))
+        .body(empty_body())
 }
-pub(crate) const H404: &str = include_str!("../html/404.html");
 const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
 static BOOTUP_TIME: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
 
