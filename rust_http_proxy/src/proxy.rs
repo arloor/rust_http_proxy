@@ -15,10 +15,12 @@ use crate::{
     http1_client::HttpClient,
     ip_x::{local_ip, SocketAddrFormat},
     reverse::{self, LocationConfig, Upstream},
-    web_func, Config,
+    web_func, Config, DynError,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
+use axum::extract::Request;
+use axum_bootstrap::{AppError, InterceptResult};
 use http::{
     header::{HOST, LOCATION},
     Uri,
@@ -29,7 +31,7 @@ use hyper::{
     header::{self, HeaderValue},
     http,
     upgrade::Upgraded,
-    Method, Request, Response, Version,
+    Method, Response, Version,
 };
 use hyper::{
     body::{Body, Incoming},
@@ -69,6 +71,23 @@ pub(crate) struct Metrics {
     pub(crate) cgroup_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
 
+pub(crate) enum InterceptResultAdapter {
+    Return(Response<BoxBody<Bytes, io::Error>>),
+    Continue(Request<Incoming>),
+}
+
+impl From<InterceptResultAdapter> for InterceptResult {
+    fn from(val: InterceptResultAdapter) -> Self {
+        match val {
+            InterceptResultAdapter::Return(resp) => {
+                let (parts, body) = resp.into_parts();
+                axum_bootstrap::InterceptResult::Return(Response::from_parts(parts, axum::body::Body::new(body)))
+            }
+            InterceptResultAdapter::Continue(req) => InterceptResult::Continue(req),
+        }
+    }
+}
+
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
@@ -97,7 +116,7 @@ impl ProxyHandler {
     }
     pub async fn proxy(
         &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
-    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+    ) -> Result<InterceptResultAdapter, io::Error> {
         let config_basic_auth = &self.config.basic_auth;
         let never_ask_for_auth = self.config.never_ask_for_auth;
 
@@ -123,15 +142,26 @@ impl ProxyHandler {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
                     return self
                         .reverse_proxy(req, location_config, client_socket_addr, &origin_scheme_host_port)
-                        .await;
+                        .await
+                        .map(InterceptResultAdapter::Return);
                 }
             }
 
             // 对于HTTP/2请求或URI中不包含host的请求，处理为普通服务请求
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
-                return self
+                match self
                     .serve_request(&req, config_basic_auth, never_ask_for_auth, client_socket_addr)
-                    .await;
+                    .await
+                {
+                    Ok(res) => {
+                        if res.status() == http::StatusCode::NOT_FOUND {
+                            return Ok(InterceptResultAdapter::Continue(req));
+                        } else {
+                            return Ok(InterceptResultAdapter::Return(res));
+                        }
+                    }
+                    Err(err) => return Err(err),
+                }
             }
         }
 
@@ -151,13 +181,16 @@ impl ProxyHandler {
             return if never_ask_for_auth {
                 Err(io::Error::new(ErrorKind::PermissionDenied, "wrong basic auth, closing socket..."))
             } else {
-                Ok(build_authenticate_resp(true))
+                Ok(InterceptResultAdapter::Return(build_authenticate_resp(true)))
             };
         }
         if Method::CONNECT == req.method() {
             self.tunnel_proxy(req, client_socket_addr, username)
+                .map(InterceptResultAdapter::Return)
         } else {
-            self.simple_proxy(req, client_socket_addr, username).await
+            self.simple_proxy(req, client_socket_addr, username)
+                .await
+                .map(InterceptResultAdapter::Return)
         }
     }
 
@@ -307,7 +340,7 @@ impl ProxyHandler {
     async fn reverse_proxy(
         &self, req: Request<hyper::body::Incoming>, location_config: &LocationConfig, client_socket_addr: SocketAddr,
         origin_scheme_host_port: &SchemeHostPort,
-    ) -> io::Result<Response<BoxBody<Bytes, io::Error>>> {
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let upstream_req = build_upstream_req(req, location_config)?;
         info!(
             "[reverse proxy] {:^35} => {}{}** ==> [{}] {:?} [{:?}]",

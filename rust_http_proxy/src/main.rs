@@ -19,7 +19,7 @@ use axum::body::Body;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use axum_bootstrap::{AppError, ReqInterceptor, TlsParam};
+use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
 use config::load_config;
 use futures_util::future::select_all;
 use http::StatusCode;
@@ -80,18 +80,8 @@ impl ReqInterceptor for ProxyInterceptor {
         async move {
             let result = proxy_handler.proxy(req, ip).await;
             match result {
-                Ok(response) => {
-                    if response.status() == StatusCode::NOT_FOUND {
-                        axum_bootstrap::InterceptResult::Continue(req)
-                    } else {
-                        let (parts, body) = response.into_parts();
-                        axum_bootstrap::InterceptResult::Return(Response::from_parts(parts, Body::new(body)))
-                    }
-                }
-                Err(err) => {
-                    log::error!("Error handling request: {}", err);
-                    axum_bootstrap::InterceptResult::Error(AppError::new(err))
-                }
+                Ok(adaptor) => adaptor.into(),
+                Err(err) => InterceptResult::Error(AppError::new(err)),
             }
         }
     }
