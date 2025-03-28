@@ -18,6 +18,7 @@ use crate::config::Config;
 use axum::routing::get;
 use axum::Router;
 use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
+use chrono::Local;
 use config::load_config;
 use futures_util::future::select_all;
 use http::{HeaderMap, StatusCode};
@@ -108,7 +109,7 @@ pub(crate) const BODY404: &str = include_str!("../html/404.html");
 pub(crate) fn build_router() -> Router {
     // build our application with a route
     Router::new()
-        .route("/", get(|| async { (StatusCode::OK, "OK") }))
+        .route("/time", get(|| async { (StatusCode::OK, format!("{}", Local::now())) }))
         .fallback(get(|| async {
             let mut header_map = HeaderMap::new();
             #[allow(clippy::expect_used)]
