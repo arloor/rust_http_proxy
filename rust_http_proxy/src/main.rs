@@ -194,7 +194,7 @@ async fn serve_metrics(
     Ok((http::StatusCode::OK, header_map, buffer))
 }
 
-#[debug_handler]
+#[axum_macros::debug_handler]
 #[cfg(target_os = "linux")]
 async fn count_stream() -> Result<(HeaderMap, String), AppError> {
     let mut headers = HeaderMap::new();
@@ -217,28 +217,32 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
         }
 }
 #[cfg(target_os = "linux")]
-async fn net_html(State(_): State<Arc<AppState>>, Host(host): Host) -> Result<Html<String>, AppError> {
+async fn net_html(
+    State(_): State<Arc<AppState>>, axum_extra::extract::Host(host): axum_extra::extract::Host,
+) -> Result<axum::response::Html<String>, AppError> {
     use linux_monitor::NET_MONITOR;
 
     NET_MONITOR
         .net_html("/net", &host)
         .await
         .map_err(AppError::new)
-        .map(Html)
+        .map(axum::response::Html)
 }
 #[cfg(target_os = "linux")]
-async fn netx_html(State(_): State<Arc<AppState>>, Host(host): Host) -> Result<Html<String>, AppError> {
+async fn netx_html(
+    State(_): State<Arc<AppState>>, axum_extra::extract::Host(host): axum_extra::extract::Host,
+) -> Result<axum::response::Html<String>, AppError> {
     use linux_monitor::NET_MONITOR;
     NET_MONITOR
         .net_html("/netx", &host)
         .await
         .map_err(AppError::new)
-        .map(Html)
+        .map(axum::response::Html)
 }
 #[cfg(target_os = "linux")]
-async fn net_json(State(_): State<Arc<AppState>>) -> Result<Json<Snapshot>, AppError> {
+async fn net_json(State(_): State<Arc<AppState>>) -> Result<axum::Json<linux_monitor::Snapshot>, AppError> {
     use linux_monitor::NET_MONITOR;
-    Ok(Json(NET_MONITOR.net_json().await))
+    Ok(axum::Json(NET_MONITOR.net_json().await))
 }
 
 #[cfg(all(target_os = "linux", feature = "bpf"))]
