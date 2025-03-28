@@ -1,10 +1,8 @@
 use crate::ip_x::SocketAddrFormat;
-use crate::proxy::build_authenticate_resp;
-use crate::proxy::check_auth;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
-use crate::proxy::ProxyHandler;
 use crate::proxy::ReqLabels;
+use crate::METRICS;
 use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
 use http::response::Builder;
@@ -18,10 +16,8 @@ use hyper::{http, Method, Request, Response, StatusCode};
 use log::{info, warn};
 use mime_guess::from_path;
 use prom_label::LabelImpl;
-use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
-use prometheus_client::registry::Registry;
 use regex::Regex;
 use std::io;
 use std::net::SocketAddr;
@@ -37,10 +33,10 @@ pub(crate) static GZIP: &str = "gzip";
 pub(crate) const SERVER_NAME: &str = "The Bad Server";
 
 pub async fn serve_http_request(
-    proxy_handler: &ProxyHandler, req: &Request<impl Body>, client_socket_addr: SocketAddr, path: &str,
+    req: &Request<impl Body>, client_socket_addr: SocketAddr, path: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let web_content_path = &proxy_handler.config.web_content_path;
-    let referer_keywords_to_self = &proxy_handler.config.referer_keywords_to_self;
+    let web_content_path = &crate::CONFIG.web_content_path;
+    let referer_keywords_to_self = &crate::CONFIG.referer_keywords_to_self;
     let referer_header = req.headers().get(REFERER).map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
         && !referer_keywords_to_self.is_empty()
@@ -60,11 +56,6 @@ pub async fn serve_http_request(
             return not_found();
         }
     }
-    #[cfg(target_os = "linux")]
-    let hostname = req
-        .uri()
-        .authority()
-        .map_or(proxy_handler.config.hostname.as_str(), |authority| authority.host());
     let accept_encoding = req
         .headers()
         .get(http::header::ACCEPT_ENCODING)
@@ -73,22 +64,6 @@ pub async fn serve_http_request(
     #[allow(clippy::needless_return)]
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
-        #[cfg(target_os = "linux")]
-        (_, "/nt") => crate::linux_monitor::count_stream(),
-        #[cfg(target_os = "linux")]
-        (_, "/net" | "/netx") => proxy_handler.linux_monitor.net_html(path, hostname, can_gzip).await,
-        #[cfg(target_os = "linux")]
-        (_, "/net.json") => proxy_handler.linux_monitor.net_json(can_gzip).await,
-        (_, "/metrics") => {
-            if let (_, false) =
-                check_auth(&proxy_handler.config.basic_auth, req, &client_socket_addr, hyper::header::AUTHORIZATION)
-            {
-                return Ok(build_authenticate_resp(false));
-            }
-            #[cfg(all(target_os = "linux", feature = "bpf"))]
-            proxy_handler.snapshot_metrics();
-            serve_metrics(&proxy_handler.prom_registry, can_gzip).await
-        }
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
                 && !referer_header.is_empty() // 存在Referer Header
@@ -111,14 +86,7 @@ pub async fn serve_http_request(
             );
             let r = serve_path(web_content_path, path, req, can_gzip, true).await;
             let is_shell = path.ends_with(".sh");
-            incr_counter_if_need(
-                &r,
-                is_outer_view_html,
-                is_shell,
-                &proxy_handler.metrics.http_req_counter,
-                referer_header,
-                path,
-            );
+            incr_counter_if_need(&r, is_outer_view_html, is_shell, &METRICS.http_req_counter, referer_header, path);
             r
         }
         (&Method::HEAD, path) => serve_path(web_content_path, path, req, false, false).await,
@@ -162,35 +130,6 @@ fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Er
         }
     } else {
         Ok(referer.to_string())
-    }
-}
-
-async fn serve_metrics(prom_registry: &Registry, can_gzip: bool) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let mut buffer = String::new();
-    if let Err(e) = encode(&mut buffer, prom_registry) {
-        Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .header(http::header::SERVER, SERVER_NAME)
-            .body(full_body(format!("encode metrics error: {}", e)))
-    } else {
-        let builder = Response::builder()
-            .status(StatusCode::OK)
-            .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-            .header(http::header::SERVER, SERVER_NAME);
-        if can_gzip {
-            let compressed_data = match compress_string(&buffer) {
-                Ok(compressed_data) => compressed_data,
-                Err(e) => {
-                    warn!("compress metrics error: {}", e);
-                    return Ok(build_500_resp());
-                }
-            };
-            builder
-                .header(http::header::CONTENT_ENCODING, GZIP)
-                .body(full_body(compressed_data))
-        } else {
-            builder.body(full_body(buffer))
-        }
     }
 }
 
@@ -474,16 +413,7 @@ pub(crate) fn build_500_resp() -> Response<BoxBody<Bytes, std::io::Error>> {
     *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
     resp
 }
-
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use std::io::prelude::*;
-
-pub(crate) fn compress_string(input: &str) -> io::Result<Vec<u8>> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(input.as_bytes())?;
-    encoder.finish()
-}
 
 #[allow(unused)]
 use flate2::read::GzDecoder;
@@ -537,6 +467,15 @@ mod tests {
             .unwrap_or("default".to_string()),
             "bing"
         );
+    }
+
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+
+    pub(crate) fn compress_string(input: &str) -> io::Result<Vec<u8>> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(input.as_bytes())?;
+        encoder.finish()
     }
 
     #[test]

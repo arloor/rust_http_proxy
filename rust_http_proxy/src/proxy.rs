@@ -15,7 +15,7 @@ use crate::{
     http1_client::HttpClient,
     ip_x::{local_ip, SocketAddrFormat},
     reverse::{self, LocationConfig, Upstream},
-    web_func, Config,
+    web_func, METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -42,33 +42,13 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use percent_encoding::percent_decode_str;
-use prom_label::Label;
-use prometheus_client::{
-    encoding::EncodeLabelSet,
-    metrics::{counter::Counter, family::Family},
-    registry::Registry,
-};
+use prometheus_client::encoding::EncodeLabelSet;
 use rand::Rng;
 use tokio::{net::TcpStream, pin};
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
-    pub(crate) config: Config,
-    pub(crate) prom_registry: Registry,
-    pub(crate) metrics: Metrics,
-    #[cfg(target_os = "linux")]
-    pub(crate) linux_monitor: crate::linux_monitor::NetMonitor,
     http1_client: HttpClient<Incoming>,
     reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
-}
-
-pub(crate) struct Metrics {
-    pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
-    pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
-    pub(crate) reverse_proxy_req: Family<LabelImpl<ReverseProxyReqLabel>, Counter>,
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) cgroup_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
 }
 
 pub(crate) enum InterceptResultAdapter {
@@ -92,51 +72,37 @@ impl From<InterceptResultAdapter> for InterceptResult {
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
-    pub fn new(config: Config) -> Result<Self, crate::DynError> {
-        let mut registry = Registry::default();
-        let metrics = register_metrics(&mut registry);
-
+    pub fn new() -> Result<Self, crate::DynError> {
         let reverse_client = build_hyper_legacy_client();
         let http1_client = HttpClient::<Incoming>::new();
 
-        #[cfg(target_os = "linux")]
-        let monitor = crate::linux_monitor::NetMonitor::new()?;
-        #[cfg(target_os = "linux")]
-        monitor.start();
-
         Ok(ProxyHandler {
-            prom_registry: registry,
-            metrics,
-            #[cfg(target_os = "linux")]
-            linux_monitor: monitor,
             reverse_client,
             http1_client,
-            config,
         })
     }
     pub async fn proxy(
         &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
     ) -> Result<InterceptResultAdapter, io::Error> {
-        let config_basic_auth = &self.config.basic_auth;
-        let never_ask_for_auth = self.config.never_ask_for_auth;
+        let config_basic_auth = &crate::CONFIG.basic_auth;
+        let never_ask_for_auth = crate::CONFIG.never_ask_for_auth;
 
         // 对于非CONNECT请求，检查是否需要反向代理或服务
         if Method::CONNECT != req.method() {
             let origin_scheme_host_port = extract_requst_basic_info(
                 &req,
-                match self.config.over_tls {
+                match crate::CONFIG.over_tls {
                     true => "https",
                     false => "http",
                 },
             )?;
 
             // 尝试找到匹配的反向代理配置
-            let host_locations = self
-                .config
+            let host_locations = crate::CONFIG
                 .reverse_proxy_config
                 .locations
                 .get(&origin_scheme_host_port.host)
-                .or(self.config.reverse_proxy_config.locations.get(config::DEFAULT_HOST));
+                .or(crate::CONFIG.reverse_proxy_config.locations.get(config::DEFAULT_HOST));
 
             if let Some(locations) = host_locations {
                 if let Some(location_config) = pick_location(req.uri().path(), locations) {
@@ -204,7 +170,7 @@ impl ProxyHandler {
         match self
             .http1_client
             .send_request(req, &access_label, |stream: TcpStream, access_label: AccessLabel| {
-                CounterIO::new(stream, self.metrics.proxy_traffic.clone(), LabelImpl::new(access_label))
+                CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
             .await
         {
@@ -251,7 +217,7 @@ impl ProxyHandler {
         // connection be upgraded, so we can't return a response inside
         // `on_upgrade` future.
         if let Some(addr) = host_addr(req.uri()) {
-            let proxy_traffic = self.metrics.proxy_traffic.clone();
+            let proxy_traffic = METRICS.proxy_traffic.clone();
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
                     Ok(src_upgraded) => {
@@ -332,7 +298,7 @@ impl ProxyHandler {
                 "reject http GET/POST when ask_for_auth and basic_auth not empty",
             ));
         }
-        web_func::serve_http_request(self, req, client_socket_addr, path)
+        web_func::serve_http_request(req, client_socket_addr, path)
             .await
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
@@ -351,7 +317,7 @@ impl ProxyHandler {
             &upstream_req.uri(),
             upstream_req.version(),
         );
-        self.metrics
+        METRICS
             .reverse_proxy_req
             .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
                 client: client_socket_addr.ip().to_canonical().to_string(),
@@ -359,10 +325,7 @@ impl ProxyHandler {
                 upstream: location_config.upstream.url_base.clone(),
             }))
             .inc();
-        self.metrics
-            .reverse_proxy_req
-            .get_or_create(&ALL_REVERSE_PROXY_REQ)
-            .inc();
+        METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
         let context = ReverseReqContext {
             upstream: &location_config.upstream,
             origin_scheme_host_port,
@@ -379,7 +342,7 @@ impl ProxyHandler {
                     if let Some(replacement) = lookup_replacement(
                         context.origin_scheme_host_port,
                         absolute_redirect_location,
-                        &self.config.reverse_proxy_config.redirect_bachpaths,
+                        &crate::CONFIG.reverse_proxy_config.redirect_bachpaths,
                     ) {
                         let origin = headers.insert(
                             LOCATION,
@@ -401,34 +364,6 @@ impl ProxyHandler {
                 warn!("reverse_proxy error: {:?}", e);
                 Err(io::Error::new(ErrorKind::InvalidData, e))
             }
-        }
-    }
-
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) fn snapshot_metrics(&self) {
-        use crate::ebpf;
-        {
-            self.metrics
-                .net_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
-                .inner()
-                .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
-            self.metrics
-                .net_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
-                .inner()
-                .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
-
-            self.metrics
-                .cgroup_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
-                .inner()
-                .store(ebpf::get_cgroup_egress(), std::sync::atomic::Ordering::Relaxed);
-            self.metrics
-                .cgroup_bytes
-                .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
-                .inner()
-                .store(ebpf::get_cgroup_ingress(), std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -657,49 +592,6 @@ fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<Ht
             .pool_timer(hyper_util::rt::TokioTimer::new())
             .build(https_connector);
     client
-}
-
-fn register_metrics(registry: &mut Registry) -> Metrics {
-    let http_req_counter = Family::<LabelImpl<ReqLabels>, Counter>::default();
-    registry.register("req_from_out", "Number of HTTP requests received", http_req_counter.clone());
-    let reverse_proxy_req = Family::<LabelImpl<ReverseProxyReqLabel>, Counter>::default();
-    registry.register("reverse_proxy_req", "Number of reverse proxy requests", reverse_proxy_req.clone());
-    let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
-    registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    registry.register("net_bytes", "num hosts net traffic in bytes", net_bytes.clone());
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    let cgroup_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
-    #[cfg(all(target_os = "linux", feature = "bpf"))]
-    registry.register("cgroup_bytes", "num this cgroup's net traffic in bytes", cgroup_bytes.clone());
-
-    register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
-    // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
-
-    Metrics {
-        http_req_counter,
-        proxy_traffic,
-        reverse_proxy_req,
-        #[cfg(all(target_os = "linux", feature = "bpf"))]
-        net_bytes,
-        #[cfg(all(target_os = "linux", feature = "bpf"))]
-        cgroup_bytes,
-    }
-}
-
-// 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（数据突降）的数据。
-// 不过，虽然能够处理reset，但increase会用最后一个出现的值-第一个出现的值。在我们清空的实现下，reset后第一个出现的值肯定不是0，所以increase的算出来的值会稍少（少第一次出现的值）
-// 因此对于准确性要求较高的http_req_counter，这里的清空间隔就放大一点
-fn register_metric_cleaner<T: Label + Send + Sync>(counter: Family<T, Counter>, name: String, interval_in_hour: u64) {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(interval_in_hour * 60 * 60)).await;
-            info!("cleaning prometheus metric labels for {}", name);
-            counter.clear();
-        }
-    });
 }
 
 pub(crate) fn check_auth(
