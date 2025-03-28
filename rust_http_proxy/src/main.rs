@@ -26,12 +26,13 @@ use axum_extra::extract::Host;
 use axum_macros::debug_handler;
 use config::load_config;
 use futures_util::future::select_all;
-use http::{HeaderMap, StatusCode};
+use http::{HeaderMap, HeaderValue, StatusCode};
 use linux_monitor::Snapshot;
-use log::warn;
+use log::{info, warn};
 
 use prometheus_client::encoding::text::encode;
 use proxy::ProxyHandler;
+use std::collections::HashMap;
 use std::error::Error as stdError;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
@@ -92,6 +93,7 @@ impl ReqInterceptor for ProxyInterceptor {
 
 async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), DynError> {
     let config = &proxy_handler.config;
+    let basic_auth = config.basic_auth.clone();
     let tls_param = match config.over_tls {
         true => Some(TlsParam {
             tls: true,
@@ -104,14 +106,16 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
         port,
         tls_param,
         ProxyInterceptor { proxy_handler },
-        build_router(AppState {}),
+        build_router(AppState { basic_auth }),
     )
     .with_timeout(IDLE_TIMEOUT)
     .run()
     .await
 }
 
-pub(crate) struct AppState {}
+pub(crate) struct AppState {
+    basic_auth: HashMap<String, String>,
+}
 
 pub(crate) const BODY404: &str = include_str!("../html/404.html");
 pub(crate) fn build_router(appstate: AppState) -> Router {
@@ -135,12 +139,63 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
     router.with_state(Arc::new(appstate))
 }
 
-async fn serve_metrics(State(_): State<Arc<AppState>>) -> Result<String, AppError> {
+fn check_auth(headers: &HeaderMap, basic_auth: &HashMap<String, String>) -> Result<Option<String>, AppError> {
+    if basic_auth.is_empty() {
+        return Ok(None);
+    }
+    let header_name = http::header::AUTHORIZATION;
+    let header_name_clone = header_name.clone();
+    let header_name_str = header_name_clone.as_str();
+    match headers.get(header_name) {
+        None => {
+            warn!("no {header_name_str} header found",);
+            Err(AppError::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no {header_name_str} header found"),
+            )))
+        }
+        Some(header) => match header.to_str() {
+            Err(e) => {
+                warn!("Failed to parse {} header: {:?}", header_name_str, e);
+                Err(AppError::new(e))
+            }
+            Ok(request_auth) => {
+                for (key, value) in basic_auth.iter() {
+                    if request_auth == key {
+                        return Ok(Some(value.clone()));
+                    }
+                }
+                warn!("wrong {} header value", header_name_str);
+                Err(AppError::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("wrong {header_name_str} header value"),
+                )))
+            }
+        },
+    }
+}
+
+async fn serve_metrics(
+    State(state): State<Arc<AppState>>, headers: HeaderMap,
+) -> Result<(StatusCode, HeaderMap, String), AppError> {
+    let mut header_map = HeaderMap::new();
+    match check_auth(&headers, &state.basic_auth) {
+        Ok(some_user) => {
+            info!("authorized request from [{some_user:?}]");
+        }
+        Err(e) => {
+            warn!("authorization failed: {:?}", e);
+            header_map
+                .insert(http::header::WWW_AUTHENTICATE, HeaderValue::from_static("Basic realm=\"are you kidding me\""));
+            return Ok((http::StatusCode::UNAUTHORIZED, header_map, format!("{e}")));
+        }
+    }
+
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     snapshot_metrics();
     let mut buffer = String::new();
     encode(&mut buffer, &METRICS.registry).map_err(AppError::new)?;
-    Ok(buffer)
+    Ok((http::StatusCode::OK, header_map, buffer))
 }
 
 #[debug_handler]

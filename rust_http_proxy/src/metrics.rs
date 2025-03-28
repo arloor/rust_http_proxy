@@ -1,4 +1,4 @@
-use crate::proxy::{AccessLabel, NetDirectionLabel, ReqLabels, ReverseProxyReqLabel};
+use crate::proxy::{AccessLabel, ReqLabels, ReverseProxyReqLabel};
 use log::info;
 use prom_label::{Label, LabelImpl};
 use prometheus_client::metrics::counter::Counter;
@@ -16,11 +16,11 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
     registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    let net_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
+    let net_bytes = Family::<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>::default();
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     registry.register("net_bytes", "num hosts net traffic in bytes", net_bytes.clone());
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    let cgroup_bytes = Family::<LabelImpl<NetDirectionLabel>, Counter>::default();
+    let cgroup_bytes = Family::<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>::default();
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     registry.register("cgroup_bytes", "num this cgroup's net traffic in bytes", cgroup_bytes.clone());
 
@@ -45,9 +45,9 @@ pub(crate) struct Metrics {
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     pub(crate) reverse_proxy_req: Family<LabelImpl<ReverseProxyReqLabel>, Counter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) net_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
+    pub(crate) net_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) cgroup_bytes: Family<LabelImpl<NetDirectionLabel>, Counter>,
+    pub(crate) cgroup_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
 }
 
 // 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（数据突降）的数据。
