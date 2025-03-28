@@ -57,7 +57,6 @@ pub async fn serve_http_request(
             return not_found();
         }
     }
-    #[cfg(target_os = "linux")]
     let accept_encoding = req
         .headers()
         .get(http::header::ACCEPT_ENCODING)

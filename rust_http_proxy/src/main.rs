@@ -18,16 +18,12 @@ use crate::config::Config;
 use crate::metrics::METRICS;
 
 use axum::extract::State;
-use axum::response::Html;
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::Router;
 use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
-use axum_extra::extract::Host;
-use axum_macros::debug_handler;
 use config::load_config;
 use futures_util::future::select_all;
 use http::{HeaderMap, HeaderValue, StatusCode};
-use linux_monitor::Snapshot;
 use log::{info, warn};
 
 use prometheus_client::encoding::text::encode;
@@ -192,7 +188,7 @@ async fn serve_metrics(
     }
 
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    snapshot_metrics();
+    linux_monitor::snapshot_metrics();
     let mut buffer = String::new();
     encode(&mut buffer, &METRICS.registry).map_err(AppError::new)?;
     Ok((http::StatusCode::OK, header_map, buffer))
