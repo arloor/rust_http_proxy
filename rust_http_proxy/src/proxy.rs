@@ -15,12 +15,12 @@ use crate::{
     http1_client::HttpClient,
     ip_x::{local_ip, SocketAddrFormat},
     reverse::{self, LocationConfig, Upstream},
-    web_func, Config, DynError,
+    web_func, Config,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use axum::extract::Request;
-use axum_bootstrap::{AppError, InterceptResult};
+use axum_bootstrap::InterceptResult;
 use http::{
     header::{HOST, LOCATION},
     Uri,
@@ -582,11 +582,7 @@ fn lookup_replacement(
 ) -> Option<String> {
     for ele in redirect_bachpaths.iter() {
         if absolute_redirect_location.starts_with(ele.redirect_url.as_str()) {
-            info!(
-                "redirect back path for {}** is {}",
-                ele.redirect_url,
-                format!("http(s)://{}:port{}**", ele.host, ele.location),
-            );
+            info!("redirect back path for {}** is http(s)://{}:port{}**", ele.redirect_url, ele.host, ele.location,);
             let host = match ele.host.as_str() {
                 config::DEFAULT_HOST => &origin_scheme_host_port.host, // 如果是default_host，就用当前host
                 other => other,

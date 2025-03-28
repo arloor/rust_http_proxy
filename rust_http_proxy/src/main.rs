@@ -1,6 +1,6 @@
-// #![deny(warnings)]
-// #![deny(clippy::unwrap_used)]
-// #![deny(clippy::expect_used)]
+#![deny(warnings)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 mod address;
 mod config;
 #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -15,20 +15,16 @@ mod web_func;
 
 use crate::config::Config;
 
-use axum::body::Body;
-use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
 use config::load_config;
 use futures_util::future::select_all;
 use http::StatusCode;
-use ip_x::local_ip;
 use log::info;
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::io;
-use std::os::unix::net::SocketAddr;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -107,62 +103,6 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
     )
     .run()
     .await
-    // let config = &proxy_handler.config;
-    // info!(
-    //     "Listening on http{}://{}:{}",
-    //     match config.over_tls {
-    //         true => "s",
-    //         false => "",
-    //     },
-    //     LOCAL_IP.as_str(),
-    //     port
-    // );
-    // if config.over_tls {
-    //     let mut acceptor =
-    //         TlsAcceptor::new(tls_config(&config.key, &config.cert)?, create_dual_stack_listener(port).await?);
-
-    //     let mut rx = match &config.tls_config_broadcast {
-    //         Some(tls_config_broadcast) => tls_config_broadcast.subscribe(),
-    //         None => {
-    //             warn!("no tls config broadcast channel");
-    //             return Err("no tls config broadcast channel".into());
-    //         }
-    //     };
-    //     loop {
-    //         tokio::select! {
-    //             message = rx.recv() => {
-    //                 #[allow(clippy::expect_used)]
-    //                 let new_config = message.expect("Channel should not be closed");
-    //                 info!("tls config is updated for port:{}",port);
-    //                 // Replace the acceptor with the new one
-    //                 acceptor.replace_config(new_config);
-    //             }
-    //             conn = acceptor.accept() => {
-    //                 match conn {
-    //                     Ok((conn,client_socket_addr)) => {
-    //                         let proxy_handler=proxy_handler.clone();
-    //                         tokio::spawn(async move {
-    //                             serve(conn, proxy_handler, client_socket_addr).await;
-    //                         });
-    //                     }
-    //                     Err(err) => {
-    //                         warn!("Error accepting connection: {}", err);
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // } else {
-    //     let tcp_listener = create_dual_stack_listener(port).await?;
-    //     loop {
-    //         if let Ok((tcp_stream, client_socket_addr)) = tcp_listener.accept().await {
-    //             let proxy_handler = proxy_handler.clone();
-    //             tokio::task::spawn(async move {
-    //                 serve(tcp_stream, proxy_handler, client_socket_addr).await;
-    //             });
-    //         }
-    //     }
-    // }
 }
 
 pub(crate) fn build_router() -> Router {
