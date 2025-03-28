@@ -15,17 +15,21 @@ mod web_func;
 
 use crate::config::Config;
 
+use axum::extract::State;
+use axum::response::Html;
 use axum::routing::get;
-use axum::Router;
+use axum::{Json, Router};
 use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
+use axum_extra::extract::Host;
+use axum_macros::debug_handler;
 use chrono::Local;
 use config::load_config;
 use futures_util::future::select_all;
 use http::{HeaderMap, StatusCode};
-use log::info;
+use linux_monitor::{NetMonitor, Snapshot};
+use log::warn;
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
-use std::io;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -47,9 +51,6 @@ async fn main() -> Result<(), DynError> {
     let proxy_config: Config = load_config()?;
     let ports = proxy_config.port.clone();
     let proxy_handler = Arc::new(ProxyHandler::new(proxy_config)?);
-    #[cfg(feature = "jemalloc")]
-    info!("jemalloc is enabled");
-    // handle_signal()?;
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();
     let futures = ports
@@ -94,21 +95,26 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
         }),
         false => None,
     };
+    let net_monitor = proxy_handler.linux_monitor.clone();
     axum_bootstrap::new_server_with_interceptor::<ProxyInterceptor>(
         port,
         tls_param,
         ProxyInterceptor { proxy_handler },
-        build_router(),
+        build_router(net_monitor),
     )
     .with_timeout(IDLE_TIMEOUT)
     .run()
     .await
 }
 
+pub(crate) struct AppState {
+    pub(crate) net_monitor: NetMonitor,
+}
+
 pub(crate) const BODY404: &str = include_str!("../html/404.html");
-pub(crate) fn build_router() -> Router {
+pub(crate) fn build_router(net_monitor: NetMonitor) -> Router {
     // build our application with a route
-    Router::new()
+    let router = Router::new()
         .route("/time", get(|| async { (StatusCode::OK, format!("{}", Local::now())) }))
         .fallback(get(|| async {
             let mut header_map = HeaderMap::new();
@@ -116,36 +122,58 @@ pub(crate) fn build_router() -> Router {
             header_map.insert("content-type", "text/html; charset=utf-8".parse().expect("should be valid header"));
             (StatusCode::NOT_FOUND, header_map, BODY404)
         }))
-        .layer((CorsLayer::permissive(), TimeoutLayer::new(Duration::from_secs(30)), CompressionLayer::new()))
+        .layer((CorsLayer::permissive(), TimeoutLayer::new(Duration::from_secs(30)), CompressionLayer::new()));
+    #[cfg(target_os = "linux")]
+    let router = router
+        .route("/nt", get(count_stream))
+        .route("/net", get(net_html))
+        .route("/netx", get(netx_html))
+        .route("/net.json", get(net_json));
+
+    router.with_state(Arc::new(AppState { net_monitor }))
 }
 
-#[cfg(unix)]
-#[allow(unused)]
-fn handle_signal() -> io::Result<()> {
-    use tokio::signal::unix::{signal, SignalKind};
-    let mut terminate_signal = signal(SignalKind::terminate())?;
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = terminate_signal.recv() => {
-                info!("receive terminate signal, exit");
-                std::process::exit(0);
+#[debug_handler]
+#[cfg(target_os = "linux")]
+async fn count_stream() -> Result<(HeaderMap, String), AppError> {
+    let mut headers = HeaderMap::new();
+    match std::process::Command::new("sh")
+                .arg("-c")
+                .arg(r#"
+                netstat -ntp|grep -E "ESTABLISHED|CLOSE_WAIT"|awk -F "[ :]+"  -v OFS="" '$5<10000 && $5!="22" && $7>1024 {printf("%15s   => %15s:%-5s %s\n",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn
+                "#)
+                .output() {
+            Ok(output) => {
+                #[allow(clippy::expect_used)]
+                headers.insert(http::header::REFRESH, "3".parse().expect("should be valid header")); // 设置刷新时间
+                Ok((headers, String::from_utf8(output.stdout).unwrap_or("".to_string())
+                + (&*String::from_utf8(output.stderr).unwrap_or("".to_string()))))
             },
-            _ = tokio::signal::ctrl_c() => {
-                info!("ctrl_c => shutdowning");
-                std::process::exit(0); // 并不优雅关闭
+            Err(e) => {
+                warn!("sh -c error: {}", e);
+                Err(AppError::new(e))
             },
-        };
-    });
-    Ok(())
+        }
 }
-
-#[cfg(windows)]
-#[allow(unused)]
-fn handle_signal() -> io::Result<()> {
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        info!("ctrl_c => shutdowning");
-        std::process::exit(0); // 并不优雅关闭
-    });
-    Ok(())
+#[cfg(target_os = "linux")]
+async fn net_html(State(state): State<Arc<AppState>>, Host(host): Host) -> Result<Html<String>, AppError> {
+    state
+        .net_monitor
+        .net_html("/net", &host)
+        .await
+        .map_err(AppError::new)
+        .map(Html)
+}
+#[cfg(target_os = "linux")]
+async fn netx_html(State(state): State<Arc<AppState>>, Host(host): Host) -> Result<Html<String>, AppError> {
+    state
+        .net_monitor
+        .net_html("/netx", &host)
+        .await
+        .map_err(AppError::new)
+        .map(Html)
+}
+#[cfg(target_os = "linux")]
+async fn net_json(State(state): State<Arc<AppState>>) -> Result<Json<Snapshot>, AppError> {
+    Ok(Json(state.net_monitor.net_json().await))
 }

@@ -61,10 +61,6 @@ pub async fn serve_http_request(
         }
     }
     #[cfg(target_os = "linux")]
-    let hostname = req
-        .uri()
-        .authority()
-        .map_or(proxy_handler.config.hostname.as_str(), |authority| authority.host());
     let accept_encoding = req
         .headers()
         .get(http::header::ACCEPT_ENCODING)
@@ -73,12 +69,6 @@ pub async fn serve_http_request(
     #[allow(clippy::needless_return)]
     return match (req.method(), path) {
         (_, "/ip") => serve_ip(client_socket_addr),
-        #[cfg(target_os = "linux")]
-        (_, "/nt") => crate::linux_monitor::count_stream(),
-        #[cfg(target_os = "linux")]
-        (_, "/net" | "/netx") => proxy_handler.linux_monitor.net_html(path, hostname, can_gzip).await,
-        #[cfg(target_os = "linux")]
-        (_, "/net.json") => proxy_handler.linux_monitor.net_json(can_gzip).await,
         (_, "/metrics") => {
             if let (_, false) =
                 check_auth(&proxy_handler.config.basic_auth, req, &client_socket_addr, hyper::header::AUTHORIZATION)
