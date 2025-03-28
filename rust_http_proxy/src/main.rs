@@ -49,7 +49,7 @@ async fn main() -> Result<(), DynError> {
     let proxy_handler = Arc::new(ProxyHandler::new(proxy_config)?);
     #[cfg(feature = "jemalloc")]
     info!("jemalloc is enabled");
-    handle_signal()?;
+    // handle_signal()?;
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();
     let futures = ports
@@ -120,6 +120,7 @@ pub(crate) fn build_router() -> Router {
 }
 
 #[cfg(unix)]
+#[allow(unused)]
 fn handle_signal() -> io::Result<()> {
     use tokio::signal::unix::{signal, SignalKind};
     let mut terminate_signal = signal(SignalKind::terminate())?;
@@ -139,6 +140,7 @@ fn handle_signal() -> io::Result<()> {
 }
 
 #[cfg(windows)]
+#[allow(unused)]
 fn handle_signal() -> io::Result<()> {
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
