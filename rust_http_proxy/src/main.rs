@@ -15,16 +15,20 @@ mod web_func;
 
 use crate::config::Config;
 
+use axum::body::Body;
+use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use axum_bootstrap::TlsParam;
+use axum_bootstrap::{AppError, ReqInterceptor, TlsParam};
 use config::load_config;
 use futures_util::future::select_all;
 use http::StatusCode;
+use ip_x::local_ip;
 use log::info;
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use std::io;
+use std::os::unix::net::SocketAddr;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -63,6 +67,29 @@ async fn main() -> Result<(), DynError> {
     Ok(())
 }
 
+#[derive(Clone)]
+struct ProxyInterceptor {
+    proxy_handler: Arc<ProxyHandler>,
+}
+
+impl ReqInterceptor for ProxyInterceptor {
+    fn intercept(
+        &self, req: http::Request<hyper::body::Incoming>, ip: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = axum_bootstrap::InterceptResult> + Send {
+        let proxy_handler = self.proxy_handler.clone();
+        async move {
+            let result = proxy_handler.proxy(req, ip).await;
+            match result {
+                Ok(response) => axum_bootstrap::InterceptResult::Return(Response::new(Body::empty())),
+                Err(err) => {
+                    log::error!("Error handling request: {}", err);
+                    axum_bootstrap::InterceptResult::Error(AppError::new(err))
+                }
+            }
+        }
+    }
+}
+
 async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), DynError> {
     let config = &proxy_handler.config;
     let tls_param = match config.over_tls {
@@ -73,9 +100,16 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
         }),
         false => None,
     };
-    axum_bootstrap::DefaultServer::new(port, tls_param, build_router())
-        .run()
-        .await
+    axum_bootstrap::Server::<ProxyInterceptor>::new_with_interceptor(
+        port,
+        tls_param,
+        ProxyInterceptor {
+            proxy_handler: proxy_handler.clone(),
+        },
+        build_router(),
+    )
+    .run()
+    .await
     // let config = &proxy_handler.config;
     // info!(
     //     "Listening on http{}://{}:{}",
