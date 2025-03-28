@@ -14,8 +14,9 @@ use crate::{
     config,
     http1_client::HttpClient,
     ip_x::{local_ip, SocketAddrFormat},
+    raw_serve,
     reverse::{self, LocationConfig, Upstream},
-    web_func, METRICS,
+    METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -298,7 +299,7 @@ impl ProxyHandler {
                 "reject http GET/POST when ask_for_auth and basic_auth not empty",
             ));
         }
-        web_func::serve_http_request(req, client_socket_addr, path)
+        raw_serve::serve_http_request(req, client_socket_addr, path)
             .await
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
