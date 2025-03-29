@@ -410,37 +410,33 @@ fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<Ht
 }
 
 pub(crate) fn check_auth(
-    config_basic_auth: &HashMap<String, String>, req: &Request<impl Body>, client_socket_addr: &SocketAddr,
+    config_basic_auth: &HashMap<String, String>,
+    req: &Request<impl Body>,
+    client_socket_addr: &SocketAddr,
     header_name: HeaderName,
 ) -> (String, bool) {
-    let mut username = "unkonwn".to_string();
-    let mut authed: bool = true;
-    if !config_basic_auth.is_empty() {
-        //需要检验鉴权
-        authed = false;
-        let header_name_clone = header_name.clone();
-        let header_name_str = header_name_clone.as_str();
-        match req.headers().get(header_name) {
-            None => warn!("no {} from {}", header_name_str, SocketAddrFormat(client_socket_addr)),
-            Some(header) => match header.to_str() {
-                Err(e) => warn!("解header失败，{:?} {:?}", header, e),
-                Ok(request_auth) => match config_basic_auth.get(request_auth) {
-                    Some(_username) => {
-                        authed = true;
-                        username = _username.to_string();
-                    }
-                    None => warn!(
-                        "wrong {} from {}, wrong:{:?},right:{:?}",
-                        header_name_str,
-                        SocketAddrFormat(client_socket_addr),
-                        request_auth,
-                        config_basic_auth
-                    ),
-                },
-            },
-        }
+    // If no auth config, return authorized by default
+    if config_basic_auth.is_empty() {
+        return ("unknown".to_string(), true);
     }
-    (username, authed)
+
+    // Try to extract and validate auth header
+    if let Some(auth_header) = req.headers().get(&header_name)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|auth| config_basic_auth.get(auth))
+    {
+        // Auth successful
+        return (auth_header.to_string(), true);
+    }
+    
+    // Auth failed, log the issue
+    warn!(
+        "Invalid {} from {}",
+        header_name.as_str(),
+        SocketAddrFormat(client_socket_addr)
+    );
+    
+    ("unknown".to_string(), false)
 }
 
 fn origin_form(uri: &mut Uri) -> io::Result<()> {
