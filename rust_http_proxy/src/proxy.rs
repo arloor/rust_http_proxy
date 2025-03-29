@@ -378,7 +378,11 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     let hostname = uri
         .host()
         .ok_or(io::Error::new(ErrorKind::InvalidData, "host is absent in HTTP/1.1"))?;
-    let host_header = if let Some(port) = get_non_default_port(&uri) {
+    let host_header = if let Some(port) = match (uri.port().map(|p| p.as_u16()), is_schema_secure(&uri)) {
+        (Some(443), true) => None,
+        (Some(80), false) => None,
+        _ => uri.port(),
+    } {
         let s = format!("{}:{}", hostname, port);
         HeaderValue::from_str(&s)
     } else {
@@ -490,14 +494,6 @@ fn extract_requst_basic_info(req: &Request<Incoming>, default_scheme: &str) -> i
             host,
             port,
         })
-    }
-}
-
-fn get_non_default_port(uri: &Uri) -> Option<http::uri::Port<&str>> {
-    match (uri.port().map(|p| p.as_u16()), is_schema_secure(uri)) {
-        (Some(443), true) => None,
-        (Some(80), false) => None,
-        _ => uri.port(),
     }
 }
 
