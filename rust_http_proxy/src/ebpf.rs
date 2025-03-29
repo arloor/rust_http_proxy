@@ -1,3 +1,5 @@
+use crate::{proxy, METRICS};
+
 pub(crate) fn init_once() {
     static INIT_ONCE: std::sync::Once = std::sync::Once::new();
     INIT_ONCE.call_once(|| {
@@ -58,5 +60,35 @@ pub fn get_ingress() -> u64 {
     match SOCKET_FILTER.as_ref() {
         Some(counter) => counter.get_ingress(),
         None => 0,
+    }
+}
+
+pub(crate) fn snapshot_metrics() {
+    use prom_label::LabelImpl;
+    use proxy::NetDirectionLabel;
+
+    use crate::ebpf;
+    {
+        METRICS
+            .net_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
+            .inner()
+            .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
+        METRICS
+            .net_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
+            .inner()
+            .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
+
+        METRICS
+            .cgroup_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
+            .inner()
+            .store(ebpf::get_cgroup_egress(), std::sync::atomic::Ordering::Relaxed);
+        METRICS
+            .cgroup_bytes
+            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
+            .inner()
+            .store(ebpf::get_cgroup_ingress(), std::sync::atomic::Ordering::Relaxed);
     }
 }

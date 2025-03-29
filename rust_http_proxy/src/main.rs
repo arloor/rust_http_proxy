@@ -106,34 +106,3 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
     .run()
     .await
 }
-
-#[cfg(all(target_os = "linux", feature = "bpf"))]
-pub(crate) fn snapshot_metrics() {
-    use prom_label::LabelImpl;
-    use proxy::NetDirectionLabel;
-
-    use crate::ebpf;
-    {
-        METRICS
-            .net_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
-            .inner()
-            .store(ebpf::get_egress(), std::sync::atomic::Ordering::Relaxed);
-        METRICS
-            .net_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
-            .inner()
-            .store(ebpf::get_ingress(), std::sync::atomic::Ordering::Relaxed);
-
-        METRICS
-            .cgroup_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "egress" }))
-            .inner()
-            .store(ebpf::get_cgroup_egress(), std::sync::atomic::Ordering::Relaxed);
-        METRICS
-            .cgroup_bytes
-            .get_or_create(&LabelImpl::new(NetDirectionLabel { direction: "ingress" }))
-            .inner()
-            .store(ebpf::get_cgroup_ingress(), std::sync::atomic::Ordering::Relaxed);
-    }
-}
