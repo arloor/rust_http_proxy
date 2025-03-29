@@ -200,7 +200,8 @@ dependencies = [
 [[package]]
 name = "axum-bootstrap"
 version = "0.1.0"
-source = "git+https://github.com/arloor/axum-bootstrap?branch=feature/intercept#454dc76b33585db588bd55053e81c1fd04ab2f36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7df017588360bb371fc97581a505b31d947bee44766fe741c46e114dbef4a86"
 dependencies = [
  "anyhow",
  "axum",
