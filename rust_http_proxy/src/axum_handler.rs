@@ -40,6 +40,14 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
     router.with_state(Arc::new(appstate))
 }
 
+pub(crate) const AXUM_PATHS: [&str; 5] = [
+    "/metrics",
+    "/nt",       // netstat
+    "/net",      // net html
+    "/netx",     // net extended html
+    "/net.json", // net json
+];
+
 fn check_auth(headers: &HeaderMap, basic_auth: &HashMap<String, String>) -> Result<Option<String>, AppError> {
     if basic_auth.is_empty() {
         return Ok(None);

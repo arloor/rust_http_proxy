@@ -1,3 +1,4 @@
+use crate::axum_handler::AXUM_PATHS;
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
@@ -69,7 +70,7 @@ pub async fn serve_http_request(
                 && !referer_header.is_empty() // 存在Referer Header
                 && !referer_keywords_to_self.is_empty() // Referer关键字不为空
                 && !referer_keywords_to_self.iter().any(|refer| referer_header.contains(refer));
-            if path != "/metrics" {
+            if !AXUM_PATHS.contains(&path) {
                 info!(
                     "{:>29} {:<5} {:^7} {} {:?} {}",
                     "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
