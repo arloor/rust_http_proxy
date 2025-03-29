@@ -9,11 +9,7 @@ use std::{
 };
 
 use crate::{
-    address::host_addr,
-    config,
-    http1_client::HttpClient,
-    ip_x::{local_ip, SocketAddrFormat},
-    raw_serve, reverse, METRICS,
+    address::host_addr, axum_handler, config, http1_client::HttpClient, ip_x::local_ip, raw_serve, reverse, METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -21,11 +17,8 @@ use axum::extract::Request;
 use axum_bootstrap::InterceptResult;
 use http::{header::HOST, Uri};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use hyper::body::Incoming;
 use hyper::{body::Bytes, header::HeaderValue, http, upgrade::Upgraded, Method, Response, Version};
-use hyper::{
-    body::{Body, Incoming},
-    header::HeaderName,
-};
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
@@ -126,31 +119,35 @@ impl ProxyHandler {
         }
 
         // 2. proxy stage
-        let (username, authed) =
-            check_auth(config_basic_auth, &req, &client_socket_addr, http::header::PROXY_AUTHORIZATION);
-        info!(
-            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
-            "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
-            client_socket_addr.port(),
-            username,
-            req.method().as_str(),
-            req.uri(),
-            req.version(),
-        );
-        if !authed {
-            return if never_ask_for_auth {
-                Err(io::Error::new(ErrorKind::PermissionDenied, "wrong basic auth, closing socket..."))
-            } else {
-                Ok(InterceptResultAdapter::Return(build_authenticate_resp(true)))
-            };
-        }
-        if Method::CONNECT == req.method() {
-            self.tunnel_proxy(req, client_socket_addr, username)
-                .map(InterceptResultAdapter::Return)
-        } else {
-            self.simple_proxy(req, client_socket_addr, username)
-                .await
-                .map(InterceptResultAdapter::Return)
+        match axum_handler::check_auth(req.headers(), http::header::PROXY_AUTHORIZATION, config_basic_auth) {
+            Ok(username_option) => {
+                let username = username_option.unwrap_or("unknown".to_owned());
+                info!(
+                    "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
+                    "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
+                    client_socket_addr.port(),
+                    username,
+                    req.method().as_str(),
+                    req.uri(),
+                    req.version(),
+                );
+                if Method::CONNECT == req.method() {
+                    self.tunnel_proxy(req, client_socket_addr, username)
+                        .map(InterceptResultAdapter::Return)
+                } else {
+                    self.simple_proxy(req, client_socket_addr, username)
+                        .await
+                        .map(InterceptResultAdapter::Return)
+                }
+            }
+            Err(e) => {
+                warn!("auth check from {} error: {}", { client_socket_addr }, e);
+                if never_ask_for_auth {
+                    Err(io::Error::new(ErrorKind::PermissionDenied, "wrong basic auth, closing socket..."))
+                } else {
+                    Ok(InterceptResultAdapter::Return(build_authenticate_resp(true)))
+                }
+            }
         }
     }
 
@@ -407,36 +404,6 @@ fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<Ht
             .pool_timer(hyper_util::rt::TokioTimer::new())
             .build(https_connector);
     client
-}
-
-pub(crate) fn check_auth(
-    config_basic_auth: &HashMap<String, String>,
-    req: &Request<impl Body>,
-    client_socket_addr: &SocketAddr,
-    header_name: HeaderName,
-) -> (String, bool) {
-    // If no auth config, return authorized by default
-    if config_basic_auth.is_empty() {
-        return ("unknown".to_string(), true);
-    }
-
-    // Try to extract and validate auth header
-    if let Some(auth_header) = req.headers().get(&header_name)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|auth| config_basic_auth.get(auth))
-    {
-        // Auth successful
-        return (auth_header.to_string(), true);
-    }
-    
-    // Auth failed, log the issue
-    warn!(
-        "Invalid {} from {}",
-        header_name.as_str(),
-        SocketAddrFormat(client_socket_addr)
-    );
-    
-    ("unknown".to_string(), false)
 }
 
 fn origin_form(uri: &mut Uri) -> io::Result<()> {

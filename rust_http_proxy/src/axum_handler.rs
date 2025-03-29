@@ -3,10 +3,12 @@ use axum::extract::State;
 use axum::routing::get;
 use axum::Router;
 use axum_bootstrap::AppError;
-use http::{HeaderMap, HeaderValue, StatusCode};
+
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use log::{debug, warn};
 use prometheus_client::encoding::text::encode;
 use std::collections::HashMap;
+use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::compression::CompressionLayer;
@@ -48,47 +50,42 @@ pub(crate) const AXUM_PATHS: [&str; 5] = [
     "/net.json", // net json
 ];
 
-fn check_auth(headers: &HeaderMap, basic_auth: &HashMap<String, String>) -> Result<Option<String>, AppError> {
+pub(crate) fn check_auth(
+    headers: &HeaderMap, header_name: HeaderName, basic_auth: &HashMap<String, String>,
+) -> Result<Option<String>, io::Error> {
     // If no auth configuration, skip auth check
     if basic_auth.is_empty() {
         return Ok(None);
     }
-    
+
     // Get Authorization header
     let auth_header = headers
-        .get(http::header::AUTHORIZATION)
+        .get(header_name)
         .ok_or_else(|| {
             warn!("no Authorization header found");
-            AppError::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no Authorization header found",
-            ))
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no Authorization header found")
         })?
         .to_str()
         .map_err(|e| {
             warn!("Failed to parse Authorization header: {:?}", e);
-            AppError::new(e)
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, e)
         })?;
-    
+
     // Check if auth header matches any configured auth
     for (key, value) in basic_auth {
         if auth_header == key {
             return Ok(Some(value.clone()));
         }
     }
-    
-    warn!("wrong Authorization header value");
-    Err(AppError::new(std::io::Error::new(
-        std::io::ErrorKind::PermissionDenied,
-        "wrong Authorization header value",
-    )))
+
+    Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "wrong Authorization header value"))
 }
 
 async fn serve_metrics(
     State(state): State<Arc<AppState>>, headers: HeaderMap,
 ) -> Result<(StatusCode, HeaderMap, String), AppError> {
     let mut header_map = HeaderMap::new();
-    match check_auth(&headers, &state.basic_auth) {
+    match check_auth(&headers, http::header::AUTHORIZATION, &state.basic_auth) {
         Ok(some_user) => {
             debug!("authorized request from [{some_user:?}]");
         }
