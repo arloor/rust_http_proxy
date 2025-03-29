@@ -49,39 +49,39 @@ pub(crate) const AXUM_PATHS: [&str; 5] = [
 ];
 
 fn check_auth(headers: &HeaderMap, basic_auth: &HashMap<String, String>) -> Result<Option<String>, AppError> {
+    // If no auth configuration, skip auth check
     if basic_auth.is_empty() {
         return Ok(None);
     }
-    let header_name = http::header::AUTHORIZATION;
-    let header_name_clone = header_name.clone();
-    let header_name_str = header_name_clone.as_str();
-    match headers.get(header_name) {
-        None => {
-            warn!("no {header_name_str} header found",);
-            Err(AppError::new(std::io::Error::new(
+    
+    // Get Authorization header
+    let auth_header = headers
+        .get(http::header::AUTHORIZATION)
+        .ok_or_else(|| {
+            warn!("no Authorization header found");
+            AppError::new(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("no {header_name_str} header found"),
-            )))
+                "no Authorization header found",
+            ))
+        })?
+        .to_str()
+        .map_err(|e| {
+            warn!("Failed to parse Authorization header: {:?}", e);
+            AppError::new(e)
+        })?;
+    
+    // Check if auth header matches any configured auth
+    for (key, value) in basic_auth {
+        if auth_header == key {
+            return Ok(Some(value.clone()));
         }
-        Some(header) => match header.to_str() {
-            Err(e) => {
-                warn!("Failed to parse {} header: {:?}", header_name_str, e);
-                Err(AppError::new(e))
-            }
-            Ok(request_auth) => {
-                for (key, value) in basic_auth.iter() {
-                    if request_auth == key {
-                        return Ok(Some(value.clone()));
-                    }
-                }
-                warn!("wrong {} header value", header_name_str);
-                Err(AppError::new(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    format!("wrong {header_name_str} header value"),
-                )))
-            }
-        },
     }
+    
+    warn!("wrong Authorization header value");
+    Err(AppError::new(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "wrong Authorization header value",
+    )))
 }
 
 async fn serve_metrics(
