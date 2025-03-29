@@ -76,7 +76,7 @@ impl ReqInterceptor for ProxyInterceptor {
     ) -> impl std::future::Future<Output = axum_bootstrap::InterceptResult> + Send {
         let proxy_handler = self.proxy_handler.clone();
         async move {
-            let result = proxy_handler.proxy(req, ip).await;
+            let result = proxy_handler.handle(req, ip).await;
             match result {
                 Ok(adaptor) => adaptor.into(),
                 Err(err) => InterceptResult::Error(AppError::new(err)),

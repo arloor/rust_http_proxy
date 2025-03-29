@@ -70,7 +70,7 @@ impl ProxyHandler {
             http1_client,
         })
     }
-    pub async fn proxy(
+    pub async fn handle(
         &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
     ) -> Result<InterceptResultAdapter, io::Error> {
         let config_basic_auth = &crate::CONFIG.basic_auth;
@@ -159,7 +159,7 @@ impl ProxyHandler {
     async fn simple_proxy(
         &self, mut req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let access_label = self.build_access_label(&req, client_socket_addr, username)?;
+        let access_label = build_access_label(&req, client_socket_addr, username)?;
         mod_http1_proxy_req(&mut req)?;
         match self
             .http1_client
@@ -177,19 +177,6 @@ impl ProxyHandler {
             })),
             Err(e) => Err(e),
         }
-    }
-
-    fn build_access_label(
-        &self, req: &Request<Incoming>, client_socket_addr: SocketAddr, username: String,
-    ) -> Result<AccessLabel, io::Error> {
-        let addr = host_addr(req.uri())
-            .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("URI missing host: {}", req.uri())))?;
-        let access_label = AccessLabel {
-            client: client_socket_addr.ip().to_canonical().to_string(),
-            target: addr.to_string(),
-            username,
-        };
-        Ok(access_label)
     }
 
     /// 代理CONNECT请求
@@ -324,6 +311,19 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     // change absoulte uri to relative uri
     origin_form(req.uri_mut())?;
     Ok(())
+}
+
+fn build_access_label(
+    req: &Request<Incoming>, client_socket_addr: SocketAddr, username: String,
+) -> Result<AccessLabel, io::Error> {
+    let addr = host_addr(req.uri())
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("URI missing host: {}", req.uri())))?;
+    let access_label = AccessLabel {
+        client: client_socket_addr.ip().to_canonical().to_string(),
+        target: addr.to_string(),
+        username,
+    };
+    Ok(access_label)
 }
 
 pub(crate) struct SchemeHostPort {
