@@ -1,5 +1,5 @@
 use crate::metrics::METRICS;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::routing::get;
 use axum::Router;
 use axum_bootstrap::AppError;
@@ -9,6 +9,7 @@ use log::{debug, warn};
 use prometheus_client::encoding::text::encode;
 use std::collections::HashMap;
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::compression::CompressionLayer;
@@ -24,6 +25,12 @@ pub(crate) struct AppState {
 pub(crate) fn build_router(appstate: AppState) -> Router {
     // build our application with a route
     let router = Router::new()
+        .route(
+            "/ip",
+            get(|ConnectInfo(addr): ConnectInfo<SocketAddr>| async move {
+                (StatusCode::OK, addr.ip().to_canonical().to_string())
+            }),
+        )
         .route("/metrics", get(serve_metrics))
         .fallback(get(|| async {
             let mut header_map = HeaderMap::new();

@@ -200,8 +200,7 @@ dependencies = [
 [[package]]
 name = "axum-bootstrap"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7df017588360bb371fc97581a505b31d947bee44766fe741c46e114dbef4a86"
+source = "git+https://github.com/arloor/axum-bootstrap?branch=feature/withConnectInfo#a6ddfeb3bd526c456b5b515aae2f9b3e3de8bddb"
 dependencies = [
  "anyhow",
  "axum",
@@ -222,6 +221,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
+ "tower",
  "tower-service",
  "tracing",
  "tracing-subscriber",

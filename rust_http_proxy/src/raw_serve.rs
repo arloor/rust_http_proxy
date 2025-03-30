@@ -64,7 +64,7 @@ pub async fn serve_http_request(
     let can_gzip = accept_encoding.contains(GZIP);
     #[allow(clippy::needless_return)]
     return match (req.method(), path) {
-        (_, "/ip") => serve_ip(client_socket_addr),
+        // (_, "/ip") => serve_ip(client_socket_addr),
         (&Method::GET, path) => {
             let is_outer_view_html = (path.ends_with('/') || path.ends_with(".html"))
                 && !referer_header.is_empty() // 存在Referer Header
@@ -394,12 +394,12 @@ fn serve_favico(req: &Request<impl Body>, need_body: bool) -> Result<Response<Bo
         })
 }
 
-fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(http::header::SERVER, SERVER_NAME)
-        .body(full_body(client_socket_addr.ip().to_canonical().to_string()))
-}
+// fn serve_ip(client_socket_addr: SocketAddr) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+//     Response::builder()
+//         .status(StatusCode::OK)
+//         .header(http::header::SERVER, SERVER_NAME)
+//         .body(full_body(client_socket_addr.ip().to_canonical().to_string()))
+// }
 
 fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     Response::builder()
