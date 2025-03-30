@@ -9,7 +9,12 @@ use std::{
 };
 
 use crate::{
-    address::host_addr, axum_handler, config, http1_client::HttpClient, ip_x::local_ip, raw_serve, reverse, METRICS,
+    address::host_addr,
+    axum_handler::{self, AXUM_PATHS},
+    config,
+    http1_client::HttpClient,
+    ip_x::local_ip,
+    raw_serve, reverse, METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -268,6 +273,9 @@ impl ProxyHandler {
             .decode_utf8()
             .unwrap_or(Cow::from(raw_path));
         let path = path.as_ref();
+        if AXUM_PATHS.contains(&path) {
+            return raw_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
+        }
         if !config_basic_auth.is_empty() && !never_ask_for_auth {
             // 存在嗅探风险时，不伪装成http服务
             return Err(io::Error::new(

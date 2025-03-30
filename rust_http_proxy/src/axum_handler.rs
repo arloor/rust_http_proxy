@@ -49,7 +49,8 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
     router.with_state(Arc::new(appstate))
 }
 
-pub(crate) const AXUM_PATHS: [&str; 5] = [
+pub(crate) const AXUM_PATHS: [&str; 6] = [
+    "/ip",
     "/metrics",
     "/nt",       // netstat
     "/net",      // net html

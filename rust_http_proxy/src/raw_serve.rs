@@ -1,4 +1,3 @@
-use crate::axum_handler::AXUM_PATHS;
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
@@ -62,6 +61,7 @@ pub async fn serve_http_request(
         .get(http::header::ACCEPT_ENCODING)
         .map_or("", |h| h.to_str().unwrap_or(""));
     let can_gzip = accept_encoding.contains(GZIP);
+
     #[allow(clippy::needless_return)]
     return match (req.method(), path) {
         // (_, "/ip") => serve_ip(client_socket_addr),
@@ -70,23 +70,22 @@ pub async fn serve_http_request(
                 && !referer_header.is_empty() // 存在Referer Header
                 && !referer_keywords_to_self.is_empty() // Referer关键字不为空
                 && !referer_keywords_to_self.iter().any(|refer| referer_header.contains(refer));
-            if !AXUM_PATHS.contains(&path) {
-                info!(
-                    "{:>29} {:<5} {:^7} {} {:?} {}",
-                    "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
-                    client_socket_addr.port(),
-                    req.method().as_str(),
-                    path,
-                    req.version(),
-                    if is_outer_view_html
-                    //来自外链的点击，记录Referer
-                    {
-                        format!("\"Referer: {}\"", referer_header)
-                    } else {
-                        "".to_string()
-                    },
-                );
-            }
+
+            info!(
+                "{:>29} {:<5} {:^7} {} {:?} {}",
+                "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
+                client_socket_addr.port(),
+                req.method().as_str(),
+                path,
+                req.version(),
+                if is_outer_view_html
+                //来自外链的点击，记录Referer
+                {
+                    format!("\"Referer: {}\"", referer_header)
+                } else {
+                    "".to_string()
+                },
+            );
             let r = serve_path(web_content_path, path, req, can_gzip, true).await;
             let is_shell = path.ends_with(".sh");
             incr_counter_if_need(&r, is_outer_view_html, is_shell, &METRICS.http_req_counter, referer_header, path);
@@ -401,7 +400,7 @@ fn serve_favico(req: &Request<impl Body>, need_body: bool) -> Result<Response<Bo
 //         .body(full_body(client_socket_addr.ip().to_canonical().to_string()))
 // }
 
-fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+pub(crate) fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(http::header::SERVER, SERVER_NAME)
