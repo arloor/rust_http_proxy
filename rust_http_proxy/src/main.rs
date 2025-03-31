@@ -66,21 +66,15 @@ async fn main() -> Result<(), DynError> {
 }
 
 #[derive(Clone)]
-struct ProxyInterceptor {
-    proxy_handler: Arc<ProxyHandler>,
-}
+struct ProxyInterceptor(Arc<ProxyHandler>);
 
 impl ReqInterceptor for ProxyInterceptor {
-    fn intercept(
+    async fn intercept(
         &self, req: http::Request<hyper::body::Incoming>, ip: std::net::SocketAddr,
-    ) -> impl std::future::Future<Output = axum_bootstrap::InterceptResult> + Send {
-        let proxy_handler = self.proxy_handler.clone();
-        async move {
-            let result = proxy_handler.handle(req, ip).await;
-            match result {
-                Ok(adaptor) => adaptor.into(),
-                Err(err) => InterceptResult::Error(AppError::new(err)),
-            }
+    ) -> axum_bootstrap::InterceptResult {
+        match self.0.handle(req, ip).await {
+            Ok(adaptor) => adaptor.into(),
+            Err(err) => InterceptResult::Error(AppError::new(err)),
         }
     }
 }
@@ -100,7 +94,7 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
             }),
             false => None,
         })
-        .with_interceptor(ProxyInterceptor { proxy_handler })
+        .with_interceptor(ProxyInterceptor(proxy_handler))
         .run()
         .await
 }
