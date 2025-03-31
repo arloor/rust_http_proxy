@@ -88,21 +88,19 @@ impl ReqInterceptor for ProxyInterceptor {
 async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), DynError> {
     let config = &crate::CONFIG;
     let basic_auth = config.basic_auth.clone();
-    let tls_param = match config.over_tls {
-        true => Some(TlsParam {
-            tls: true,
-            cert: config.cert.to_string(),
-            key: config.key.to_string(),
-        }),
-        false => None,
-    };
-    axum_bootstrap::new_server_with_interceptor::<ProxyInterceptor>(
-        port,
-        tls_param,
-        ProxyInterceptor { proxy_handler },
-        build_router(AppState { basic_auth }),
-    )
-    .with_timeout(IDLE_TIMEOUT)
-    .run()
-    .await
+
+    let router = build_router(AppState { basic_auth });
+    axum_bootstrap::new_server(port, router)
+        .with_timeout(IDLE_TIMEOUT)
+        .with_tls_param(match config.over_tls {
+            true => Some(TlsParam {
+                tls: true,
+                cert: config.cert.to_string(),
+                key: config.key.to_string(),
+            }),
+            false => None,
+        })
+        .with_interceptor(ProxyInterceptor { proxy_handler })
+        .run()
+        .await
 }
