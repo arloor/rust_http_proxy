@@ -4,7 +4,7 @@ use axum::routing::get;
 use axum::Router;
 use axum_bootstrap::AppError;
 
-use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use log::{debug, warn};
 use prometheus_client::encoding::text::encode;
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
         .fallback(get(|| async {
             let mut header_map = HeaderMap::new();
             #[allow(clippy::expect_used)]
-            header_map.insert("content-type", "text/html; charset=utf-8".parse().expect("should be valid header"));
+            header_map.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
             (StatusCode::NOT_FOUND, header_map, BODY404)
         }))
         .layer((CorsLayer::permissive(), TimeoutLayer::new(Duration::from_secs(30)), CompressionLayer::new()));
@@ -124,7 +124,7 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
                 .output() {
             Ok(output) => {
                 #[allow(clippy::expect_used)]
-                headers.insert(http::header::REFRESH, "3".parse().expect("should be valid header")); // 设置刷新时间
+                headers.insert(http::header::REFRESH, HeaderValue::from_static("3")); // 设置刷新时间
                 Ok((headers, String::from_utf8(output.stdout).unwrap_or("".to_string())
                 + (&*String::from_utf8(output.stderr).unwrap_or("".to_string()))))
             },
