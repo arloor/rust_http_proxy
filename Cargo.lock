@@ -2336,6 +2336,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tower-http",
+ "tracing",
 ]
 
 [[package]]

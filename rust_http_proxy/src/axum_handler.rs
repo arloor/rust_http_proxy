@@ -1,5 +1,5 @@
 use crate::metrics::METRICS;
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, MatchedPath, Request, State};
 use axum::routing::get;
 use axum::Router;
 use axum_bootstrap::AppError;
@@ -15,6 +15,7 @@ use std::time::Duration;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
 
 pub(crate) const BODY404: &str = include_str!("../html/404.html");
 
@@ -38,7 +39,28 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
             header_map.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
             (StatusCode::NOT_FOUND, header_map, BODY404)
         }))
-        .layer((CorsLayer::permissive(), TimeoutLayer::new(Duration::from_secs(30)), CompressionLayer::new()));
+        .layer((
+            TraceLayer::new_for_http() // Create our own span for the request and include the matched path. The matched
+                // path is useful for figuring out which handler the request was routed to.
+                .make_span_with(|req: &Request| {
+                    let method = req.method();
+                    let path = req.uri().path();
+
+                    // axum automatically adds this extension.
+                    let matched_path = req
+                        .extensions()
+                        .get::<MatchedPath>()
+                        .map(|matched_path| matched_path.as_str());
+
+                    tracing::debug_span!("recv request", %method, %path, matched_path)
+                })
+                // By default `TraceLayer` will log 5xx responses but we're doing our specific
+                // logging of errors so disable that
+                .on_failure(()),
+            CorsLayer::permissive(),
+            TimeoutLayer::new(Duration::from_secs(30)),
+            CompressionLayer::new(),
+        ));
     #[cfg(target_os = "linux")]
     let router = router
         .route("/nt", get(count_stream))
