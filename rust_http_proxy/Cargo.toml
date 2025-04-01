@@ -61,6 +61,7 @@ axum = "0.8"
 axum-macros = "0.5"
 axum-extra = "0.10.0"
 tracing = "0.1"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 socket_filter = { version = "0.2", optional = true }
 cgroup_traffic = { version = "0.2", optional = true }
