@@ -1,5 +1,5 @@
 use crate::metrics::METRICS;
-use axum::extract::{ConnectInfo, MatchedPath, Request, State};
+use axum::extract::{ConnectInfo, MatchedPath, State};
 use axum::routing::get;
 use axum::Router;
 use axum_bootstrap::AppError;
@@ -42,18 +42,7 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
         .layer((
             TraceLayer::new_for_http() // Create our own span for the request and include the matched path. The matched
                 // path is useful for figuring out which handler the request was routed to.
-                .make_span_with(|req: &Request| {
-                    let method = req.method();
-                    let path = req.uri().path();
-
-                    // axum automatically adds this extension.
-                    let matched_path = req
-                        .extensions()
-                        .get::<MatchedPath>()
-                        .map(|matched_path| matched_path.as_str());
-
-                    tracing::debug_span!("recv request", %method, %path, matched_path)
-                })
+                .make_span_with(make_span)
                 // By default `TraceLayer` will log 5xx responses but we're doing our specific
                 // logging of errors so disable that
                 .on_failure(()),
@@ -69,6 +58,19 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
         .route("/net.json", get(net_json));
 
     router.with_state(Arc::new(appstate))
+}
+
+fn make_span(req: &http::Request<axum::body::Body>) -> tracing::Span {
+    let method = req.method();
+    let path = req.uri().path();
+
+    // axum automatically adds this extension.
+    let matched_path = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|matched_path| matched_path.as_str());
+
+    tracing::debug_span!("recv request", %method, %path, matched_path)
 }
 
 pub(crate) const AXUM_PATHS: [&str; 6] = [
