@@ -265,6 +265,7 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
     if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
         return Err(format!("init log error:{}", log_init_error).into());
     }
+    info!("build time: {}", crate::BUILD_TIME);
     #[cfg(all(feature = "ring", not(feature = "aws_lc_rs")))]
     {
         info!("use ring as default crypto provider");

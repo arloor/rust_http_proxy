@@ -45,6 +45,8 @@ static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     load_config().expect("Failed to load config")
 });
 
+pub const BUILD_TIME: &str = build_time::build_time_local!("%Y-%m-%d %H:%M:%S %:z");
+
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
     let ports = CONFIG.port.clone();
