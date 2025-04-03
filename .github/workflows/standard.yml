@@ -30,13 +30,16 @@ jobs:
         run: |
           ls -lh ${{ steps.build.outputs.release_dir }}
           dockerfile="Dockerfile.static"
-          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest -t ccr.ccs.tencentyun.com/arloor/rust_http_proxy:latest --build-arg TARGET_PATH=/x86_64-unknown-linux-gnu
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest -t quay.io/arloor/rust_http_proxy:latest --build-arg TARGET_PATH=/x86_64-unknown-linux-gnu
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           # podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
           podman push docker.io/arloor/rust_http_proxy:latest
 
           # docker login ccr.ccs.tencentyun.com --username=1293181335 -p ${{ secrets.CCR_REGISTRY_PASSWORD }} 
           # podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:latest
+
+          podman login quay.io --username=arloor -p ${{ secrets.QUAY_REGISTRY_PASSWORD }} 
+          podman push quay.io/arloor/rust_http_proxy:latest
       - name: create master release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
         env:
