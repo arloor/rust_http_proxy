@@ -1,9 +1,9 @@
 name: build_standard
 on:
   push:
-    branches: [ "**"]
+    branches: ["**"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["master"]
 permissions:
   contents: write
 env:
@@ -22,15 +22,17 @@ jobs:
         with:
           use_musl: false
           extra_deps: cmake
+          after_install: |
+            apt-get remove -y gcc
+            apt-get install -y gcc-10
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs
           apt_mirror: mirrors.mit.edu
-          rust_flags: -C target-feature=+crt-static
       - name: docker build and push
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: |
           ls -lh ${{ steps.build.outputs.release_dir }}
-          dockerfile="Dockerfile.static"
-          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest -t quay.io/arloor/rust_http_proxy:latest --build-arg TARGET_PATH=/x86_64-unknown-linux-gnu
+          dockerfile="Dockerfile.dyn"
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:latest -t quay.io/arloor/rust_http_proxy:latest
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           # podman push docker.io/arloor/rust_http_proxy:${{ steps.vars.outputs.sha_short }}
           podman push docker.io/arloor/rust_http_proxy:latest
@@ -41,7 +43,7 @@ jobs:
           podman login quay.io --username=arloor -p ${{ secrets.QUAY_REGISTRY_PASSWORD }} 
           podman push quay.io/arloor/rust_http_proxy:latest
       - name: create master release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' 
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
