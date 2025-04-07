@@ -23,8 +23,8 @@ jobs:
           after_install: |
             apt-get remove -y gcc
             apt-get install -y gcc-10
-            update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100
-            gcc -v
+            update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
+            cc -v
             # find / -name libelf.a
             # find / -name libbpf.a
             # find / -name libz.a
