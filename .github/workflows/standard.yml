@@ -26,6 +26,7 @@ jobs:
             apt-get remove -y gcc
             apt-get install -y gcc-10
             update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100
+            gcc -v
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs
           apt_mirror: mirrors.mit.edu
       - name: docker build and push
