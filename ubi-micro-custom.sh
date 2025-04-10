@@ -32,7 +32,7 @@ dnf clean all \
 buildah umount $microcontainer
 buildah commit $microcontainer ${out_image}
 podman run --rm -it --network host ${out_image} netstat -tulnp
-podman run --rm -it --network host ${out_image} awk
+podman run --rm -it --network host ${out_image} awk -V
 podman run --rm -it --network host ${out_image} cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime&&echo "Asia/Shanghai" > /etc/timezone&&date
 podman login docker.io
 podman push ${out_image}
