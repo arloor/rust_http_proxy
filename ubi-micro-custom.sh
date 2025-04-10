@@ -25,7 +25,7 @@ dnf install \
 --setopt install_weak_deps=false \
 --setopt=reposdir=/etc/yum.repos.d/ \
 --nodocs -y \
-iproute zlib elfutils-libelf
+ca-certificates iproute zlib elfutils-libelf
 dnf clean all --installroot $micromount
 
 buildah umount $microcontainer
