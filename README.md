@@ -279,3 +279,13 @@ Nginx收到的消息：
 ![](traffic_at_nginx.png)
 
 可以看到请求URL和`Proxy-Connection`都被正确处理了。
+
+
+## 容器测试
+
+```bash
+cargo clean
+cargo build -r --features bpf_vendored
+podman build . -f Dockerfile.test -t test --net host
+podman run --rm -it --net host test 
+```
