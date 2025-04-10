@@ -42,12 +42,12 @@ jobs:
 
           podman login quay.io --username=arloor -p ${{ secrets.QUAY_REGISTRY_PASSWORD }} 
           podman push quay.io/arloor/rust_http_proxy:bpf
-      - name: create bpf release
+      - name: create bpf dyn release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version='bpf'
+          version='bpf dyn link'
           if $(gh release delete ${version} -y --cleanup-tag); 
             then echo "delete old release"; 
             else echo "no old release";
