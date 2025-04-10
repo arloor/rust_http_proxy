@@ -170,21 +170,11 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
 
                 // 提取本地地址和端口
                 let local_addr_port = fields[3];
-                let local_parts: Vec<&str> = local_addr_port.split(':').collect();
-                if local_parts.len() != 2 {
-                    continue; // 格式不符合预期
-                }
-                let local_addr = local_parts[0].replace("[::ffff:", "").replace("]", "");
-                let local_port: u16 = local_parts[1].parse().unwrap_or(0);
+                let (local_addr, local_port) = parse_ip_and_port(local_addr_port);
 
                 // 提取对端地址和端口
                 let peer_addr_port = fields[4];
-                let peer_parts: Vec<&str> = peer_addr_port.split(':').collect();
-                if peer_parts.len() != 2 {
-                    continue; // 格式不符合预期
-                }
-                let peer_addr = peer_parts[0].replace("[::ffff:", "").replace("]", "");
-                let peer_port: u16 = peer_parts[1].parse().unwrap_or(0);
+                let (peer_addr, peer_port) = parse_ip_and_port(peer_addr_port);
 
                 // 提取进程信息
                 let process_info = if fields.len() == 6 {
@@ -236,6 +226,36 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
             Err(AppError::new(e))
         }
     }
+}
+
+// 辅助函数，用于解析IPv4和IPv6地址和端口
+#[cfg(target_os = "linux")]
+fn parse_ip_and_port(addr_port: &str) -> (String, u16) {
+    // 如果是IPv6地址，格式通常是[ipv6]:port
+    if addr_port.starts_with('[') {
+        if let Some(bracket_end) = addr_port.rfind(']') {
+            // 提取IPv6地址
+            let addr = addr_port[1..bracket_end].replace("::ffff:", "");
+
+            // 提取端口（在右括号后面的冒号之后）
+            if let Some(port_start) = addr_port[bracket_end..].find(':') {
+                if let Ok(port) = addr_port[bracket_end + port_start + 1..].parse::<u16>() {
+                    return (addr, port);
+                }
+            }
+        }
+    } else {
+        // IPv4地址，格式通常是ipv4:port
+        if let Some(colon_pos) = addr_port.rfind(':') {
+            let addr = addr_port[..colon_pos].to_string();
+            if let Ok(port) = addr_port[colon_pos + 1..].parse::<u16>() {
+                return (addr, port);
+            }
+        }
+    }
+
+    // 如果解析失败，返回默认值
+    (addr_port.to_string(), 0)
 }
 
 #[cfg(target_os = "linux")]

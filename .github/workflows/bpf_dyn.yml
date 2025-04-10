@@ -47,7 +47,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version='bpf dyn link'
+          version='bpf_dyn_link'
           if $(gh release delete ${version} -y --cleanup-tag); 
             then echo "delete old release"; 
             else echo "no old release";
