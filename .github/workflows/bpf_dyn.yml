@@ -25,11 +25,6 @@ jobs:
             apt-get install -y gcc-10
             update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
             cc -v
-            # find / -name libelf.a
-            # find / -name libbpf.a
-            # find / -name libz.a
-            export LIBBPF_SYS_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/x86_64-linux-gnu
-            echo -e "\e[31mLIBBPF_SYS_LIBRARY_PATH=$LIBBPF_SYS_LIBRARY_PATH\e[0m"
           args: -p rust_http_proxy --no-default-features --features aws_lc_rs,bpf
           apt_mirror: mirrors.mit.edu
           debug: false
