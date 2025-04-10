@@ -1,0 +1,57 @@
+name: bpf dyn link
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["master"]
+permissions:
+  contents: write
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  bpf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build bpf dyn
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        id: build_bpf
+        uses: arloor/rust_musl_action@latest
+        with:
+          use_musl: false
+          extra_deps: cmake zlib1g-dev libelf-dev clang pkg-config make
+          after_install: |
+            apt-get remove -y gcc
+            apt-get install -y gcc-10
+            update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
+            cc -v
+          args: -p rust_http_proxy --no-default-features --features aws_lc_rs,bpf
+          apt_mirror: mirrors.mit.edu
+          debug: false
+      - name: docker build and push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: |
+          ls -lh ${{ steps.build_bpf.outputs.release_dir }}
+          dockerfile="Dockerfile.dyn"
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf -t quay.io/arloor/rust_http_proxy:bpf
+          podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
+          podman push docker.io/arloor/rust_http_proxy:bpf
+
+          # docker login ccr.ccs.tencentyun.com --username=1293181335 -p ${{ secrets.CCR_REGISTRY_PASSWORD }} 
+          # podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:bpf
+
+          podman login quay.io --username=arloor -p ${{ secrets.QUAY_REGISTRY_PASSWORD }} 
+          podman push quay.io/arloor/rust_http_proxy:bpf
+      - name: create bpf dyn release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version='bpf_dyn_link'
+          if $(gh release delete ${version} -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
+          git config --local user.email "admin@arloor.com"
+          git config --local user.name "arloor"
+          gh release create ${version} ${{ steps.build_bpf.outputs.release_dir }}rust_http_proxy -n "$version" -t "$version" --prerelease

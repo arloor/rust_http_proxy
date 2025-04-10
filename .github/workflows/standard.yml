@@ -1,4 +1,4 @@
-name: build_standard
+name: standard
 on:
   push:
     branches: ["**"]

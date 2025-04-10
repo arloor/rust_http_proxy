@@ -1,0 +1,4 @@
+FROM debian:bookworm
+COPY target/release/rust_http_proxy rust_http_proxy
+ENTRYPOINT ["./rust_http_proxy"]
+CMD [ "-p=8888","--enable-github-proxy","--append-upstream-url=https://cdnjs.cloudflare.com"]
