@@ -1,7 +1,9 @@
 {
     "github-actions.workflows.pinned.workflows": [
         ".github/workflows/bpf.yml",
-        ".github/workflows/standard.yml"
+        ".github/workflows/standard.yml",
+        ".github/workflows/bpf_dyn.yml",
+        ".github/workflows/bpf_static.yml"
     ],
     "remote.autoForwardPorts": false
 }
