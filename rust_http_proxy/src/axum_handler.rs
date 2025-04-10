@@ -139,6 +139,8 @@ async fn serve_metrics(
 #[axum_macros::debug_handler]
 #[cfg(target_os = "linux")]
 async fn count_stream() -> Result<(HeaderMap, String), AppError> {
+    use std::cmp::Ordering;
+
     let mut headers = HeaderMap::new();
 
     // 使用 ss 命令替代 netstat
@@ -156,6 +158,34 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
 
             if !stderr.is_empty() {
                 warn!("ss command stderr: {}", stderr);
+            }
+
+            fn parse_ip_and_port(addr_port: &str) -> (String, u16) {
+                // 如果是IPv6地址，格式通常是[ipv6]:port
+                if addr_port.starts_with('[') {
+                    if let Some(bracket_end) = addr_port.rfind(']') {
+                        // 提取IPv6地址
+                        let addr = addr_port[1..bracket_end].replace("::ffff:", "");
+
+                        // 提取端口（在右括号后面的冒号之后）
+                        if let Some(port_start) = addr_port[bracket_end..].find(':') {
+                            if let Ok(port) = addr_port[bracket_end + port_start + 1..].parse::<u16>() {
+                                return (addr, port);
+                            }
+                        }
+                    }
+                } else {
+                    // IPv4地址，格式通常是ipv4:port
+                    if let Some(colon_pos) = addr_port.rfind(':') {
+                        let addr = addr_port[..colon_pos].to_string();
+                        if let Ok(port) = addr_port[colon_pos + 1..].parse::<u16>() {
+                            return (addr, port);
+                        }
+                    }
+                }
+
+                // 如果解析失败，返回默认值
+                (addr_port.to_string(), 0)
             }
 
             // 解析 ss 命令输出
@@ -209,7 +239,13 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
 
             // 按计数排序并格式化输出
             let mut sorted_connections: Vec<(String, usize)> = connection_counts.into_iter().collect();
-            sorted_connections.sort_by(|a, b| b.1.cmp(&a.1));
+            sorted_connections.sort_by(|a, b| {
+                let mut order = b.1.cmp(&a.1);
+                if order == Ordering::Equal {
+                    order = a.0.cmp(&b.0);
+                }
+                order
+            });
 
             let result = sorted_connections
                 .iter()
@@ -226,36 +262,6 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
             Err(AppError::new(e))
         }
     }
-}
-
-// 辅助函数，用于解析IPv4和IPv6地址和端口
-#[cfg(target_os = "linux")]
-fn parse_ip_and_port(addr_port: &str) -> (String, u16) {
-    // 如果是IPv6地址，格式通常是[ipv6]:port
-    if addr_port.starts_with('[') {
-        if let Some(bracket_end) = addr_port.rfind(']') {
-            // 提取IPv6地址
-            let addr = addr_port[1..bracket_end].replace("::ffff:", "");
-
-            // 提取端口（在右括号后面的冒号之后）
-            if let Some(port_start) = addr_port[bracket_end..].find(':') {
-                if let Ok(port) = addr_port[bracket_end + port_start + 1..].parse::<u16>() {
-                    return (addr, port);
-                }
-            }
-        }
-    } else {
-        // IPv4地址，格式通常是ipv4:port
-        if let Some(colon_pos) = addr_port.rfind(':') {
-            let addr = addr_port[..colon_pos].to_string();
-            if let Ok(port) = addr_port[colon_pos + 1..].parse::<u16>() {
-                return (addr, port);
-            }
-        }
-    }
-
-    // 如果解析失败，返回默认值
-    (addr_port.to_string(), 0)
 }
 
 #[cfg(target_os = "linux")]
