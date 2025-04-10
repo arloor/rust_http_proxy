@@ -1,4 +1,4 @@
-name: build_bpf
+name: bpf static link
 on:
   push:
     branches: ["**"]
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: build bpf
+      - name: build bpf static
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         id: build_bpf
         uses: arloor/rust_musl_action@latest
@@ -38,15 +38,15 @@ jobs:
         run: |
           ls -lh ${{ steps.build_bpf.outputs.release_dir }}
           dockerfile="Dockerfile.dyn"
-          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf -t quay.io/arloor/rust_http_proxy:bpf
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:bpf_static -t quay.io/arloor/rust_http_proxy:bpf_static
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
-          podman push docker.io/arloor/rust_http_proxy:bpf
+          podman push docker.io/arloor/rust_http_proxy:bpf_static
 
           # docker login ccr.ccs.tencentyun.com --username=1293181335 -p ${{ secrets.CCR_REGISTRY_PASSWORD }} 
-          # podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:bpf
+          # podman push ccr.ccs.tencentyun.com/arloor/rust_http_proxy:bpf_static
 
           podman login quay.io --username=arloor -p ${{ secrets.QUAY_REGISTRY_PASSWORD }} 
-          podman push quay.io/arloor/rust_http_proxy:bpf
+          podman push quay.io/arloor/rust_http_proxy:bpf_static
       - name: create bpf release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         env:

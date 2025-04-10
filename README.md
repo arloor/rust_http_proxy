@@ -46,7 +46,7 @@ install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
 或者
 
 ```bash
-docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf -p 7788
+docker run --rm -it --privileged --net host docker.io/arloor/rust_http_proxy:bpf_static -p 7788
 ```
 
 ## 命令行参数
