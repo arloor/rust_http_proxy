@@ -140,23 +140,102 @@ async fn serve_metrics(
 #[cfg(target_os = "linux")]
 async fn count_stream() -> Result<(HeaderMap, String), AppError> {
     let mut headers = HeaderMap::new();
-    match std::process::Command::new("sh")
-                .arg("-c")
-                .arg(r#"
-                netstat -ntp|grep -E "ESTABLISHED|CLOSE_WAIT"|awk -F "[ :]+"  -v OFS="" '$5<10000 && $5!="22" && $7>1024 {printf("%15s   => %15s:%-5s %s\n",$6,$4,$5,$9)}'|sort|uniq -c|sort -rn
-                "#)
-                .output() {
-            Ok(output) => {
-                #[allow(clippy::expect_used)]
-                headers.insert(http::header::REFRESH, HeaderValue::from_static("3")); // 设置刷新时间
-                Ok((headers, String::from_utf8(output.stdout).unwrap_or("".to_string())
-                + (&*String::from_utf8(output.stderr).unwrap_or("".to_string()))))
-            },
-            Err(e) => {
-                warn!("sh -c error: {}", e);
-                Err(AppError::new(e))
-            },
+
+    // 使用 ss 命令替代 netstat
+    match std::process::Command::new("ss")
+        .arg("-ntp")
+        .arg("state")
+        .arg("established")
+        .arg("state")
+        .arg("close-wait")
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8(output.stdout).unwrap_or_default();
+            let stderr = String::from_utf8(output.stderr).unwrap_or_default();
+
+            if !stderr.is_empty() {
+                warn!("ss command stderr: {}", stderr);
+            }
+
+            // 解析 ss 命令输出
+            let mut connections = Vec::new();
+            for line in stdout.lines().skip(1) {
+                // 跳过标题行
+                // 解析行
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                if fields.len() < 6 {
+                    continue; // 格式不符合预期
+                }
+
+                // 提取本地地址和端口
+                let local_addr_port = fields[3];
+                let local_parts: Vec<&str> = local_addr_port.split(':').collect();
+                if local_parts.len() != 2 {
+                    continue; // 格式不符合预期
+                }
+                let local_addr = local_parts[0].replace("[::ffff:", "").replace("]", "");
+                let local_port: u16 = local_parts[1].parse().unwrap_or(0);
+
+                // 提取对端地址和端口
+                let peer_addr_port = fields[4];
+                let peer_parts: Vec<&str> = peer_addr_port.split(':').collect();
+                if peer_parts.len() != 2 {
+                    continue; // 格式不符合预期
+                }
+                let peer_addr = peer_parts[0].replace("[::ffff:", "").replace("]", "");
+                let peer_port: u16 = peer_parts[1].parse().unwrap_or(0);
+
+                // 提取进程信息
+                let process_info = if fields.len() == 6 {
+                    let process_field = fields[5];
+                    if process_field.contains("pid=") {
+                        let start = process_field.find("((\"").map(|i| i + 3).unwrap_or(0);
+                        let end = process_field.find("\",pid=").unwrap_or(process_field.len());
+                        if start > 0 && end > start {
+                            &process_field[start..end]
+                        } else {
+                            ""
+                        }
+                    } else {
+                        ""
+                    }
+                } else {
+                    ""
+                };
+
+                if local_port < 10000 && local_port != 22 && peer_port > 1024 {
+                    connections.push((peer_addr, local_addr, local_port, process_info));
+                }
+            }
+
+            // 按照连接信息进行分组和计数
+            let mut connection_counts: HashMap<String, usize> = HashMap::new();
+            for (peer_addr, local_addr, local_port, process_info) in connections {
+                let connection_str =
+                    format!("{:>15}   => {:>15}:{:<5} {}", peer_addr, local_addr, local_port, process_info);
+                *connection_counts.entry(connection_str).or_insert(0) += 1;
+            }
+
+            // 按计数排序并格式化输出
+            let mut sorted_connections: Vec<(String, usize)> = connection_counts.into_iter().collect();
+            sorted_connections.sort_by(|a, b| b.1.cmp(&a.1));
+
+            let result = sorted_connections
+                .iter()
+                .map(|(connection, count)| format!("{:>4} {}", count, connection))
+                .collect::<Vec<String>>()
+                .join("\n");
+
+            #[allow(clippy::expect_used)]
+            headers.insert(http::header::REFRESH, HeaderValue::from_static("3")); // 设置刷新时间
+            Ok((headers, result))
         }
+        Err(e) => {
+            warn!("ss command error: {}", e);
+            Err(AppError::new(e))
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
