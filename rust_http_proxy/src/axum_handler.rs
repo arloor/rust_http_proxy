@@ -143,21 +143,23 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
 
     let mut headers = HeaderMap::new();
 
-    // 使用 ss 命令替代 netstat
+    // ss -ntp state established state close-wait 'sport <= 10000 && sport != 22  && dport > 1024'
     match std::process::Command::new("ss")
         .arg("-ntp")
         .arg("state")
         .arg("established")
         .arg("state")
         .arg("close-wait")
+        .arg("sport <= 10000 && sport != 22  && dport > 1024")
         .output()
     {
         Ok(output) => {
             let stdout = String::from_utf8(output.stdout).unwrap_or_default();
             let stderr = String::from_utf8(output.stderr).unwrap_or_default();
-
+            debug!("ss command stdout: {}", stdout);
             if !stderr.is_empty() {
                 warn!("ss command stderr: {}", stderr);
+                return Err(AppError::new(io::Error::new(io::ErrorKind::Other, stderr)));
             }
 
             fn parse_ip_and_port(addr_port: &str) -> (String, u16) {
