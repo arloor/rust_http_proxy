@@ -30,7 +30,7 @@ install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
 > 通过Github Action自动更新release，永远是最新版，可放心使用
 
 ```shell
-docker run --rm -it --net host docker.io/arloor/rust_http_proxy -p 7788
+docker run --rm -it --net host --pid host docker.io/arloor/rust_http_proxy -p 7788
 ```
 
 ### ebpf版本安装
@@ -287,5 +287,5 @@ Nginx收到的消息：
 cargo clean
 cargo build -r --features bpf_vendored
 podman build . -f Dockerfile.test -t test --net host
-podman run --rm -it --net host test 
+podman run --rm -it privileged --net host --pid host test 
 ```
