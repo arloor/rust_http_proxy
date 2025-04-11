@@ -1,5 +1,4 @@
 #! /bin/bash
-# 从ubi-micro镜像构建一个只有net-tools的镜像
 # https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html-single/building_running_and_managing_containers/index#proc_using-the-ubi-micro-images_assembly_adding-software-to-a-ubi-container
 
 base_image=docker.io/redhat/ubi9-micro:latest
