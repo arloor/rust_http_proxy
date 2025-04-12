@@ -81,7 +81,6 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: |
           dockerfile="Dockerfile.dyn"
-          cp ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }} target/release/rust_http_proxy
           podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:${{ matrix.docker-tag }} -t quay.io/arloor/rust_http_proxy:${{ matrix.docker-tag }}
           podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
           podman push docker.io/arloor/rust_http_proxy:${{ matrix.docker-tag }}
