@@ -13,21 +13,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        build-type: [standard, bpf-dynamic, bpf-static]
+        build-type: [non-bpf, bpf-dyn-link, bpf-static-link]
         include:
-          - build-type: standard
+          - build-type: non-bpf
             features: aws_lc_rs
             extra_deps: cmake
-            binary-name: rust_http_proxy_standard
+            binary-name: rust_http_proxy
             docker-tag: latest
             env_setup: ""
-          - build-type: bpf-dynamic
+          - build-type: bpf-dyn-link
             features: aws_lc_rs,bpf
             extra_deps: cmake zlib1g-dev libelf-dev clang pkg-config make
-            binary-name: rust_http_proxy_bpf_dyn
+            binary-name: rust_http_proxy_bpf
             docker-tag: bpf
             env_setup: ""
-          - build-type: bpf-static
+          - build-type: bpf-static-link
             features: aws_lc_rs,bpf_static
             extra_deps: cmake zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf_static
@@ -103,13 +103,13 @@ jobs:
       - name: Download standard binary
         uses: actions/download-artifact@v4
         with:
-          name: rust_http_proxy_standard
+          name: rust_http_proxy
           path: release_binaries
 
       - name: Download bpf dynamic binary
         uses: actions/download-artifact@v4
         with:
-          name: rust_http_proxy_bpf_dyn
+          name: rust_http_proxy_bpf
           path: release_binaries
 
       - name: Download bpf static binary
