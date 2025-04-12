@@ -3,7 +3,8 @@
         ".github/workflows/bpf.yml",
         ".github/workflows/standard.yml",
         ".github/workflows/bpf_dyn.yml",
-        ".github/workflows/bpf_static.yml"
+        ".github/workflows/bpf_static.yml",
+        ".github/workflows/combined_build.yml"
     ],
     "remote.autoForwardPorts": false
 }

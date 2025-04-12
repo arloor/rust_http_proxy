@@ -70,7 +70,7 @@ jobs:
 
       # 上传构建好的二进制文件作为构建工件
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary-name }}
           path: ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
@@ -102,19 +102,19 @@ jobs:
 
       # 下载所有构建好的二进制文件
       - name: Download standard binary
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: rust_http_proxy_standard
           path: release_binaries
 
       - name: Download bpf dynamic binary
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: rust_http_proxy_bpf_dyn
           path: release_binaries
 
       - name: Download bpf static binary
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: rust_http_proxy_bpf_static
           path: release_binaries
