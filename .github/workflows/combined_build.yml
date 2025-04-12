@@ -1,0 +1,157 @@
+name: Combined Build and Release
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["master"]
+permissions:
+  contents: write
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build-type: [standard, bpf-dynamic, bpf-static]
+        include:
+          - build-type: standard
+            features: aws_lc_rs
+            extra_deps: cmake
+            binary-name: rust_http_proxy_standard
+            docker-tag: latest
+            env_setup: ""
+          - build-type: bpf-dynamic
+            features: aws_lc_rs,bpf
+            extra_deps: cmake zlib1g-dev libelf-dev clang pkg-config make
+            binary-name: rust_http_proxy_bpf_dyn
+            docker-tag: bpf
+            env_setup: ""
+          - build-type: bpf-static
+            features: aws_lc_rs,bpf_static
+            extra_deps: cmake zlib1g-dev libelf-dev clang pkg-config make
+            binary-name: rust_http_proxy_bpf_static
+            docker-tag: bpf_static
+            env_setup: |
+              # find / -name libelf.a
+              # find / -name libbpf.a
+              # find / -name libz.a
+              export LIBBPF_SYS_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/x86_64-linux-gnu
+              echo -e "\e[31mLIBBPF_SYS_LIBRARY_PATH=$LIBBPF_SYS_LIBRARY_PATH\e[0m"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set outputs
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
+
+      # 构建二进制文件
+      - name: Build ${{ matrix.build-type }} Version
+        id: build
+        uses: arloor/rust_musl_action@latest
+        with:
+          use_musl: false
+          extra_deps: ${{ matrix.extra_deps }}
+          after_install: |
+            apt-get remove -y gcc
+            apt-get install -y gcc-10
+            update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
+            cc -v
+            ${{ matrix.env_setup }}
+          args: -p rust_http_proxy --no-default-features --features ${{ matrix.features }}
+          apt_mirror: mirrors.mit.edu
+          debug: false
+
+      # 复制并重命名二进制文件
+      - name: Copy binary
+        run: |
+          mkdir -p ${{ github.workspace }}/release_binaries
+          cp ${{ steps.build.outputs.release_dir }}rust_http_proxy ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
+          ls -lh ${{ github.workspace }}/release_binaries/
+
+      # 上传构建好的二进制文件作为构建工件
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.binary-name }}
+          path: ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
+          retention-days: 1
+
+      # Docker镜像构建和推送（仅适用于master分支）
+      - name: Docker build and push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: |
+          dockerfile="Dockerfile.dyn"
+          cp ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }} target/release/rust_http_proxy
+          podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:${{ matrix.docker-tag }} -t quay.io/arloor/rust_http_proxy:${{ matrix.docker-tag }}
+          podman login docker.io -u arloor -p ${{ secrets.REGISTRY_PASSWORD }}
+          podman push docker.io/arloor/rust_http_proxy:${{ matrix.docker-tag }}
+          podman login quay.io --username=arloor -p ${{ secrets.QUAY_REGISTRY_PASSWORD }} 
+          podman push quay.io/arloor/rust_http_proxy:${{ matrix.docker-tag }}
+
+  # 创建GitHub Release
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/'))
+    steps:
+      - uses: actions/checkout@v4
+
+      # 创建目录存放下载的二进制文件
+      - name: Create directory for binaries
+        run: mkdir -p release_binaries
+
+      # 下载所有构建好的二进制文件
+      - name: Download standard binary
+        uses: actions/download-artifact@v3
+        with:
+          name: rust_http_proxy_standard
+          path: release_binaries
+
+      - name: Download bpf dynamic binary
+        uses: actions/download-artifact@v3
+        with:
+          name: rust_http_proxy_bpf_dyn
+          path: release_binaries
+
+      - name: Download bpf static binary
+        uses: actions/download-artifact@v3
+        with:
+          name: rust_http_proxy_bpf_static
+          path: release_binaries
+
+      # 列出所有下载的文件
+      - name: List binaries
+        run: find release_binaries -type f -ls
+
+      # 创建master分支release（包含三个二进制文件）
+      - name: Create Master Release
+        if: github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=latest
+          if $(gh release delete ${version} -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
+          git config --local user.email "admin@arloor.com"
+          git config --local user.name "arloor"
+          gh release create ${version} release_binaries/* -n "最新构建包含三个版本：标准版、动态链接BPF版和静态链接BPF版" --latest -t "${version}"
+
+      # 创建版本release（同样包含三个二进制文件）
+      - name: Create Version Release
+        if: startsWith(github.ref, 'refs/heads/release/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 从Cargo.toml中提取版本号
+          version=$(grep -E ^version rust_http_proxy/Cargo.toml|awk -F "[\"]" '{print $2}')
+          version="v${version}"
+          if [ -z "$version" ]; then echo "version not found"; exit 1; fi
+          if $(gh release delete ${version} -y --cleanup-tag); 
+            then echo "delete old release"; 
+            else echo "no old release";
+          fi
+          git config --local user.email "admin@arloor.com"
+          git config --local user.name "arloor"
+          gh release create ${version} release_binaries/* -n "${version} 包含三个版本：标准版、动态链接BPF版和静态链接BPF版" --latest -t "${version}"
