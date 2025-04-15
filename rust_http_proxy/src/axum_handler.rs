@@ -190,6 +190,37 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
                 (addr_port.to_string(), 0)
             }
 
+            // 解析进程信息，返回格式为"pid/command"
+            fn parse_process_info(process_field: &str) -> String {
+                if process_field.contains("pid=") {
+                    // 匹配形如 users:(("sshd",pid=536,fd=4)) 的格式
+                    let mut process_name = "";
+                    let mut pid = "";
+
+                    // 提取进程名
+                    if let Some(name_start) = process_field.find("((\"") {
+                        if let Some(name_end) = process_field[name_start + 3..].find("\"") {
+                            process_name = &process_field[name_start + 3..name_start + 3 + name_end];
+                        }
+                    }
+
+                    // 提取pid
+                    if let Some(pid_start) = process_field.find("pid=") {
+                        let pid_substr = &process_field[pid_start + 4..];
+                        if let Some(pid_end) = pid_substr.find(|c: char| !c.is_ascii_digit()) {
+                            pid = &pid_substr[..pid_end];
+                        } else {
+                            pid = pid_substr; // 如果没有找到非数字字符，使用整个子串
+                        }
+                    }
+
+                    if !process_name.is_empty() && !pid.is_empty() {
+                        return format!("{}/{}", pid, process_name);
+                    }
+                }
+                "".to_string()
+            }
+
             // 解析 ss 命令输出
             let mut connections = Vec::new();
             for line in stdout.lines().skip(1) {
@@ -209,21 +240,10 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
                 let (peer_addr, peer_port) = parse_ip_and_port(peer_addr_port);
 
                 // 提取进程信息
-                let process_info = if fields.len() == 6 {
-                    let process_field = fields[5];
-                    if process_field.contains("pid=") {
-                        let start = process_field.find("((\"").map(|i| i + 3).unwrap_or(0);
-                        let end = process_field.find("\",pid=").unwrap_or(process_field.len());
-                        if start > 0 && end > start {
-                            &process_field[start..end]
-                        } else {
-                            ""
-                        }
-                    } else {
-                        ""
-                    }
+                let process_info = if fields.len() >= 6 {
+                    parse_process_info(fields[5])
                 } else {
-                    ""
+                    "".to_string()
                 };
 
                 if local_port < 10000 && local_port != 22 && peer_port > 1024 {
