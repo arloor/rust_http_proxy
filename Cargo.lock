@@ -199,9 +199,9 @@ dependencies = [
 
 [[package]]
 name = "axum-bootstrap"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c118f6649a540776c8f5468ec14ac45f0e550a11dd7fbb8589b8fd3b25b4c0d7"
+checksum = "e01e47259a88be34f7d414f4762821bc6d66bbd0e2b48000dd5e946fcc5c1aa6"
 dependencies = [
  "anyhow",
  "axum",
@@ -1709,9 +1709,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.94"
+version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a31971752e70b8b2686d7e46ec17fb38dad4051d94024c88df49b667caea9c84"
+checksum = "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778"
 dependencies = [
  "unicode-ident",
 ]
