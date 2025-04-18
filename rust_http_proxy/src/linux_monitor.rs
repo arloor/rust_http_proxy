@@ -1,7 +1,6 @@
 // only compile in linux.
 
 use chrono::{DateTime, Local};
-use http::Error;
 use serde::Serialize;
 use std::collections::VecDeque;
 
@@ -122,14 +121,6 @@ impl NetMonitor {
         });
     }
 
-    pub async fn net_html(&self, path: &str, hostname: &str) -> Result<String, Error> {
-        // 创建上下文并插入数据
-        let mut context = tera::Context::new();
-        context.insert("hostname", hostname);
-
-        Ok(TERA.render(path, &context).unwrap_or("".to_string()))
-    }
-
     pub async fn net_json(&self) -> Snapshot {
         self.fetch_all().await
     }
@@ -160,29 +151,6 @@ pub enum SeriesType {
     #[serde(rename = "bar")]
     Bar,
 }
-
-pub(crate) struct TeraTemplate {
-    name: &'static str,
-    template_content: &'static str,
-}
-
-const TEMPLATES: &[TeraTemplate] = &[
-    TeraTemplate {
-        name: "/net",
-        template_content: include_str!("../html/net_react.html"),
-    },
-    TeraTemplate {
-        name: "/netx",
-        template_content: include_str!("../html/net_legacy.html"),
-    },
-];
-static TERA: LazyLock<tera::Tera> = LazyLock::new(|| {
-    let mut tmp = tera::Tera::default();
-    for ele in TEMPLATES {
-        tmp.add_raw_template(ele.name, ele.template_content).unwrap_or(());
-    }
-    tmp
-});
 
 // Inter-|   Receive                                                |  Transmit
 //      face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed

@@ -1,5 +1,7 @@
 use crate::metrics::METRICS;
+use askama::Template;
 use axum::extract::{ConnectInfo, MatchedPath, State};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use axum_bootstrap::AppError;
@@ -289,30 +291,51 @@ async fn count_stream() -> Result<(HeaderMap, String), AppError> {
 #[cfg(target_os = "linux")]
 async fn net_html(
     State(_): State<Arc<AppState>>, axum_extra::extract::Host(host): axum_extra::extract::Host,
-) -> Result<axum::response::Html<String>, AppError> {
-    use crate::linux_monitor::NET_MONITOR;
-
-    NET_MONITOR
-        .net_html("/net", &host)
-        .await
-        .map_err(AppError::new)
-        .map(axum::response::Html)
+) -> Result<impl IntoResponse, AppError> {
+    Ok(HtmlTemplate(NetTemplate {
+        hostname: host.to_string(),
+    }))
 }
 
 #[cfg(target_os = "linux")]
 async fn netx_html(
     State(_): State<Arc<AppState>>, axum_extra::extract::Host(host): axum_extra::extract::Host,
-) -> Result<axum::response::Html<String>, AppError> {
-    use crate::linux_monitor::NET_MONITOR;
-    NET_MONITOR
-        .net_html("/netx", &host)
-        .await
-        .map_err(AppError::new)
-        .map(axum::response::Html)
+) -> Result<impl IntoResponse, AppError> {
+    Ok(HtmlTemplate(NetXTemplate {
+        hostname: host.to_string(),
+    }))
 }
 
 #[cfg(target_os = "linux")]
 async fn net_json(State(_): State<Arc<AppState>>) -> Result<axum::Json<crate::linux_monitor::Snapshot>, AppError> {
     use crate::linux_monitor::NET_MONITOR;
     Ok(axum::Json(NET_MONITOR.net_json().await))
+}
+
+#[derive(Template)]
+#[template(path = "net_react.html")]
+struct NetTemplate {
+    hostname: String,
+}
+
+#[derive(Template)]
+#[template(path = "net_legacy.html")]
+struct NetXTemplate {
+    hostname: String,
+}
+
+struct HtmlTemplate<T>(T);
+
+impl<T> IntoResponse for HtmlTemplate<T>
+where
+    T: Template,
+{
+    fn into_response(self) -> Response {
+        match self.0.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(err) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to render template. Error: {err}")).into_response()
+            }
+        }
+    }
 }
