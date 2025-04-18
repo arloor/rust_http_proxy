@@ -1,37 +1,55 @@
 <!DOCTYPE html>
-<html lang="en">
-
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>404 NOT FOUND</title>
+    <title>404 Not Found</title>
     <style>
-        html,
         body {
+            font-family: Tahoma, Arial, sans-serif;
             margin: 0;
+            padding: 0;
         }
-
-        .out {
-            min-height: 100vh;
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            flex-direction: column;
-            align-items: center;
-            font-size: calc(10px + 1vmin);
+        .container {
+            width: 35em;
+            margin: 0 auto;
+            padding: 5em 0;
         }
-
-        .in {
-            padding: 10px;
-            margin: 0;
-            font-family: "JetBrains Mono", "SFMono-Regular", "SF-Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Ubuntu Mono", "Courier New", Courier, monospace;
+        h1 {
+            font-size: 24px;
+            color: #2F3F56;
+            margin: 0 0 0.5em 0;
+            padding: 0;
+            border-bottom: 1px solid #CCCCCC;
+        }
+        p {
+            margin: 1em 0;
+            line-height: 1.5em;
+        }
+        .error-details {
+            color: #444444;
+            font-size: 14px;
+        }
+        hr {
+            border: none;
+            border-top: 1px solid #EEEEEE;
+            margin: 20px 0;
+        }
+        .footer {
+            color: #999999;
+            font-size: 12px;
         }
     </style>
 </head>
-
 <body>
-    <div class="out">
-        <h1 class="in">404 NOT FOUND</h1>
+    <div class="container">
+        <h1>404 Not Found</h1>
+        <div class="error-details">
+            <p>The requested URL was not found on this server.</p>
+        </div>
+        <hr>
+        <div class="footer">
+            <p>Rust HTTP Proxy Server</p>
+        </div>
     </div>
 </body>
-
 </html>
