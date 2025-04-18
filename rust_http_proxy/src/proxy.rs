@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     address::host_addr,
-    axum_handler::{self, AXUM_PATHS},
+    axum_handler::{self, AppProxyError, AXUM_PATHS},
     config,
     http1_client::HttpClient,
     ip_x::local_ip,
@@ -43,7 +43,7 @@ pub(crate) enum InterceptResultAdapter {
     Continue(Request<Incoming>),
 }
 
-impl From<InterceptResultAdapter> for InterceptResult {
+impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
     fn from(val: InterceptResultAdapter) -> Self {
         match val {
             InterceptResultAdapter::Return(resp) => {

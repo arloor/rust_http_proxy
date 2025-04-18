@@ -10,6 +10,7 @@ use http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use log::{debug, warn};
 use prometheus_client::encoding::text::encode;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -314,16 +315,26 @@ async fn net_json(State(_): State<Arc<AppState>>) -> Result<axum::Json<crate::li
 
 #[derive(Template)]
 #[template(path = "net_react.html")]
+#[allow(dead_code)]
 struct NetTemplate {
     hostname: String,
 }
 
 #[derive(Template)]
 #[template(path = "net_legacy.html")]
+#[allow(dead_code)]
 struct NetXTemplate {
     hostname: String,
 }
 
+#[derive(Template)]
+#[template(path = "error.html")]
+#[allow(dead_code)]
+struct ErrorTemplate {
+    msg: String,
+}
+
+#[allow(dead_code)]
 struct HtmlTemplate<T>(T);
 
 impl<T> IntoResponse for HtmlTemplate<T>
@@ -337,5 +348,55 @@ where
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to render template. Error: {err}")).into_response()
             }
         }
+    }
+}
+
+// Make our own error that wraps `anyhow::Error`.
+#[derive(Debug)]
+pub struct AppProxyError(anyhow::Error);
+
+impl Display for AppProxyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+// Tell axum how to convert `AppProxyError` into a response.
+impl IntoResponse for AppProxyError {
+    fn into_response(self) -> Response {
+        let err = self.0;
+        // Because `TraceLayer` wraps each request in a span that contains the request
+        // method, uri, etc we don't need to include those details here
+        tracing::error!(%err, "error");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Html(
+                ErrorTemplate {
+                    msg: format!("Internal server error: {err}"),
+                }
+                .render()
+                .unwrap_or("Failed to render error template".to_string()),
+            ),
+        )
+            .into_response()
+    }
+}
+
+// This enables using `?` on functions that return `Result<_, anyhow::Error>` to turn them into
+// `Result<_, AppProxyError>`. That way you don't need to do that manually.
+impl<E> From<E> for AppProxyError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self(err.into())
+    }
+}
+
+impl AppProxyError {
+    #[allow(dead_code)]
+    pub fn new<T: std::error::Error + Send + Sync + 'static>(err: T) -> Self {
+        use anyhow::anyhow;
+        Self(anyhow!(err))
     }
 }

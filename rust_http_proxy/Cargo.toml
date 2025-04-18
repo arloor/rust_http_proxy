@@ -48,8 +48,8 @@ lru_time_cache = "0.11"
 serde_yaml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.132"
-# axum-bootstrap = { git = "https://github.com/arloor/axum-bootstrap", branch = "master" }
-axum-bootstrap = { version = "0.1", default-features = false }
+axum-bootstrap = { git = "https://github.com/arloor/axum-bootstrap", branch = "master" }
+# axum-bootstrap = { version = "0.1", default-features = false }
 tower-http = { version = "0.6", features = [
     "cors",
     "timeout",
@@ -57,14 +57,15 @@ tower-http = { version = "0.6", features = [
     "compression-full",
 ] }
 axum = "0.8"
+askama = "0.13"
 tracing = "0.1"
 build-time = "0.1.3"
+anyhow = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 socket_filter = { version = "0.2", optional = true }
 cgroup_traffic = { version = "0.2", optional = true }
 pnet = { version = "0.35", optional = true }
-askama = "0.13"
 axum-macros = "0.5"
 axum-extra = "0.10.0"
 

@@ -19,7 +19,8 @@ use crate::axum_handler::{build_router, AppState};
 use crate::config::Config;
 use crate::metrics::METRICS;
 
-use axum_bootstrap::{AppError, InterceptResult, ReqInterceptor, TlsParam};
+use axum_bootstrap::{InterceptResult, ReqInterceptor, TlsParam};
+use axum_handler::AppProxyError;
 use config::load_config;
 use futures_util::future::select_all;
 
@@ -71,12 +72,13 @@ async fn main() -> Result<(), DynError> {
 struct ProxyInterceptor(Arc<ProxyHandler>);
 
 impl ReqInterceptor for ProxyInterceptor {
+    type Error = AppProxyError;
     async fn intercept(
         &self, req: http::Request<hyper::body::Incoming>, ip: std::net::SocketAddr,
-    ) -> axum_bootstrap::InterceptResult {
+    ) -> axum_bootstrap::InterceptResult<Self::Error> {
         match self.0.handle(req, ip).await {
             Ok(adaptor) => adaptor.into(),
-            Err(err) => InterceptResult::Error(AppError::new(err)),
+            Err(err) => InterceptResult::Error(AppProxyError::new(err)),
         }
     }
 }
