@@ -9,6 +9,8 @@ mod ebpf;
 mod http1_client;
 mod ip_x;
 #[cfg(target_os = "linux")]
+mod linux_axum_handler;
+#[cfg(target_os = "linux")]
 mod linux_monitor;
 mod metrics;
 mod proxy;
