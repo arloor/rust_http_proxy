@@ -35,8 +35,6 @@ docker run --rm -it --net host --pid host docker.io/arloor/rust_http_proxy -p 77
 
 ### ebpf版本安装
 
-> 注意：ebpf版本并没有什么新特性，只是为了学习下新技术的自嗨。
-
 ```bash
 curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy_bpf_static -o /tmp/rust_http_proxy
 install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
