@@ -1,6 +1,6 @@
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/arloor/rust_http_proxy)
 
-基于 `hyper` 和 `rustls` 的静态资源托管服务器、正向代理、反向代理。
+基于 `hyper` 、 `axum` 、 `rustls` 的**静态资源托管服务器**、**正向代理**、**反向代理**、**API server**。
 
 ## 功能特性
 
