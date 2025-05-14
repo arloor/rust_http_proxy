@@ -108,10 +108,11 @@ impl ProxyHandler {
 
             // 对于HTTP/2请求或URI中不包含host的请求，处理为普通服务请求
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
-                match self
-                    .serve_request(&req, crate::CONFIG.prohibit_serving, client_socket_addr)
-                    .await
-                {
+                if crate::CONFIG.prohibit_serving {
+                    // 存在嗅探风险时，不伪装成http服务
+                    return Ok(InterceptResultAdapter::Drop);
+                }
+                match self.serve_request(&req, client_socket_addr).await {
                     Ok(res) => {
                         if res.status() == http::StatusCode::NOT_FOUND {
                             return Ok(InterceptResultAdapter::Continue(req));
@@ -120,9 +121,6 @@ impl ProxyHandler {
                         }
                     }
                     Err(err) => {
-                        if err.kind() == ErrorKind::ConnectionAborted {
-                            return Ok(InterceptResultAdapter::Drop);
-                        }
                         return Err(err);
                     }
                 }
@@ -271,20 +269,13 @@ impl ProxyHandler {
         }
     }
     async fn serve_request(
-        &self, req: &Request<Incoming>, prohibit_serving: bool, client_socket_addr: SocketAddr,
+        &self, req: &Request<Incoming>, client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let raw_path = req.uri().path();
         let path = percent_decode_str(raw_path)
             .decode_utf8()
             .unwrap_or(Cow::from(raw_path));
         let path = path.as_ref();
-        if prohibit_serving {
-            // 存在嗅探风险时，不伪装成http服务
-            return Err(io::Error::new(
-                ErrorKind::ConnectionAborted, // use this errorKind to tell the caller to close the socket
-                "reject http GET/POST when ask_for_auth and basic_auth not empty",
-            ));
-        }
         if AXUM_PATHS.contains(&path) {
             return raw_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
         }
