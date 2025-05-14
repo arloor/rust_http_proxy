@@ -94,6 +94,7 @@ pub(crate) struct Config {
     pub(crate) web_content_path: String,
     pub(crate) referer_keywords_to_self: Vec<String>,
     pub(crate) never_ask_for_auth: bool,
+    pub(crate) prohibit_serving: bool,
     pub(crate) over_tls: bool,
     pub(crate) port: Vec<u16>,
     pub(crate) reverse_proxy_config: ReverseProxyConfig,
@@ -117,6 +118,8 @@ impl TryFrom<Param> for Config {
             &mut param.append_upstream_url,
             param.enable_github_proxy,
         )?;
+        // 如果会主动询问用户鉴权，则不允许提供静态文件服务
+        let prohibit_serving = !basic_auth.is_empty() && !param.never_ask_for_auth;
         Ok(Config {
             cert: param.cert,
             key: param.key,
@@ -124,6 +127,7 @@ impl TryFrom<Param> for Config {
             web_content_path: param.web_content_path,
             referer_keywords_to_self: param.referer_keywords_to_self,
             never_ask_for_auth: param.never_ask_for_auth,
+            prohibit_serving,
             over_tls: param.over_tls,
             port: param.port,
             reverse_proxy_config,
@@ -284,7 +288,7 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
 }
 
 fn log_config(config: &Config) {
-    if !config.basic_auth.is_empty() && !config.never_ask_for_auth {
+    if config.prohibit_serving {
         warn!("do not serve web content to avoid being detected!");
     } else {
         info!("serve web content of \"{}\"", config.web_content_path);

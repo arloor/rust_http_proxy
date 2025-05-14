@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
@@ -110,7 +109,7 @@ impl ProxyHandler {
             // 对于HTTP/2请求或URI中不包含host的请求，处理为普通服务请求
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
                 match self
-                    .serve_request(&req, config_basic_auth, never_ask_for_auth, client_socket_addr)
+                    .serve_request(&req, crate::CONFIG.prohibit_serving, client_socket_addr)
                     .await
                 {
                     Ok(res) => {
@@ -272,15 +271,14 @@ impl ProxyHandler {
         }
     }
     async fn serve_request(
-        &self, req: &Request<Incoming>, config_basic_auth: &HashMap<String, String>, never_ask_for_auth: bool,
-        client_socket_addr: SocketAddr,
+        &self, req: &Request<Incoming>, prohibit_serving: bool, client_socket_addr: SocketAddr,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let raw_path = req.uri().path();
         let path = percent_decode_str(raw_path)
             .decode_utf8()
             .unwrap_or(Cow::from(raw_path));
         let path = path.as_ref();
-        if !config_basic_auth.is_empty() && !never_ask_for_auth {
+        if prohibit_serving {
             // 存在嗅探风险时，不伪装成http服务
             return Err(io::Error::new(
                 ErrorKind::ConnectionAborted, // use this errorKind to tell the caller to close the socket
