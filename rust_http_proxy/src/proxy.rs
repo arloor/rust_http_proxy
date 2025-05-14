@@ -39,6 +39,7 @@ pub struct ProxyHandler {
 }
 
 pub(crate) enum InterceptResultAdapter {
+    Drop,
     Return(Response<BoxBody<Bytes, io::Error>>),
     Continue(Request<Incoming>),
 }
@@ -50,6 +51,7 @@ impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
                 let (parts, body) = resp.into_parts();
                 axum_bootstrap::InterceptResult::Return(Response::from_parts(parts, axum::body::Body::new(body)))
             }
+            InterceptResultAdapter::Drop => InterceptResult::Drop,
             InterceptResultAdapter::Continue(req) => InterceptResult::Continue(req),
         }
     }
@@ -118,7 +120,12 @@ impl ProxyHandler {
                             return Ok(InterceptResultAdapter::Return(res));
                         }
                     }
-                    Err(err) => return Err(err),
+                    Err(err) => {
+                        if err.kind() == ErrorKind::ConnectionAborted {
+                            return Ok(InterceptResultAdapter::Drop);
+                        }
+                        return Err(err);
+                    }
                 }
             }
         }
@@ -279,7 +286,7 @@ impl ProxyHandler {
         if !config_basic_auth.is_empty() && !never_ask_for_auth {
             // 存在嗅探风险时，不伪装成http服务
             return Err(io::Error::new(
-                ErrorKind::PermissionDenied,
+                ErrorKind::ConnectionAborted, // use this errorKind to tell the caller to close the socket
                 "reject http GET/POST when ask_for_auth and basic_auth not empty",
             ));
         }
