@@ -280,15 +280,15 @@ impl ProxyHandler {
             .decode_utf8()
             .unwrap_or(Cow::from(raw_path));
         let path = path.as_ref();
-        if AXUM_PATHS.contains(&path) {
-            return raw_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-        }
         if !config_basic_auth.is_empty() && !never_ask_for_auth {
             // 存在嗅探风险时，不伪装成http服务
             return Err(io::Error::new(
                 ErrorKind::ConnectionAborted, // use this errorKind to tell the caller to close the socket
                 "reject http GET/POST when ask_for_auth and basic_auth not empty",
             ));
+        }
+        if AXUM_PATHS.contains(&path) {
+            return raw_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
         }
         raw_serve::serve_http_request(req, client_socket_addr, path)
             .await
