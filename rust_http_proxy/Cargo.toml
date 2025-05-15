@@ -20,6 +20,7 @@ tokio-rustls = { version = "0.26", features = [
 futures-util.workspace = true
 log.workspace = true
 rand = "0.9"
+ipnetwork = "0.20.0"
 tokio-util = "0.7"
 mime_guess = "2.0"
 httpdate = "1.0"

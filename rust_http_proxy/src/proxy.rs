@@ -108,10 +108,28 @@ impl ProxyHandler {
 
             // 对于HTTP/2请求或URI中不包含host的请求，处理为普通服务请求
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
-                if crate::CONFIG.prohibit_serving {
-                    // 存在嗅探风险时，不伪装成http服务
+                // 检查是否允许提供静态文件服务
+                if crate::CONFIG.serving_control.prohibit_serving {
+                    // 全局禁止静态文件托管
+                    info!("Dropping request from {} due to global prohibit_serving setting", client_socket_addr);
                     return Ok(InterceptResultAdapter::Drop);
                 }
+
+                // 检查是否有网段限制及客户端IP是否在允许的网段内
+                let client_ip = client_socket_addr.ip().to_canonical();
+                let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
+
+                if !allowed_networks.is_empty() {
+                    // 有网段限制，检查客户端IP是否在允许的网段内
+                    let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
+
+                    if !ip_allowed {
+                        info!("Dropping request from {} as it's not in allowed networks", client_ip);
+                        return Ok(InterceptResultAdapter::Drop);
+                    }
+                }
+
+                // IP检查通过，提供静态文件服务
                 match self.serve_request(&req, client_socket_addr).await {
                     Ok(res) => {
                         if res.status() == http::StatusCode::NOT_FOUND {

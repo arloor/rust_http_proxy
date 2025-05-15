@@ -81,11 +81,15 @@ Options:
       --never-ask-for-auth
           if enable, never send '407 Proxy Authentication Required' to client。
           当作为正向代理使用时建议开启，否则有被嗅探的风险。
-          注意，如果此选项未开启并且用户名密码不为空，则会拒绝所有HTTP静态服务器/API服务器功能
+      --prohibit-serving
+          禁止所有静态文件托管，为了避免被嗅探
+      --allow-serving-network <CIDR>
+          允许访问静态文件托管的网段，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8
+          可以多次指定来允许多个网段
+          如设置了prohibit_serving，则此参数无效
+          如未设置任何网段，且未设置prohibit_serving，则允许所有IP访问静态文件
   -o, --over-tls
           if enable, proxy server will listen on https
-      --hostname <HOSTNAME>
-          [default: unknown]
       --reverse-proxy-config-file <FILE_PATH>
           反向代理配置文件
       --enable-github-proxy

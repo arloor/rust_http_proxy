@@ -2,9 +2,11 @@ use base64::engine::general_purpose;
 use base64::Engine;
 use clap::Parser;
 use http::Uri;
+use ipnetwork::IpNetwork;
 use log::{info, warn};
 use log_x::init_log;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::reverse::LocationConfig;
 use crate::{DynError, IDLE_TIMEOUT};
@@ -67,10 +69,20 @@ pub struct Param {
     #[arg(
         long,
         help = "if enable, never send '407 Proxy Authentication Required' to client。\n\
-        当作为正向代理使用时建议开启，否则有被嗅探的风险。\n\
-        注意，如果此选项未开启并且用户名密码不为空，则会拒绝所有HTTP静态服务器/API服务器功能"
+        当作为正向代理使用时建议开启，否则有被嗅探的风险。"
     )]
     never_ask_for_auth: bool,
+    #[arg(long, help = "禁止所有静态文件托管，为了避免被嗅探")]
+    prohibit_serving: bool,
+    #[arg(
+        long,
+        value_name = "CIDR",
+        help = "允许访问静态文件托管的网段，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8\n\
+        可以多次指定来允许多个网段\n\
+        如设置了prohibit_serving，则此参数无效\n\
+        如未设置任何网段，且未设置prohibit_serving，则允许所有IP访问静态文件"
+    )]
+    allow_serving_network: Vec<String>,
     #[arg(short, long, help = "if enable, proxy server will listen on https")]
     over_tls: bool,
     #[arg(long, value_name = "FILE_PATH", help = r#"反向代理配置文件"#)]
@@ -94,10 +106,15 @@ pub(crate) struct Config {
     pub(crate) web_content_path: String,
     pub(crate) referer_keywords_to_self: Vec<String>,
     pub(crate) never_ask_for_auth: bool,
-    pub(crate) prohibit_serving: bool,
+    pub(crate) serving_control: ServingControl,
     pub(crate) over_tls: bool,
     pub(crate) port: Vec<u16>,
     pub(crate) reverse_proxy_config: ReverseProxyConfig,
+}
+
+pub(crate) struct ServingControl {
+    pub(crate) prohibit_serving: bool,
+    pub(crate) allowed_networks: Vec<IpNetwork>,
 }
 
 impl TryFrom<Param> for Config {
@@ -118,8 +135,28 @@ impl TryFrom<Param> for Config {
             &mut param.append_upstream_url,
             param.enable_github_proxy,
         )?;
-        // 如果会主动询问用户鉴权，则不允许提供静态文件服务
-        let prohibit_serving = !basic_auth.is_empty() && !param.never_ask_for_auth;
+
+        // 处理静态文件托管控制
+        // 1. 如果设置了prohibit_serving，则禁止所有静态文件托管
+        // 2. 如果会主动询问用户鉴权，且没有设置never_ask_for_auth，也禁止所有静态文件托管
+        // 3. 否则根据allow_serving_network参数确定允许的网段
+        let prohibit_serving = param.prohibit_serving;
+        let mut allowed_networks = Vec::new();
+
+        // 只有在不全局禁止的情况下才解析允许的网段
+        if !prohibit_serving && !param.allow_serving_network.is_empty() {
+            for network_str in &param.allow_serving_network {
+                match IpNetwork::from_str(network_str) {
+                    Ok(network) => {
+                        allowed_networks.push(network);
+                    }
+                    Err(e) => {
+                        warn!("Invalid network CIDR format: {} - {}", network_str, e);
+                    }
+                }
+            }
+        }
+
         Ok(Config {
             cert: param.cert,
             key: param.key,
@@ -127,7 +164,10 @@ impl TryFrom<Param> for Config {
             web_content_path: param.web_content_path,
             referer_keywords_to_self: param.referer_keywords_to_self,
             never_ask_for_auth: param.never_ask_for_auth,
-            prohibit_serving,
+            serving_control: ServingControl {
+                prohibit_serving,
+                allowed_networks,
+            },
             over_tls: param.over_tls,
             port: param.port,
             reverse_proxy_config,
@@ -288,10 +328,15 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
 }
 
 fn log_config(config: &Config) {
-    if config.prohibit_serving {
+    if config.serving_control.prohibit_serving {
         warn!("do not serve web content to avoid being detected!");
     } else {
         info!("serve web content of \"{}\"", config.web_content_path);
+        if !config.serving_control.allowed_networks.is_empty() {
+            info!("Only allowing static content access from networks: {:?}", config.serving_control.allowed_networks);
+        } else {
+            info!("Allowing static content access from all networks");
+        }
         if !config.referer_keywords_to_self.is_empty() {
             info!("Referer header to images must contain {:?}", config.referer_keywords_to_self);
         }
