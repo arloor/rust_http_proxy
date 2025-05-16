@@ -207,7 +207,7 @@ where
             .await
         {
             Ok(s) => s,
-            Err(err) => return Err(io::Error::new(ErrorKind::Other, err)),
+            Err(err) => return Err(io::Error::other(err)),
         };
 
         let access_label = access_label.clone();

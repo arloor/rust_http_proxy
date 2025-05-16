@@ -32,7 +32,7 @@ pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
             debug!("ss command stdout: {}", stdout);
             if !stderr.is_empty() {
                 warn!("ss command stderr: {}", stderr);
-                return Err(AppError::new(io::Error::new(io::ErrorKind::Other, stderr)));
+                return Err(AppError::new(io::Error::other(stderr)));
             }
 
             // 解析 ss 命令输出
