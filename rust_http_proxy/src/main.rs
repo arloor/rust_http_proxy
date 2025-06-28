@@ -40,6 +40,9 @@ type DynError = Box<dyn stdError + Send + Sync>; // wrapper for dyn Error
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     // This will be initialized when the program starts
