@@ -16,19 +16,19 @@ jobs:
         build-type: [non-bpf, bpf-dyn-link, bpf-static-link]
         include:
           - build-type: non-bpf
-            features: aws_lc_rs,mimalloc
+            features: aws_lc_rs
             extra_deps: cmake
             binary-name: rust_http_proxy
             docker-tag: latest
             env_setup: ""
           - build-type: bpf-dyn-link
-            features: aws_lc_rs,bpf,mimalloc
+            features: aws_lc_rs,bpf
             extra_deps: cmake zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf
             docker-tag: bpf
             env_setup: ""
           - build-type: bpf-static-link
-            features: aws_lc_rs,bpf_static,mimalloc
+            features: aws_lc_rs,bpf_static
             extra_deps: cmake zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf_static
             docker-tag: bpf_static
