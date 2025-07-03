@@ -57,7 +57,7 @@ fn register_metric_cleaner<T: Label + Send + Sync>(counter: Family<T, Counter>, 
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(interval_in_hour * 60 * 60)).await;
-            info!("cleaning prometheus metric labels for {}", name);
+            info!("cleaning prometheus metric labels for {name}");
             counter.clear();
         }
     });

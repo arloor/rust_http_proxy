@@ -111,7 +111,7 @@ impl ProxyHandler {
                 // 检查是否允许提供静态文件服务
                 if crate::CONFIG.serving_control.prohibit_serving {
                     // 全局禁止静态文件托管
-                    info!("Dropping request from {} due to global prohibit_serving setting", client_socket_addr);
+                    info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
                     return Ok(InterceptResultAdapter::Drop);
                 }
 
@@ -124,7 +124,7 @@ impl ProxyHandler {
                     let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
 
                     if !ip_allowed {
-                        info!("Dropping request from {} as it's not in allowed networks", client_ip);
+                        info!("Dropping request from {client_ip} as it's not in allowed networks");
                         return Ok(InterceptResultAdapter::Drop);
                     }
                 }
@@ -265,7 +265,7 @@ impl ProxyHandler {
                             }
                         }
                     }
-                    Err(e) => warn!("upgrade error: {}", e),
+                    Err(e) => warn!("upgrade error: {e}"),
                 }
             });
             let mut response = Response::new(empty_body());
@@ -317,7 +317,7 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
         (Some(80), false) => None,
         _ => uri.port(),
     } {
-        let s = format!("{}:{}", hostname, port);
+        let s = format!("{hostname}:{port}");
         HeaderValue::from_str(&s)
     } else {
         HeaderValue::from_str(hostname)
@@ -325,7 +325,7 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     let origin = req.headers_mut().insert(HOST, host_header.clone());
     if Some(host_header.clone()) != origin {
-        info!("change host header: {:?} -> {:?}", origin, host_header);
+        info!("change host header: {origin:?} -> {host_header:?}");
     }
     // change absoulte uri to relative uri
     origin_form(req.uri_mut())?;

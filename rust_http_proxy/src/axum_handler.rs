@@ -105,7 +105,7 @@ pub(crate) fn check_auth(
         })?
         .to_str()
         .map_err(|e| {
-            warn!("Failed to parse Authorization header: {:?}", e);
+            warn!("Failed to parse Authorization header: {e:?}");
             std::io::Error::new(std::io::ErrorKind::PermissionDenied, e)
         })?;
 
@@ -128,7 +128,7 @@ async fn serve_metrics(
             debug!("authorized request from [{some_user:?}]");
         }
         Err(e) => {
-            warn!("authorization failed: {:?}", e);
+            warn!("authorization failed: {e:?}");
             header_map
                 .insert(http::header::WWW_AUTHENTICATE, HeaderValue::from_static("Basic realm=\"are you kidding me\""));
             return Ok((http::StatusCode::UNAUTHORIZED, header_map, format!("{e}")));

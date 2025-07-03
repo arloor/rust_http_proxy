@@ -80,7 +80,7 @@ pub async fn serve_http_request(
                 if is_outer_view_html
                 //来自外链的点击，记录Referer
                 {
-                    format!("\"Referer: {}\"", referer_header)
+                    format!("\"Referer: {referer_header}\"")
                 } else {
                     "".to_string()
                 },
@@ -145,9 +145,9 @@ async fn serve_path(
         return not_found();
     }
     let path = if String::from(url_path).ends_with('/') {
-        format!("{}{}index.html", web_content_path, url_path)
+        format!("{web_content_path}{url_path}index.html")
     } else {
-        format!("{}{}", web_content_path, url_path)
+        format!("{web_content_path}{url_path}")
     };
     let mut path = PathBuf::from(path);
     let meta = match metadata(&path).await {
@@ -155,7 +155,7 @@ async fn serve_path(
             if meta.is_file() {
                 meta
             } else {
-                path = PathBuf::from(format!("{}{}/index.html", web_content_path, url_path));
+                path = PathBuf::from(format!("{web_content_path}{url_path}/index.html"));
                 match metadata(&path).await {
                     Ok(m) => m,
                     Err(_) => return not_found(),
@@ -228,7 +228,7 @@ async fn serve_path(
 
     if start != 0 {
         if let Err(e) = file.seek(io::SeekFrom::Start(start)).await {
-            warn!("seek file error: {}", e);
+            warn!("seek file error: {e}");
             return Ok(build_500_resp());
         };
     }
@@ -279,7 +279,7 @@ fn cal_file_etag(last_modified: SystemTime, file_len: u64) -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    format!("\"{:x}-{:x}\"", last_modified_secs, file_len)
+    format!("\"{last_modified_secs:x}-{file_len:x}\"")
 }
 
 fn final_build<T>(
@@ -352,7 +352,7 @@ fn parse_range(
                     }
                 }
                 builder = builder
-                    .header(http::header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end, file_size))
+                    .header(http::header::CONTENT_RANGE, format!("bytes {start}-{end}/{file_size}"))
                     .status(http::StatusCode::PARTIAL_CONTENT);
             }
             None => {

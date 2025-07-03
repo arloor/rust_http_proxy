@@ -127,7 +127,7 @@ impl TryFrom<Param> for Config {
             let password = user.next().unwrap_or("").to_string();
             if !username.is_empty() && !password.is_empty() {
                 let base64 = general_purpose::STANDARD.encode(raw_user);
-                basic_auth.insert(format!("Basic {}", base64), username);
+                basic_auth.insert(format!("Basic {base64}"), username);
             }
         }
         let reverse_proxy_config = parse_reverse_proxy_config(
@@ -151,7 +151,7 @@ impl TryFrom<Param> for Config {
                         allowed_networks.push(network);
                     }
                     Err(e) => {
-                        warn!("Invalid network CIDR format: {} - {}", network_str, e);
+                        warn!("Invalid network CIDR format: {network_str} - {e}");
                     }
                 }
             }
@@ -210,7 +210,7 @@ fn parse_reverse_proxy_config(
                 match upstream_url.parse::<Uri>() {
                     Ok(upstream_url) => {
                         if upstream_url.query().is_some() {
-                            warn!("query is not supported in upstream_url:{}", upstream_url);
+                            warn!("query is not supported in upstream_url:{upstream_url}");
                             return;
                         }
                         let upstream_url_tmp = upstream_url.to_string();
@@ -230,7 +230,7 @@ fn parse_reverse_proxy_config(
                         });
                     }
                     Err(err) => {
-                        warn!("parse upstream_url error:{}", err);
+                        warn!("parse upstream_url error:{err}");
                     }
                 };
             });
@@ -275,7 +275,7 @@ fn parse_reverse_proxy_config(
                         location_config.upstream.url_base = upstream_url_base.to_string()
                     }
                 }
-                Err(e) => return Err(format!("parse upstream upstream_url_base error:{}", e).into()),
+                Err(e) => return Err(format!("parse upstream upstream_url_base error:{e}").into()),
             }
         }
     }
@@ -308,7 +308,7 @@ pub(crate) struct RedirectBackpaths {
 pub(crate) fn load_config() -> Result<Config, DynError> {
     let param = Param::parse();
     if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
-        return Err(format!("init log error:{}", log_init_error).into());
+        return Err(format!("init log error:{log_init_error}").into());
     }
     info!("build time: {}", crate::BUILD_TIME);
     #[cfg(all(feature = "ring", not(feature = "aws_lc_rs")))]
@@ -323,7 +323,7 @@ pub(crate) fn load_config() -> Result<Config, DynError> {
     }
     let config = Config::try_from(param)?;
     log_config(&config);
-    info!("auto close connection after idle for {:?}", IDLE_TIMEOUT);
+    info!("auto close connection after idle for {IDLE_TIMEOUT:?}");
     Ok(config)
 }
 

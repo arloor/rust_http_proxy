@@ -30,13 +30,13 @@ pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLogg
         )
         .append()
         .format(my_format)
-        .create_symlink(format!("{}/{}", log_dir, log_file))
+        .create_symlink(format!("{log_dir}/{log_file}"))
         .start();
     let symlink_path = log_dir_path.join(log_file);
     let symlink_path = symlink_path
         .to_str()
         .ok_or(io::Error::new(io::ErrorKind::InvalidData, "cannot parse"))?;
-    info!("log is output to {}", symlink_path);
+    info!("log is output to {symlink_path}");
     log
 }
 

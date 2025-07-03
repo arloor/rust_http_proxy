@@ -127,7 +127,7 @@ fn lookup_replacement(
                 other => other,
             };
             let port_part = if let Some(port) = origin_scheme_host_port.port {
-                format!(":{}", port)
+                format!(":{port}")
             } else {
                 String::new()
             };
@@ -161,7 +161,7 @@ fn ensure_absolute(location_header: &mut HeaderValue, context: &ReverseReqContex
         } else {
             url_base.to_string()
         };
-        let absolute_url = format!("{}{}", base, location);
+        let absolute_url = format!("{base}{location}");
         Ok(absolute_url)
     } else {
         Ok(location.to_string())
@@ -223,7 +223,7 @@ pub(crate) async fn handle(
                         HeaderValue::from_str(replacement.as_str())
                             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
                     );
-                    info!("redirect to [{}], origin is [{:?}]", replacement, origin);
+                    info!("redirect to [{replacement}], origin is [{origin:?}]");
                 }
             }
             Ok(resp.map(|body| {
@@ -235,7 +235,7 @@ pub(crate) async fn handle(
             }))
         }
         Err(e) => {
-            warn!("reverse_proxy error: {:?}", e);
+            warn!("reverse_proxy error: {e:?}");
             Err(io::Error::new(ErrorKind::InvalidData, e))
         }
     }

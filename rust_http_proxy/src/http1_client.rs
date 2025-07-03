@@ -86,18 +86,18 @@ where
             while let Some((c, inst)) = q.pop_front() {
                 let now = Instant::now();
                 if now - inst >= CONNECTION_EXPIRE_DURATION {
-                    debug!("HTTP connection for host: {} expired", access_label,);
+                    debug!("HTTP connection for host: {access_label} expired",);
                     continue;
                 }
                 if c.is_closed() {
                     // true at once after connection.await return
-                    debug!("HTTP connection for host: {} is closed", access_label,);
+                    debug!("HTTP connection for host: {access_label} is closed",);
                     continue;
                 }
                 return Some(c);
             }
         } else {
-            debug!("HTTP client for host: {} not found in cache", access_label);
+            debug!("HTTP client for host: {access_label} not found in cache");
         }
         None
     }
@@ -105,13 +105,13 @@ where
     async fn send_request_conn(
         &self, access_label: &AccessLabel, mut c: HttpConnection<B>, req: Request<B>,
     ) -> hyper::Result<Response<body::Incoming>> {
-        trace!("HTTP making request to host: {}, request: {:?}", access_label, req);
+        trace!("HTTP making request to host: {access_label}, request: {req:?}");
         let response = c.send_request(req).await?;
-        trace!("HTTP received response from host: {}, response: {:?}", access_label, response);
+        trace!("HTTP received response from host: {access_label}, response: {response:?}");
 
         // Check keep-alive
         if check_keep_alive(response.version(), response.headers(), false) {
-            trace!("HTTP connection keep-alive for host: {}, response: {:?}", access_label, response);
+            trace!("HTTP connection keep-alive for host: {access_label}, response: {response:?}");
             self.cache_conn
                 .lock()
                 .await
@@ -196,7 +196,7 @@ where
     async fn connect_http_http1(
         scheme: &Scheme, access_label: &AccessLabel, stream: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        trace!("HTTP making new HTTP/1.1 connection to host: {}, scheme: {}", access_label, scheme);
+        trace!("HTTP making new HTTP/1.1 connection to host: {access_label}, scheme: {scheme}");
         let stream = TimeoutIO::new(stream, CONNECTION_EXPIRE_DURATION);
 
         // HTTP/1.x
@@ -243,9 +243,9 @@ fn handle_http1_connection_error(err: hyper::Error, access_label: AccessLabel) {
                 warn!("[legacy proxy io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
             }
         } else {
-            warn!("[legacy proxy io error]: [{}] to {}", source, access_label);
+            warn!("[legacy proxy io error]: [{source}] to {access_label}");
         }
     } else {
-        warn!("[legacy proxy io error] [{}] to {}", err, access_label);
+        warn!("[legacy proxy io error] [{err}] to {access_label}");
     }
 }

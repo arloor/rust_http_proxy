@@ -155,7 +155,7 @@ where
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
             // 没有读到内容，且已经timeout，则返回错误
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("read idle for {:?}", timeout))));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("read idle for {timeout:?}"))));
         }
         read_poll
     }
@@ -173,7 +173,7 @@ where
         if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {:?}", timeout))));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {timeout:?}"))));
         }
         write_poll
     }
@@ -186,7 +186,7 @@ where
         if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {:?}", timeout))));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {timeout:?}"))));
         }
         write_poll
     }
@@ -199,7 +199,7 @@ where
         if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {:?}", timeout))));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {timeout:?}"))));
         }
         write_poll
     }
@@ -218,7 +218,7 @@ where
         if write_poll.is_ready() {
             idle_feature.reset(Instant::now() + *timeout);
         } else if idle_feature.poll(cx).is_ready() {
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {:?}", timeout))));
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, format!("write idle for {timeout:?}"))));
         }
         write_poll
     }

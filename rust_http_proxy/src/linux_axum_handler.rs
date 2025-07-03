@@ -29,9 +29,9 @@ pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
         Ok(output) => {
             let stdout = String::from_utf8(output.stdout).unwrap_or_default();
             let stderr = String::from_utf8(output.stderr).unwrap_or_default();
-            debug!("ss command stdout: {}", stdout);
+            debug!("ss command stdout: {stdout}");
             if !stderr.is_empty() {
-                warn!("ss command stderr: {}", stderr);
+                warn!("ss command stderr: {stderr}");
                 return Err(AppError::new(io::Error::other(stderr)));
             }
 
@@ -69,7 +69,7 @@ pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
             let mut connection_counts: HashMap<String, usize> = HashMap::new();
             for (peer_addr, local_addr, local_port, process_info) in connections {
                 let connection_str =
-                    format!("{:>15}   => {:>15}:{:<5} {}", peer_addr, local_addr, local_port, process_info);
+                    format!("{peer_addr:>15}   => {local_addr:>15}:{local_port:<5} {process_info}");
                 *connection_counts.entry(connection_str).or_insert(0) += 1;
             }
 
@@ -85,7 +85,7 @@ pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
 
             let result = sorted_connections
                 .iter()
-                .map(|(connection, count)| format!("{:>4} {}", count, connection))
+                .map(|(connection, count)| format!("{count:>4} {connection}"))
                 .collect::<Vec<String>>()
                 .join("\n");
 
@@ -94,7 +94,7 @@ pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
             Ok((headers, result))
         }
         Err(e) => {
-            warn!("ss command error: {}", e);
+            warn!("ss command error: {e}");
             Err(AppError::new(e))
         }
     }
@@ -153,7 +153,7 @@ fn parse_process_info(process_field: &str) -> String {
         }
 
         if !process_name.is_empty() && !pid.is_empty() {
-            return format!("{}/{}", pid, process_name);
+            return format!("{pid}/{process_name}");
         }
     }
     "".to_string()
