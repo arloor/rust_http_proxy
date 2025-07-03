@@ -1,7 +1,7 @@
 #! /bin/bash
 # https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html-single/building_running_and_managing_containers/index#proc_using-the-ubi-micro-images_assembly_adding-software-to-a-ubi-container
 
-base_image=docker.io/redhat/ubi9-micro:latest
+base_image=docker.io/redhat/ubi10-micro:latest
 # base_image=docker.io/rockylinux/rockylinux:9-ubi-micro
 out_tag=latest
 out_image="docker.io/arloor/ubi-micro:${out_tag}"
@@ -19,7 +19,7 @@ echo "Asia/Shanghai" > $micromount/etc/timezone
 # 安装所需的包
 dnf install \
 --installroot $micromount \
---releasever=9 \
+--releasever=10 \
 --config /etc/dnf/dnf.conf \
 --setopt install_weak_deps=false \
 --setopt=reposdir=/etc/yum.repos.d/ \

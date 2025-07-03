@@ -290,5 +290,5 @@ Nginx收到的消息：
 cargo clean
 cargo build -r --features bpf_vendored
 podman build . -f Dockerfile.test -t test --net host
-podman run --rm -it privileged --net host --pid host test 
+podman run --rm -it --privileged --net host --pid host test 
 ```
