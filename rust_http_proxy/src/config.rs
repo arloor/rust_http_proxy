@@ -226,7 +226,7 @@ fn parse_reverse_proxy_config(
                             upstream: crate::reverse::Upstream {
                                 url_base: (*upstream_url_base).to_owned() + path,
                                 version: crate::reverse::Version::Auto,
-                                host_override: None,
+                                authority_override: None,
                             },
                         });
                     }
@@ -281,18 +281,36 @@ fn parse_reverse_proxy_config(
         }
     }
     let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
-    for (host, locations) in &locations {
-        for location in locations {
-            redirect_bachpaths.push(RedirectBackpaths {
-                redirect_url: location.upstream.url_base.clone(),
-                host: host.clone(),
-                location: location.location.clone(),
-            });
+    for (host, location_configs) in &locations {
+        for location_config in location_configs {
+            if let Some(authority_override) = location_config.upstream.authority_override.as_ref() {
+                let url_base = location_config.upstream.url_base.parse::<Uri>()?;
+                // Create a new Uri with updated authority using parts
+                let mut parts = http::uri::Parts::from(url_base);
+                parts.authority = Some(
+                    authority_override
+                        .parse()
+                        .map_err(|e| format!("parse host override error: {e}"))?,
+                );
+                let new_url_base = Uri::from_parts(parts).map_err(|e| format!("build uri error: {e}"))?;
+
+                redirect_bachpaths.push(RedirectBackpaths {
+                    redirect_url: new_url_base.to_string(),
+                    host: host.clone(),
+                    location: location_config.location.clone(),
+                });
+            } else {
+                redirect_bachpaths.push(RedirectBackpaths {
+                    redirect_url: location_config.upstream.url_base.clone(),
+                    host: host.clone(),
+                    location: location_config.location.clone(),
+                });
+            }
         }
     }
     redirect_bachpaths.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());
     for ele in redirect_bachpaths.iter() {
-        log::trace!("find redirect back path for: {}**", ele.redirect_url);
+        log::info!("find redirect back path for: {}**", ele.redirect_url);
     }
     // println!("{}",toml::to_string_pretty(&locations).unwrap());
     Ok(ReverseProxyConfig {

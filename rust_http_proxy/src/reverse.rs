@@ -46,7 +46,7 @@ pub(crate) struct Upstream {
     #[serde(default = "default_version")]
     pub(crate) version: Version,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) host_override: Option<String>, // 可选的Host头覆盖
+    pub(crate) authority_override: Option<String>, // 可选的Host头覆盖
 }
 
 // 定义默认值函数
@@ -115,7 +115,7 @@ fn build_upstream_req(req: Request<Incoming>, location_config: &LocationConfig) 
     }
 
     // 如果配置了host_override，则设置Host头
-    if let Some(ref host_override) = location_config.upstream.host_override {
+    if let Some(ref host_override) = location_config.upstream.authority_override {
         if let Some(old_host) = header_map.insert(
             header::HOST,
             HeaderValue::from_str(host_override).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
