@@ -6,7 +6,7 @@ mod axum_handler;
 mod config;
 #[cfg(all(target_os = "linux", feature = "bpf"))]
 mod ebpf;
-mod http1_client;
+mod forward_proxy_client;
 mod ip_x;
 #[cfg(target_os = "linux")]
 mod linux_axum_handler;

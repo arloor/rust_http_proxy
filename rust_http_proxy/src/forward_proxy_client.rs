@@ -27,21 +27,21 @@ use crate::proxy::AccessLabel;
 
 const CONNECTION_EXPIRE_DURATION: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 30 } else { 10 });
 
-/// HTTPClient, supporting HTTP/1.1 and H2, HTTPS.
-pub struct HttpClient<B> {
+/// ForwardProxyClient, supporting HTTP/1.1 and H2, HTTPS.
+pub struct ForwardProxyClient<B> {
     #[allow(clippy::type_complexity)]
     cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>,
 }
 
-impl<B> HttpClient<B>
+impl<B> ForwardProxyClient<B>
 where
     B: Body + Send + Unpin + Debug + 'static,
     B::Data: Send,
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
     /// Create a new HttpClient
-    pub fn new() -> HttpClient<B> {
-        HttpClient {
+    pub fn new() -> ForwardProxyClient<B> {
+        ForwardProxyClient {
             cache_conn: Arc::new(Mutex::new(LruCache::with_expiry_duration(CONNECTION_EXPIRE_DURATION))),
         }
     }

@@ -11,7 +11,7 @@ use crate::{
     address::host_addr,
     axum_handler::{self, AppProxyError, AXUM_PATHS},
     config,
-    http1_client::HttpClient,
+    forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
     raw_serve, reverse, METRICS,
 };
@@ -33,8 +33,8 @@ use rand::Rng;
 use tokio::{net::TcpStream, pin};
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
-    http1_client: HttpClient<Incoming>,
-    reverse_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+    forwad_proxy_client: ForwardProxyClient<Incoming>,
+    reverse_proxy_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
 }
 
 pub(crate) enum InterceptResultAdapter {
@@ -62,11 +62,11 @@ impl ProxyHandler {
     #[allow(clippy::expect_used)]
     pub fn new() -> Result<Self, crate::DynError> {
         let reverse_client = build_hyper_legacy_client();
-        let http1_client = HttpClient::<Incoming>::new();
+        let http1_client = ForwardProxyClient::<Incoming>::new();
 
         Ok(ProxyHandler {
-            reverse_client,
-            http1_client,
+            reverse_proxy_client: reverse_client,
+            forwad_proxy_client: http1_client,
         })
     }
     pub async fn handle(
@@ -99,7 +99,7 @@ impl ProxyHandler {
                         location_config,
                         client_socket_addr,
                         &origin_scheme_host_port,
-                        &self.reverse_client,
+                        &self.reverse_proxy_client,
                     )
                     .await
                     .map(InterceptResultAdapter::Return);
@@ -186,7 +186,7 @@ impl ProxyHandler {
         let access_label = build_access_label(&req, client_socket_addr, username)?;
         mod_http1_proxy_req(&mut req)?;
         match self
-            .http1_client
+            .forwad_proxy_client
             .send_request(req, &access_label, |stream: TcpStream, access_label: AccessLabel| {
                 CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
