@@ -16,7 +16,7 @@ pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLogg
         .to_str()
         .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "error parse absolute path of log dir"))?;
     let logger = if cfg!(debug_assertions) {
-        Logger::try_with_env_or_str("debug,rustls=error")?
+        Logger::try_with_env_or_str("info,rustls=error")?
     } else {
         Logger::try_with_env_or_str("info,rustls=error")?
     };

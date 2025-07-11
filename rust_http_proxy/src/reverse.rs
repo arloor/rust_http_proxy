@@ -65,7 +65,7 @@ impl LocationConfig {
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let upstream_req = self.build_upstream_req(req)?;
         info!(
-            "[reverse] {:^35} => [{}] {:?} [{:?}] through {}{}**",
+            "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
             SocketAddrFormat(&client_socket_addr).to_string(),
             upstream_req.method(),
             &upstream_req.uri(),
