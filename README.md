@@ -201,17 +201,17 @@ url_base = "https://models.inference.ai.azure.com/chat/completions"
 #### 例子4: Host头覆盖 - 当上游服务器需要特定的Host头时
 
 ```toml
-[[api.example.com]]
+[["api.example.com"]]
 location = "/api/"
 
-[api.example.com.upstream]
+["api.example.com".upstream]
 url_base = "http://internal-service:8080"
 host_override = "api.internal.com:8080"  # 覆盖Host头为api.internal.com
 
-[[cdn.example.com]]
+[["cdn.example.com"]]
 location = "/assets/"
 
-[cdn.example.com.upstream]
+["cdn.example.com".upstream]
 url_base = "https://storage.cloud.com"
 host_override = "myapp.storage.com"  # 覆盖Host头为myapp.storage.com
 ```
