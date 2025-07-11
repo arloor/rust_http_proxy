@@ -364,13 +364,23 @@ fn extract_requst_basic_info(req: &Request<Incoming>, default_scheme: &str) -> i
     let uri = req.uri();
     let scheme = uri.scheme_str().unwrap_or(default_scheme);
     if req.version() == Version::HTTP_2 {
+        let legacy_host = req
+            .headers()
+            .get(http::header::HOST)
+            .and_then(|host| host.to_str().ok())
+            .and_then(|host_str| host_str.split(':').next())
+            .map(str::to_string);
         //H2，信息全在uri中
         Ok(SchemeHostPort {
             scheme: scheme.to_owned(),
-            host: uri
-                .host()
-                .ok_or(io::Error::new(ErrorKind::InvalidData, "authority is absent in HTTP/2"))?
-                .to_string(),
+            host: if let Some(legacy_host) = legacy_host {
+                info!("use legacy host: {legacy_host} from header for HTTP/2");
+                legacy_host
+            } else {
+                uri.host()
+                    .ok_or(io::Error::new(ErrorKind::InvalidData, "authority is absent in HTTP/2"))?
+                    .to_string()
+            },
             port: uri.port_u16(),
         })
     } else {
