@@ -60,53 +60,33 @@ impl std::cmp::Ord for LocationConfig {
 impl LocationConfig {
     pub(crate) async fn handle(
         &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
-        origin_scheme_host_port: &SchemeHostPort,
+        original_scheme_host_port: &SchemeHostPort,
         reverse_client: &legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let upstream_req = self.build_upstream_req(req)?;
         info!(
-            "[reverse proxy] {:^35} => {}{}** ==> [{}] {:?} [{:?}]",
+            "[reverse] {:^35} => [{}] {:?} [{:?}] through {}{}**",
             SocketAddrFormat(&client_socket_addr).to_string(),
-            origin_scheme_host_port,
-            self.location,
             upstream_req.method(),
             &upstream_req.uri(),
             upstream_req.version(),
+            original_scheme_host_port,
+            self.location,
         );
         METRICS
             .reverse_proxy_req
             .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
                 client: client_socket_addr.ip().to_canonical().to_string(),
-                origin: origin_scheme_host_port.to_string() + self.location.as_str(),
+                origin: original_scheme_host_port.to_string() + self.location.as_str(),
                 upstream: self.upstream.url_base.clone(),
             }))
             .inc();
         METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
-        let context = ReverseReqContext {
-            upstream: &self.upstream,
-            origin_scheme_host_port,
-        };
         match reverse_client.request(upstream_req).await {
             Ok(mut resp) => {
                 if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
-                    let headers = resp.headers_mut();
-                    let redirect_location = headers
-                        .get_mut(LOCATION)
-                        .ok_or(io::Error::new(ErrorKind::InvalidData, "LOCATION absent when 30x"))?;
-
-                    let absolute_redirect_location = ensure_absolute(redirect_location, &context)?;
-                    if let Some(replacement) = lookup_replacement(
-                        context.origin_scheme_host_port,
-                        absolute_redirect_location,
-                        &crate::CONFIG.reverse_proxy_config.redirect_bachpaths,
-                    ) {
-                        let origin = headers.insert(
-                            LOCATION,
-                            HeaderValue::from_str(replacement.as_str())
-                                .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-                        );
-                        info!("redirect to [{replacement}], origin is [{origin:?}]");
-                    }
+                    normalize302(original_scheme_host_port, resp.headers_mut())?;
+                    //修改302的location
                 }
                 Ok(resp.map(|body| {
                     body.map_err(|e| {
@@ -129,25 +109,22 @@ impl LocationConfig {
             Some(path_and_query) => path_and_query.as_str(),
             None => "",
         };
-        let url = self.upstream.url_base.clone() + &path_and_query[self.location.len()..];
+        let upstream_url = self.upstream.url_base.clone() + &path_and_query[self.location.len()..]; // upstream.url_base + 原始url去除location的部分
 
-        let mut builder =
-            Request::builder()
-                .method(method)
-                .uri(url)
-                .version(if !self.upstream.url_base.starts_with("https:") {
-                    match self.upstream.version {
-                        Version::H1 => http::Version::HTTP_11,
-                        Version::H2 => http::Version::HTTP_2,
-                        Version::Auto => http::Version::HTTP_11,
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(upstream_url)
+            .version(match self.upstream.version {
+                Version::H1 => http::Version::HTTP_11,
+                Version::H2 => http::Version::HTTP_2,
+                Version::Auto => {
+                    if self.upstream.url_base.starts_with("https:") {
+                        req.version()
+                    } else {
+                        http::Version::HTTP_11
                     }
-                } else {
-                    match self.upstream.version {
-                        Version::H1 => http::Version::HTTP_11,
-                        Version::H2 => http::Version::HTTP_2,
-                        Version::Auto => req.version(),
-                    }
-                });
+                }
+            });
         let header_map = match builder.headers_mut() {
             Some(header_map) => header_map,
             None => {
@@ -159,7 +136,6 @@ impl LocationConfig {
         };
         for ele in req.headers() {
             if ele.0 != header::HOST {
-                // println!("add header: {:?} => {:?}", ele.0, ele.1);
                 header_map.append(ele.0.clone(), ele.1.clone());
             } else {
                 info!("skip host header: {:?}", ele.1);
@@ -167,18 +143,46 @@ impl LocationConfig {
         }
 
         // 如果配置了host_override，则设置Host头
-        if let Some(ref host_override) = self.upstream.authority_override {
+        if let Some(ref authority_override) = self.upstream.authority_override {
             if let Some(old_host) = header_map.insert(
                 header::HOST,
-                HeaderValue::from_str(host_override).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+                HeaderValue::from_str(authority_override).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
             ) {
-                info!("override host header from {old_host:?} to: {host_override}");
+                info!("override host header from {old_host:?} to: {authority_override}");
             }
         }
         builder
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
+}
+
+fn normalize302(
+    original_scheme_host_port: &SchemeHostPort, resp_headers: &mut http::HeaderMap,
+) -> Result<(), io::Error> {
+    let redirect_url = resp_headers
+        .get_mut(LOCATION)
+        .ok_or(io::Error::new(ErrorKind::InvalidData, "LOCATION absent when 30x"))?
+        .to_str()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?
+        .parse::<Uri>()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    if redirect_url.scheme_str().is_none() {
+        info!("normalize302: redirect_url is relative, don't touch it");
+        return Ok(());
+    }
+    if let Some(replacement) = lookup_replacement(
+        original_scheme_host_port,
+        redirect_url.to_string(),
+        &crate::CONFIG.reverse_proxy_config.redirect_bachpaths,
+    ) {
+        let origin = resp_headers.insert(
+            LOCATION,
+            HeaderValue::from_str(replacement.as_str()).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+        );
+        info!("normalize302: result is [{replacement}], before is [{origin:?}]");
+    };
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, PartialOrd)]
@@ -209,27 +213,16 @@ pub(crate) enum Version {
     Auto,
 }
 
-struct ReverseReqContext<'a> {
-    upstream: &'a Upstream,
-    origin_scheme_host_port: &'a SchemeHostPort,
-}
-
-pub(crate) fn pick_location<'b>(path: &str, locations: &'b [LocationConfig]) -> Option<&'b LocationConfig> {
-    // let path = match path {
-    //     "" => "/",
-    //     path => path,
-    // };
-    locations.iter().find(|&ele| path.starts_with(&ele.location))
-}
-
 fn lookup_replacement(
-    origin_scheme_host_port: &SchemeHostPort, absolute_redirect_location: String,
-    redirect_bachpaths: &[RedirectBackpaths],
+    origin_scheme_host_port: &SchemeHostPort, absolute_redirect_url: String, redirect_bachpaths: &[RedirectBackpaths],
 ) -> Option<String> {
-    for ele in redirect_bachpaths.iter() {
-        if absolute_redirect_location.starts_with(ele.redirect_url.as_str()) {
-            info!("redirect back path for {}** is http(s)://{}:port{}**", ele.redirect_url, ele.host, ele.location,);
-            let host = match ele.host.as_str() {
+    for backpath in redirect_bachpaths.iter() {
+        if absolute_redirect_url.starts_with(backpath.redirect_url.as_str()) {
+            info!(
+                "redirect back path for {}** is http(s)://{}:port{}**",
+                backpath.redirect_url, backpath.host, backpath.location,
+            );
+            let host = match backpath.host.as_str() {
                 DEFAULT_HOST => &origin_scheme_host_port.host, // 如果是default_host，就用当前host
                 other => other,
             };
@@ -243,15 +236,15 @@ fn lookup_replacement(
                 + "://"
                 + host // if it's default_host, use raw request's host
                 + &port_part // use raw request's port if available
-                + &ele.location
-                + &absolute_redirect_location[ele.redirect_url.len()..],
+                + &backpath.location
+                + &absolute_redirect_url[backpath.redirect_url.len()..],
             );
         }
     }
     None
 }
 
-fn ensure_absolute(location_header: &mut HeaderValue, context: &ReverseReqContext<'_>) -> io::Result<String> {
+fn _ensure_absolute(location_header: &mut HeaderValue, upstream: &Upstream) -> io::Result<String> {
     let location = location_header
         .to_str()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
@@ -259,8 +252,7 @@ fn ensure_absolute(location_header: &mut HeaderValue, context: &ReverseReqContex
         .parse::<Uri>()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     if redirect_url.scheme_str().is_none() {
-        let url_base =
-            Uri::from_str(&context.upstream.url_base).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        let url_base = Uri::from_str(&upstream.url_base).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         let base = if url_base.path().ends_with("/") && location.starts_with("/") {
             let mut base = url_base.to_string();
             base.truncate(url_base.to_string().len() - 1);
@@ -391,29 +383,27 @@ pub(crate) fn parse_reverse_proxy_config(
     let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
     for (host, location_configs) in &locations {
         for location_config in location_configs {
-            if let Some(authority_override) = location_config.upstream.authority_override.as_ref() {
-                let url_base = location_config.upstream.url_base.parse::<Uri>()?;
-                // Create a new Uri with updated authority using parts
-                let mut parts = http::uri::Parts::from(url_base);
-                parts.authority = Some(
-                    authority_override
-                        .parse()
-                        .map_err(|e| format!("parse host override error: {e}"))?,
-                );
-                let new_url_base = Uri::from_parts(parts).map_err(|e| format!("build uri error: {e}"))?;
+            let url_base = match location_config.upstream.authority_override.as_ref() {
+                None => location_config.upstream.url_base.clone(),
+                Some(authority_override) => { // 用authority_override替换url_base中的host。也许不需要，后面再看。
+                    let url_base = location_config.upstream.url_base.parse::<Uri>()?;
+                    let mut parts = http::uri::Parts::from(url_base);
+                    parts.authority = Some(
+                        authority_override
+                            .parse()
+                            .map_err(|e| format!("parse host override error: {e}"))?,
+                    );
+                    Uri::from_parts(parts)
+                        .map_err(|e| format!("build uri error: {e}"))?
+                        .to_string()
+                }
+            };
 
-                redirect_bachpaths.push(RedirectBackpaths {
-                    redirect_url: new_url_base.to_string(),
-                    host: host.clone(),
-                    location: location_config.location.clone(),
-                });
-            } else {
-                redirect_bachpaths.push(RedirectBackpaths {
-                    redirect_url: location_config.upstream.url_base.clone(),
-                    host: host.clone(),
-                    location: location_config.location.clone(),
-                });
-            }
+            redirect_bachpaths.push(RedirectBackpaths {
+                redirect_url: url_base,
+                host: host.clone(),
+                location: location_config.location.clone(),
+            });
         }
     }
     redirect_bachpaths.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());

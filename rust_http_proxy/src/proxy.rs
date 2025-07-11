@@ -13,7 +13,7 @@ use crate::{
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
     raw_serve,
-    reverse::{self, DEFAULT_HOST},
+    reverse::DEFAULT_HOST,
     METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
@@ -78,7 +78,7 @@ impl ProxyHandler {
 
         // 对于非CONNECT请求，检查是否需要反向代理或服务
         if Method::CONNECT != req.method() {
-            let origin_scheme_host_port = extract_requst_basic_info(
+            let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
                 &req,
                 match crate::CONFIG.over_tls {
                     true => "https",
@@ -90,14 +90,17 @@ impl ProxyHandler {
             let location_config_of_host = crate::CONFIG
                 .reverse_proxy_config
                 .locations
-                .get(&origin_scheme_host_port.host)
+                .get(&req_domain.0)
                 .or(crate::CONFIG.reverse_proxy_config.locations.get(DEFAULT_HOST));
 
             if let Some(locations) = location_config_of_host {
-                if let Some(location_config) = reverse::pick_location(req.uri().path(), locations) {
-                    // 用请求的path和location做前缀匹配
+                if let Some(location_config) = locations
+                    .iter()
+                    .find(|&ele| req.uri().path().starts_with(&ele.location))
+                // 用请求的path和location做前缀匹配
+                {
                     return location_config
-                        .handle(req, client_socket_addr, &origin_scheme_host_port, &self.reverse_proxy_client)
+                        .handle(req, client_socket_addr, &original_scheme_host_port, &self.reverse_proxy_client)
                         .await
                         .map(InterceptResultAdapter::Return);
                 }
@@ -357,29 +360,38 @@ impl Display for SchemeHostPort {
     }
 }
 
-fn extract_requst_basic_info(req: &Request<Incoming>, default_scheme: &str) -> io::Result<SchemeHostPort> {
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct RequestDomain(String);
+
+fn extract_scheme_host_port(
+    req: &Request<Incoming>, default_scheme: &str,
+) -> io::Result<(SchemeHostPort, RequestDomain)> {
     let uri = req.uri();
     let scheme = uri.scheme_str().unwrap_or(default_scheme);
     if req.version() == Version::HTTP_2 {
-        let legacy_host = req
+        //H2，信息全在uri中
+        let host_in_url = uri
+            .host()
+            .ok_or(io::Error::new(ErrorKind::InvalidData, "authority is absent in HTTP/2"))?
+            .to_string();
+        let host_in_header = req
             .headers()
             .get(http::header::HOST)
             .and_then(|host| host.to_str().ok())
             .and_then(|host_str| host_str.split(':').next())
             .map(str::to_string);
-        //H2，信息全在uri中
-        Ok(SchemeHostPort {
-            scheme: scheme.to_owned(),
-            host: if let Some(legacy_host) = legacy_host {
-                info!("use legacy host: {legacy_host} from header for HTTP/2");
-                legacy_host
-            } else {
-                uri.host()
-                    .ok_or(io::Error::new(ErrorKind::InvalidData, "authority is absent in HTTP/2"))?
-                    .to_string()
+        Ok((
+            SchemeHostPort {
+                scheme: scheme.to_owned(),
+                host: host_in_url.clone(),
+                port: uri.port_u16(),
             },
-            port: uri.port_u16(),
-        })
+            RequestDomain(if let Some(host_in_header) = host_in_header {
+                host_in_header
+            } else {
+                host_in_url
+            }),
+        ))
     } else {
         let mut split = req
             .headers()
@@ -399,11 +411,14 @@ fn extract_requst_basic_info(req: &Request<Incoming>, default_scheme: &str) -> i
             ),
             None => None,
         };
-        Ok(SchemeHostPort {
-            scheme: scheme.to_owned(),
-            host,
-            port,
-        })
+        Ok((
+            SchemeHostPort {
+                scheme: scheme.to_owned(),
+                host: host.clone(),
+                port,
+            },
+            RequestDomain(host),
+        ))
     }
 }
 
