@@ -45,6 +45,8 @@ pub(crate) struct Upstream {
     pub(crate) url_base: String, // https://google.com
     #[serde(default = "default_version")]
     pub(crate) version: Version,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) authority_override: Option<String>, // 可选的Host头覆盖
 }
 
 // 定义默认值函数
@@ -105,9 +107,20 @@ fn build_upstream_req(req: Request<Incoming>, location_config: &LocationConfig) 
     };
     for ele in req.headers() {
         if ele.0 != header::HOST {
+            // println!("add header: {:?} => {:?}", ele.0, ele.1);
             header_map.append(ele.0.clone(), ele.1.clone());
         } else {
             info!("skip host header: {:?}", ele.1);
+        }
+    }
+
+    // 如果配置了host_override，则设置Host头
+    if let Some(ref host_override) = location_config.upstream.authority_override {
+        if let Some(old_host) = header_map.insert(
+            header::HOST,
+            HeaderValue::from_str(host_override).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+        ) {
+            info!("override host header from {old_host:?} to: {host_override}");
         }
     }
     builder

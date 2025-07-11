@@ -120,15 +120,23 @@ curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --pro
 
 ### 反向代理配置
 
-```yaml
-YOUR_DOMAIN:
-  - location: / # 默认为 /
-    upstream:
-      url_base: https://www.baidu.com
-      version: H1 # 可以填H1、H2、AUTO，默认为AUTO
+```toml
+[[YOUR_DOMAIN]]
+location = "/" # 默认为 /
+
+[YOUR_DOMAIN.upstream]
+url_base = "https://www.baidu.com"
+version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
+host_override = "api.example.com" # 可选，覆盖发送给上游服务器的Host头
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效
+
+#### upstream配置说明
+
+- `url_base`: 上游服务器的基础URL
+- `version`: HTTP版本，可选值为 `H1`、`H2`、`AUTO`，默认为 `AUTO`
+- `host_override`: 可选参数，用于覆盖发送给上游服务器的Host头。如果不设置，则会自动从`url_base`中提取Host
 
 #### 例子1: Github Proxy
 
@@ -136,43 +144,76 @@ YOUR_DOMAIN:
 
 启动参数中增加 `--enable-github-proxy`，相当于以下配置：
 
-```yaml
-default_host:
-  - location: /https://gist.githubusercontent.com
-    upstream:
-      url_base: https://gist.githubusercontent.com
-  - location: /https://gist.github.com
-    upstream:
-      url_base: https://gist.github.com
-  - location: /https://github.com
-    upstream:
-      url_base: https://github.com
-  - location: /https://objects.githubusercontent.com
-    upstream:
-      url_base: https://objects.githubusercontent.com
-  - location: /https://raw.githubusercontent.com
-    upstream:
-      url_base: https://raw.githubusercontent.com
+```toml
+[[default_host]]
+location = "/https://gist.githubusercontent.com"
+
+[default_host.upstream]
+url_base = "https://gist.githubusercontent.com"
+
+[[default_host]]
+location = "/https://gist.github.com"
+
+[default_host.upstream]
+url_base = "https://gist.github.com"
+
+[[default_host]]
+location = "/https://github.com"
+
+[default_host.upstream]
+url_base = "https://github.com"
+
+[[default_host]]
+location = "/https://objects.githubusercontent.com"
+
+[default_host.upstream]
+url_base = "https://objects.githubusercontent.com"
+
+[[default_host]]
+location = "/https://raw.githubusercontent.com"
+
+[default_host.upstream]
+url_base = "https://raw.githubusercontent.com"
 ```
 
 #### 例子2： 反向代理https://cdnjs.cloudflare.com
 
 启动参数中增加 `--append-upstream-url=https://cdnjs.cloudflare.com`，相当于以下配置：
 
-```yaml
-default_host:
-  - location: /https://cdnjs.cloudflare.com
-    upstream:
-      url_base: https://cdnjs.cloudflare.com
+```toml
+[[default_host]]
+location = "/https://cdnjs.cloudflare.com"
+
+[default_host.upstream]
+url_base = "https://cdnjs.cloudflare.com"
 ```
 
 #### 例子3: 改写Github Models的url为openai api的url格式
 
-```yaml
-default_host:
-  - location: /v1/chat/completions
-    upstream:
-      url_base: https://models.inference.ai.azure.com/chat/completions
+```toml
+[[default_host]]
+location = "/v1/chat/completions"
+
+[default_host.upstream]
+url_base = "https://models.inference.ai.azure.com/chat/completions"
+```
+
+#### 例子4: Host头覆盖 - 当上游服务器需要特定的Host头时
+
+```toml
+[[api.example.com]]
+location = "/api/"
+
+[api.example.com.upstream]
+url_base = "http://internal-service:8080"
+host_override = "api.internal.com:8080"  # 覆盖Host头为api.internal.com
+
+[[cdn.example.com]]
+location = "/assets/"
+
+[cdn.example.com.upstream]
+url_base = "https://storage.cloud.com"
+host_override = "myapp.storage.com"  # 覆盖Host头为myapp.storage.com
 ```
 
 ## 可观测

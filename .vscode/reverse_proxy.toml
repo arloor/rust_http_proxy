@@ -1,0 +1,15 @@
+# 反向代理配置文件示例 (TOML格式)
+
+# default_host 配置
+[[default_host]]
+location = "/v1/chat/completions"
+upstream = { url_base = "https://models.inference.ai.azure.com/chat/completions" }
+
+[[default_host]]
+location = "/"
+upstream = { url_base = "https://www.arloor.com", authority_override = "stock.arloor.com" }
+
+# localhost 配置  
+[[localhost]]
+location = "/"
+upstream = { url_base = "https://www.baidu.com", version = "H1" }
