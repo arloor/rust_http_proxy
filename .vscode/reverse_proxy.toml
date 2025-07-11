@@ -7,7 +7,7 @@ upstream = { url_base = "https://models.inference.ai.azure.com/chat/completions"
 
 [[default_host]]
 location = "/stock"
-upstream = { url_base = "http://192.168.5.16:7780" }
+upstream = { url_base = "https://www.arloor.com", host_override = "stock.arloor.com" }
 
 # localhost 配置  
 [[localhost]]

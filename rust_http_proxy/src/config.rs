@@ -226,6 +226,7 @@ fn parse_reverse_proxy_config(
                             upstream: crate::reverse::Upstream {
                                 url_base: (*upstream_url_base).to_owned() + path,
                                 version: crate::reverse::Version::Auto,
+                                host_override: None,
                             },
                         });
                     }

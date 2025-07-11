@@ -127,9 +127,16 @@ location = "/" # 默认为 /
 [YOUR_DOMAIN.upstream]
 url_base = "https://www.baidu.com"
 version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
+host_override = "api.example.com" # 可选，覆盖发送给上游服务器的Host头
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效
+
+#### upstream配置说明
+
+- `url_base`: 上游服务器的基础URL
+- `version`: HTTP版本，可选值为 `H1`、`H2`、`AUTO`，默认为 `AUTO`
+- `host_override`: 可选参数，用于覆盖发送给上游服务器的Host头。如果不设置，则会自动从`url_base`中提取Host
 
 #### 例子1: Github Proxy
 
@@ -189,6 +196,24 @@ location = "/v1/chat/completions"
 
 [default_host.upstream]
 url_base = "https://models.inference.ai.azure.com/chat/completions"
+```
+
+#### 例子4: Host头覆盖 - 当上游服务器需要特定的Host头时
+
+```toml
+[[api.example.com]]
+location = "/api/"
+
+[api.example.com.upstream]
+url_base = "http://internal-service:8080"
+host_override = "api.internal.com"  # 覆盖Host头为api.internal.com
+
+[[cdn.example.com]]
+location = "/assets/"
+
+[cdn.example.com.upstream]
+url_base = "https://storage.cloud.com"
+host_override = "myapp.storage.com"  # 覆盖Host头为myapp.storage.com
 ```
 
 ## 可观测
