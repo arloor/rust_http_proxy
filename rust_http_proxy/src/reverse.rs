@@ -107,7 +107,7 @@ fn build_upstream_req(req: Request<Incoming>, location_config: &LocationConfig) 
     };
     for ele in req.headers() {
         if ele.0 != header::HOST {
-            println!("add header: {:?} => {:?}", ele.0, ele.1);
+            // println!("add header: {:?} => {:?}", ele.0, ele.1);
             header_map.append(ele.0.clone(), ele.1.clone());
         } else {
             info!("skip host header: {:?}", ele.1);
