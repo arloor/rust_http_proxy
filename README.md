@@ -120,12 +120,13 @@ curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --pro
 
 ### 反向代理配置
 
-```yaml
-YOUR_DOMAIN:
-  - location: / # 默认为 /
-    upstream:
-      url_base: https://www.baidu.com
-      version: H1 # 可以填H1、H2、AUTO，默认为AUTO
+```toml
+[[YOUR_DOMAIN]]
+location = "/" # 默认为 /
+
+[YOUR_DOMAIN.upstream]
+url_base = "https://www.baidu.com"
+version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效
@@ -136,43 +137,58 @@ YOUR_DOMAIN:
 
 启动参数中增加 `--enable-github-proxy`，相当于以下配置：
 
-```yaml
-default_host:
-  - location: /https://gist.githubusercontent.com
-    upstream:
-      url_base: https://gist.githubusercontent.com
-  - location: /https://gist.github.com
-    upstream:
-      url_base: https://gist.github.com
-  - location: /https://github.com
-    upstream:
-      url_base: https://github.com
-  - location: /https://objects.githubusercontent.com
-    upstream:
-      url_base: https://objects.githubusercontent.com
-  - location: /https://raw.githubusercontent.com
-    upstream:
-      url_base: https://raw.githubusercontent.com
+```toml
+[[default_host]]
+location = "/https://gist.githubusercontent.com"
+
+[default_host.upstream]
+url_base = "https://gist.githubusercontent.com"
+
+[[default_host]]
+location = "/https://gist.github.com"
+
+[default_host.upstream]
+url_base = "https://gist.github.com"
+
+[[default_host]]
+location = "/https://github.com"
+
+[default_host.upstream]
+url_base = "https://github.com"
+
+[[default_host]]
+location = "/https://objects.githubusercontent.com"
+
+[default_host.upstream]
+url_base = "https://objects.githubusercontent.com"
+
+[[default_host]]
+location = "/https://raw.githubusercontent.com"
+
+[default_host.upstream]
+url_base = "https://raw.githubusercontent.com"
 ```
 
 #### 例子2： 反向代理https://cdnjs.cloudflare.com
 
 启动参数中增加 `--append-upstream-url=https://cdnjs.cloudflare.com`，相当于以下配置：
 
-```yaml
-default_host:
-  - location: /https://cdnjs.cloudflare.com
-    upstream:
-      url_base: https://cdnjs.cloudflare.com
+```toml
+[[default_host]]
+location = "/https://cdnjs.cloudflare.com"
+
+[default_host.upstream]
+url_base = "https://cdnjs.cloudflare.com"
 ```
 
 #### 例子3: 改写Github Models的url为openai api的url格式
 
-```yaml
-default_host:
-  - location: /v1/chat/completions
-    upstream:
-      url_base: https://models.inference.ai.azure.com/chat/completions
+```toml
+[[default_host]]
+location = "/v1/chat/completions"
+
+[default_host.upstream]
+url_base = "https://models.inference.ai.azure.com/chat/completions"
 ```
 
 ## 可观测

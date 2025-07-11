@@ -193,7 +193,7 @@ fn parse_reverse_proxy_config(
     reverse_proxy_config_file: &Option<String>, append_upstream_url: &mut Vec<String>, enable_github_proxy: bool,
 ) -> Result<ReverseProxyConfig, <Config as TryFrom<Param>>::Error> {
     let mut locations: HashMap<String, Vec<LocationConfig>> = match reverse_proxy_config_file {
-        Some(path) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
+        Some(path) => toml::from_str(&std::fs::read_to_string(path)?)?,
         None => HashMap::new(),
     };
     if enable_github_proxy {
@@ -293,6 +293,7 @@ fn parse_reverse_proxy_config(
     for ele in redirect_bachpaths.iter() {
         log::trace!("find redirect back path for: {}**", ele.redirect_url);
     }
+    // println!("{}",toml::to_string_pretty(&locations).unwrap());
     Ok(ReverseProxyConfig {
         locations,
         redirect_bachpaths,
