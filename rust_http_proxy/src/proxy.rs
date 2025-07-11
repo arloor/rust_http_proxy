@@ -12,7 +12,9 @@ use crate::{
     axum_handler::{self, AppProxyError, AXUM_PATHS},
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
-    raw_serve, reverse::{self, DEFAULT_HOST}, METRICS,
+    raw_serve,
+    reverse::{self, DEFAULT_HOST},
+    METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -85,23 +87,19 @@ impl ProxyHandler {
             )?;
 
             // 尝试找到匹配的反向代理配置
-            let host_locations = crate::CONFIG
+            let location_config_of_host = crate::CONFIG
                 .reverse_proxy_config
                 .locations
                 .get(&origin_scheme_host_port.host)
                 .or(crate::CONFIG.reverse_proxy_config.locations.get(DEFAULT_HOST));
 
-            if let Some(locations) = host_locations {
+            if let Some(locations) = location_config_of_host {
                 if let Some(location_config) = reverse::pick_location(req.uri().path(), locations) {
-                    return reverse::handle(
-                        req,
-                        location_config,
-                        client_socket_addr,
-                        &origin_scheme_host_port,
-                        &self.reverse_proxy_client,
-                    )
-                    .await
-                    .map(InterceptResultAdapter::Return);
+                    // 用请求的path和location做前缀匹配
+                    return location_config
+                        .handle(req, client_socket_addr, &origin_scheme_host_port, &self.reverse_proxy_client)
+                        .await
+                        .map(InterceptResultAdapter::Return);
                 }
             }
 
