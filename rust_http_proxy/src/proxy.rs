@@ -10,10 +10,9 @@ use std::{
 use crate::{
     address::host_addr,
     axum_handler::{self, AppProxyError, AXUM_PATHS},
-    config,
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
-    raw_serve, reverse, METRICS,
+    raw_serve, reverse::{self, DEFAULT_HOST}, METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -90,7 +89,7 @@ impl ProxyHandler {
                 .reverse_proxy_config
                 .locations
                 .get(&origin_scheme_host_port.host)
-                .or(crate::CONFIG.reverse_proxy_config.locations.get(config::DEFAULT_HOST));
+                .or(crate::CONFIG.reverse_proxy_config.locations.get(DEFAULT_HOST));
 
             if let Some(locations) = host_locations {
                 if let Some(location_config) = reverse::pick_location(req.uri().path(), locations) {
