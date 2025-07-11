@@ -206,7 +206,7 @@ location = "/api/"
 
 [api.example.com.upstream]
 url_base = "http://internal-service:8080"
-host_override = "api.internal.com"  # 覆盖Host头为api.internal.com
+host_override = "api.internal.com:8080"  # 覆盖Host头为api.internal.com
 
 [[cdn.example.com]]
 location = "/assets/"
