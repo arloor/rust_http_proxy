@@ -383,24 +383,30 @@ pub(crate) fn parse_reverse_proxy_config(
     let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
     for (host, location_configs) in &locations {
         for location_config in location_configs {
-            let url_base = match location_config.upstream.authority_override.as_ref() {
-                None => location_config.upstream.url_base.clone(),
-                Some(authority_override) => { // 用authority_override替换url_base中的host。也许不需要，后面再看。
-                    let url_base = location_config.upstream.url_base.parse::<Uri>()?;
-                    let mut parts = http::uri::Parts::from(url_base);
-                    parts.authority = Some(
-                        authority_override
-                            .parse()
-                            .map_err(|e| format!("parse host override error: {e}"))?,
-                    );
-                    Uri::from_parts(parts)
-                        .map_err(|e| format!("build uri error: {e}"))?
-                        .to_string()
-                }
-            };
+            // let url_base = match location_config.upstream.authority_override.as_ref() {
+            //     None => location_config.upstream.url_base.clone(),
+            //     Some(authority_override) => { // 用authority_override替换url_base中的host。也许不需要，后面再看。
+            //         let url_base = location_config.upstream.url_base.parse::<Uri>()?;
+            //         let mut parts = http::uri::Parts::from(url_base);
+            //         parts.authority = Some(
+            //             authority_override
+            //                 .parse()
+            //                 .map_err(|e| format!("parse host override error: {e}"))?,
+            //         );
+            //         Uri::from_parts(parts)
+            //             .map_err(|e| format!("build uri error: {e}"))?
+            //             .to_string()
+            //     }
+            // };
+
+            // redirect_bachpaths.push(RedirectBackpaths {
+            //     redirect_url: url_base,
+            //     host: host.clone(),
+            //     location: location_config.location.clone(),
+            // });
 
             redirect_bachpaths.push(RedirectBackpaths {
-                redirect_url: url_base,
+                redirect_url: location_config.upstream.url_base.clone(),
                 host: host.clone(),
                 location: location_config.location.clone(),
             });
