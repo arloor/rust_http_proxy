@@ -142,7 +142,7 @@ impl LocationConfig {
             }
         }
 
-        // 如果配置了host_override，则设置Host头
+        // 如果配置了authority_override，则设置Host头
         if let Some(ref authority_override) = self.upstream.authority_override {
             if let Some(old_host) = header_map.insert(
                 header::HOST,
