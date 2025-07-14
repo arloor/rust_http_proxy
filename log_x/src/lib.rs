@@ -5,7 +5,7 @@ use flexi_logger::{
 };
 use log::{info, Record};
 
-pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLoggerError> {
+pub fn init_log(log_dir: &str, log_file: &str, level: &str) -> Result<LoggerHandle, FlexiLoggerError> {
     // 转换成绝对路径
     let log_dir_path = path::absolute(log_dir)?;
     if !log_dir_path.exists() {
@@ -15,11 +15,7 @@ pub fn init_log(log_dir: &str, log_file: &str) -> Result<LoggerHandle, FlexiLogg
         .as_path()
         .to_str()
         .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "error parse absolute path of log dir"))?;
-    let logger = if cfg!(debug_assertions) {
-        Logger::try_with_env_or_str("info,rustls=error")?
-    } else {
-        Logger::try_with_env_or_str("info,rustls=error")?
-    };
+    let logger = Logger::try_with_env_or_str(format!("{level},rustls=error"))?;
     let log = logger
         .log_to_file(FileSpec::default().directory(log_dir).basename(log_file).suffix(""))
         .duplicate_to_stdout(Duplicate::All)

@@ -167,7 +167,7 @@ impl TryFrom<Param> for Config {
 
 pub(crate) fn load_config() -> Result<Config, DynError> {
     let param = Param::parse();
-    if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file) {
+    if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file, "info") {
         return Err(format!("init log error:{log_init_error}").into());
     }
     info!("build time: {}", crate::BUILD_TIME);
