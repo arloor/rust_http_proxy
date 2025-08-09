@@ -23,8 +23,6 @@ use tower_http::trace::TraceLayer;
 #[cfg(target_os = "linux")]
 use crate::linux_axum_handler;
 
-pub(crate) const BODY404: &str = include_str!("../html/404.html");
-
 pub(crate) struct AppState {
     pub basic_auth: HashMap<String, String>,
 }
@@ -43,7 +41,18 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
             let mut header_map = HeaderMap::new();
             #[allow(clippy::expect_used)]
             header_map.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
-            (StatusCode::NOT_FOUND, header_map, BODY404)
+            (
+                StatusCode::NOT_FOUND,
+                header_map,
+                Html(
+                    ErrorTemplate {
+                        title: "404 Not Found".to_string(),
+                        msg: "The requested URL was not found on this server.".to_string(),
+                    }
+                    .render()
+                    .unwrap_or("Failed to render error template".to_string()),
+                ),
+            )
         }))
         .layer((
             TraceLayer::new_for_http() // Create our own span for the request and include the matched path. The matched
@@ -146,6 +155,7 @@ async fn serve_metrics(
 #[template(path = "error.html")]
 #[allow(dead_code)]
 struct ErrorTemplate {
+    title: String,
     msg: String,
 }
 
@@ -187,6 +197,7 @@ impl IntoResponse for AppProxyError {
             StatusCode::INTERNAL_SERVER_ERROR,
             Html(
                 ErrorTemplate {
+                    title: "502 Bad Gateway".to_string(),
                     msg: format!("Internal server error: {err}"),
                 }
                 .render()
