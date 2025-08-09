@@ -15,19 +15,27 @@
             padding: 5em 0;
         }
         h1 {
-            font-size: 24px;
-            color: #2F3F56;
+            font-size: 36px;
+            color: #E65100;
+            font-weight: bold;
             margin: 0 0 0.5em 0;
-            padding: 0;
-            border-bottom: 1px solid #CCCCCC;
+            padding: 0.5em 0;
+            border-bottom: 3px solid #E65100;
+            text-align: center;
         }
         p {
             margin: 1em 0;
             line-height: 1.5em;
         }
         .error-details {
-            color: #444444;
-            font-size: 14px;
+            color: #5D6D7E;
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+            background-color: #F8F9FA;
+            padding: 1.5em;
+            border-left: 5px solid #6C757D;
+            margin: 2em 0;
         }
         hr {
             border: none;
@@ -36,7 +44,8 @@
         }
         .footer {
             color: #999999;
-            font-size: 12px;
+            font-size: 16px;
+            text-align: center;
         }
     </style>
 </head>
@@ -46,7 +55,6 @@
         <div class="error-details">
             <p>{{ msg }}</p>
         </div>
-        <hr>
         <div class="footer">
             <p>Rust HTTP Proxy Server</p>
         </div>
