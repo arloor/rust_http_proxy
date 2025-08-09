@@ -6,10 +6,10 @@ location = "/v1/chat/completions"
 upstream = { url_base = "https://models.inference.ai.azure.com/chat/completions" }
 
 [[default_host]]
-location = "/"
+location = "/stock"
 upstream = { url_base = "https://www.arloor.com", authority_override = "stock.arloor.com" }
 
 # localhost 配置  
-[[localhost]]
+[["127.0.0.1"]]
 location = "/"
 upstream = { url_base = "https://www.baidu.com", version = "H1" }
