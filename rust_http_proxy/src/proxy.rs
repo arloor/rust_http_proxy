@@ -501,6 +501,7 @@ pub struct ReverseProxyReqLabel {
     pub upstream: String,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct NetDirectionLabel {
     pub direction: &'static str,
