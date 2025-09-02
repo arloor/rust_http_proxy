@@ -14,7 +14,6 @@ use std::sync::LazyLock;
 use std::{
     io::{self, ErrorKind},
     net::SocketAddr,
-    str::FromStr,
 };
 
 use crate::config::{Config, Param};
@@ -242,29 +241,6 @@ fn lookup_replacement(
         }
     }
     None
-}
-
-fn _ensure_absolute(location_header: &mut HeaderValue, upstream: &Upstream) -> io::Result<String> {
-    let location = location_header
-        .to_str()
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-    let redirect_url = location
-        .parse::<Uri>()
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-    if redirect_url.scheme_str().is_none() {
-        let url_base = Uri::from_str(&upstream.url_base).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-        let base = if url_base.path().ends_with("/") && location.starts_with("/") {
-            let mut base = url_base.to_string();
-            base.truncate(url_base.to_string().len() - 1);
-            base
-        } else {
-            url_base.to_string()
-        };
-        let absolute_url = format!("{base}{location}");
-        Ok(absolute_url)
-    } else {
-        Ok(location.to_string())
-    }
 }
 
 static ALL_REVERSE_PROXY_REQ: LazyLock<prom_label::LabelImpl<ReverseProxyReqLabel>> = LazyLock::new(|| {
