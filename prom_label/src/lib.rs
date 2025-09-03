@@ -33,7 +33,7 @@ impl<R> EncodeLabelSet for LabelImpl<R>
 where
     R: Clone + Debug + Hash + PartialEq + Eq + EncodeLabelSet + 'static,
 {
-    fn encode(&self, encoder: prometheus_client::encoding::LabelSetEncoder) -> Result<(), std::fmt::Error> {
+    fn encode(&self, encoder: &mut prometheus_client::encoding::LabelSetEncoder) -> Result<(), std::fmt::Error> {
         self.deref().encode(encoder)
     }
 }
