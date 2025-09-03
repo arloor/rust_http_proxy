@@ -1,3 +1,7 @@
+cargo build -r --features aws_lc_rs,bpf --no-default-features
+podman build . -f Dockerfile.dyn -t quay.io/arloor/rust_http_proxy:bpf --network host --env TARGET_PATH=
+podman push quay.io/arloor/rust_http_proxy:bpf
+
 #! /bin/bash
 hosts="hk.arloor.dev us.arloor.dev hi.arloor.dev hi3.arloor.dev ttl.arloor.com tt.arloor.com xq.arloor.com ti.arloor.com"
 for i in ${hosts}; do
