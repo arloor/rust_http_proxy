@@ -4,7 +4,7 @@
 # 获取UBI版本参数，默认值为10
 ubi_version=${1:-10}
 
-base_image=registry.access.redhat.com/ubi${ubi_version}/ubi
+base_image=registry.access.redhat.com/ubi${ubi_version}/ubi-micro
 # base_image=docker.io/rockylinux/rockylinux:9-ubi-micro
 out_tag=${ubi_version}
 out_image="docker.io/arloor/ubi-micro:${out_tag}"
