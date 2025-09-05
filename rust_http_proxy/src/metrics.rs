@@ -3,6 +3,7 @@ use log::info;
 use prom_label::{Label, LabelImpl};
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
+use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -24,6 +25,35 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     registry.register("cgroup_bytes", "num this cgroup's net traffic in bytes", cgroup_bytes.clone());
 
+    #[cfg(target_os = "linux")]
+    let cgroup_cpu_total_ns = Counter::default();
+    #[cfg(target_os = "linux")]
+    registry.register("cgroup_cpu_total_ns", "Total CPU time used by cgroup in nanoseconds", cgroup_cpu_total_ns.clone());
+    #[cfg(target_os = "linux")]
+    let cgroup_cpu_user_ns = Counter::default();
+    #[cfg(target_os = "linux")]
+    registry.register("cgroup_cpu_user_ns", "User CPU time used by cgroup in nanoseconds", cgroup_cpu_user_ns.clone());
+    #[cfg(target_os = "linux")]
+    let cgroup_cpu_system_ns = Counter::default();
+    #[cfg(target_os = "linux")]
+    registry.register("cgroup_cpu_system_ns", "System CPU time used by cgroup in nanoseconds", cgroup_cpu_system_ns.clone());
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_current_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register("cgroup_memory_current_bytes", "Current memory usage by cgroup in bytes", cgroup_memory_current_bytes.clone());
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_peak_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register("cgroup_memory_peak_bytes", "Peak memory usage by cgroup in bytes", cgroup_memory_peak_bytes.clone());
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_rss_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register("cgroup_memory_rss_bytes", "RSS memory usage by cgroup in bytes", cgroup_memory_rss_bytes.clone());
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_cache_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register("cgroup_memory_cache_bytes", "Cache memory usage by cgroup in bytes", cgroup_memory_cache_bytes.clone());
+
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
     // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
 
@@ -36,6 +66,20 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         net_bytes,
         #[cfg(all(target_os = "linux", feature = "bpf"))]
         cgroup_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_cpu_total_ns,
+        #[cfg(target_os = "linux")]
+        cgroup_cpu_user_ns,
+        #[cfg(target_os = "linux")]
+        cgroup_cpu_system_ns,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_current_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_peak_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_rss_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_cache_bytes,
     }
 });
 
@@ -48,6 +92,41 @@ pub(crate) struct Metrics {
     pub(crate) net_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) cgroup_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
+    #[cfg(target_os = "linux")]
+    pub(crate) cgroup_cpu_total_ns: Counter,
+    #[cfg(target_os = "linux")]
+    pub(crate) cgroup_cpu_user_ns: Counter,
+    #[cfg(target_os = "linux")]
+    pub(crate) cgroup_cpu_system_ns: Counter,
+    #[cfg(target_os = "linux")]
+    pub(crate) cgroup_memory_current_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub(crate) cgroup_memory_peak_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub(crate) cgroup_memory_rss_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub(crate) cgroup_memory_cache_bytes: Gauge,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn update_cgroup_metrics() {
+    use crate::cgroup_stats::collect_cgroup_stats;
+    use log::warn;
+    
+    match collect_cgroup_stats() {
+        Ok(stats) => {
+            METRICS.cgroup_cpu_total_ns.inner().store(stats.cpu_total_ns, std::sync::atomic::Ordering::Relaxed);
+            METRICS.cgroup_cpu_user_ns.inner().store(stats.cpu_user_ns, std::sync::atomic::Ordering::Relaxed);
+            METRICS.cgroup_cpu_system_ns.inner().store(stats.cpu_system_ns, std::sync::atomic::Ordering::Relaxed);
+            METRICS.cgroup_memory_current_bytes.set(stats.memory_current_bytes as i64);
+            METRICS.cgroup_memory_peak_bytes.set(stats.memory_peak_bytes.unwrap_or(0) as i64);
+            METRICS.cgroup_memory_rss_bytes.set(stats.memory_rss_bytes as i64);
+            METRICS.cgroup_memory_cache_bytes.set(stats.memory_cache_bytes as i64);
+        }
+        Err(e) => {
+            warn!("Failed to collect cgroup stats: {}", e);
+        }
+    }
 }
 
 // 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（数据突降）的数据。

@@ -3,6 +3,8 @@
 #![deny(clippy::expect_used)]
 mod address;
 mod axum_handler;
+#[cfg(target_os = "linux")]
+mod cgroup_stats;
 mod config;
 #[cfg(all(target_os = "linux", feature = "bpf"))]
 mod ebpf;

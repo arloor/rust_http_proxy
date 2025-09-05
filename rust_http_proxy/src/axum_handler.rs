@@ -146,6 +146,8 @@ async fn serve_metrics(
 
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::snapshot_metrics();
+    #[cfg(target_os = "linux")]
+    crate::metrics::update_cgroup_metrics();
     let mut buffer = String::new();
     encode(&mut buffer, &METRICS.registry).map_err(AppError::new)?;
     Ok((http::StatusCode::OK, header_map, buffer))
