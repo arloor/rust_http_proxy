@@ -3,6 +3,7 @@ use log::info;
 use prom_label::{Label, LabelImpl};
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
+#[cfg(target_os = "linux")]
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 use std::sync::LazyLock;
