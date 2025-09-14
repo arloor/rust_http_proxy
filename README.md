@@ -174,6 +174,11 @@ location = "/https://raw.githubusercontent.com"
 
 [default_host.upstream]
 url_base = "https://raw.githubusercontent.com"
+
+[[default_host]]
+location = "/https://release-assets.githubusercontent.com"
+[default_host.upstream]
+url_base = "https://release-assets.githubusercontent.com"
 ```
 
 #### 例子2： 反向代理https://cdnjs.cloudflare.com

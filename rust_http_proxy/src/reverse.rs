@@ -29,12 +29,13 @@ pub(crate) struct RedirectBackpaths {
 }
 
 pub(crate) const DEFAULT_HOST: &str = "default_host";
-const GITHUB_URL_BASE: [&str; 5] = [
+const GITHUB_URL_BASE: [&str; 6] = [
     "https://github.com",
     "https://gist.githubusercontent.com",
     "https://gist.github.com",
     "https://objects.githubusercontent.com",
     "https://raw.githubusercontent.com",
+    "https://release-assets.githubusercontent.com",
 ];
 
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
