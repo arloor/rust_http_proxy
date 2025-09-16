@@ -188,7 +188,7 @@ async fn serve_path(
     };
     let mut builder = Response::builder()
         .header(http::header::CONTENT_TYPE, content_type.as_str())
-        .header(http::header::CACHE_CONTROL, "max-age=600")// 这应该作为一个配置
+        // .header(http::header::CACHE_CONTROL, "max-age=600")// 这应该作为一个配置
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::ETAG, file_etag)
         .header(http::header::ACCEPT_RANGES, "bytes")
