@@ -44,6 +44,19 @@ pub(crate) enum InterceptResultAdapter {
     Continue(Request<Incoming>),
 }
 
+/// 服务类型枚举
+enum ServiceType {
+    /// 反向代理
+    ReverseProxy {
+        original_scheme_host_port: SchemeHostPort,
+        location_config: &'static crate::reverse::LocationConfig,
+    },
+    /// 静态文件托管
+    StaticFileServing,
+    /// 正向代理
+    ForwardProxy,
+}
+
 impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
     fn from(val: InterceptResultAdapter) -> Self {
         match val {
@@ -73,13 +86,29 @@ impl ProxyHandler {
     pub async fn handle(
         &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
     ) -> Result<InterceptResultAdapter, io::Error> {
-        let config_basic_auth = &crate::CONFIG.basic_auth;
-        let never_ask_for_auth = crate::CONFIG.never_ask_for_auth;
+        // 确定服务类型
+        let service_type = self.determine_service_type(&req)?;
 
-        // 对于非CONNECT请求，检查是否需要反向代理或服务
+        // 根据服务类型分发处理
+        match service_type {
+            ServiceType::ReverseProxy {
+                original_scheme_host_port,
+                location_config,
+            } => {
+                self.handle_reverse_proxy(req, client_socket_addr, original_scheme_host_port, location_config)
+                    .await
+            }
+            ServiceType::StaticFileServing => self.handle_static_file_serving(req, client_socket_addr).await,
+            ServiceType::ForwardProxy => self.handle_forward_proxy(req, client_socket_addr).await,
+        }
+    }
+
+    /// 确定服务类型
+    fn determine_service_type(&self, req: &Request<Incoming>) -> Result<ServiceType, io::Error> {
+        // 对于非CONNECT请求，检查是否需要反向代理或静态文件托管
         if Method::CONNECT != req.method() {
             let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
-                &req,
+                req,
                 match crate::CONFIG.over_tls {
                     true => "https",
                     false => "http",
@@ -97,55 +126,77 @@ impl ProxyHandler {
                 if let Some(location_config) = locations
                     .iter()
                     .find(|&ele| req.uri().path().starts_with(&ele.location))
-                // 用请求的path和location做前缀匹配
                 {
-                    return location_config
-                        .handle(req, client_socket_addr, &original_scheme_host_port, &self.reverse_proxy_client)
-                        .await
-                        .map(InterceptResultAdapter::Return);
+                    return Ok(ServiceType::ReverseProxy {
+                        original_scheme_host_port,
+                        location_config,
+                    });
                 }
             }
 
-            // 对于HTTP/2请求或URI中不包含host的请求，处理为普通服务请求
+            // 对于HTTP/2请求或URI中不包含host的请求，处理为静态文件托管
             if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
-                // 检查是否允许提供静态文件服务
-                if crate::CONFIG.serving_control.prohibit_serving {
-                    // 全局禁止静态文件托管
-                    info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
-                    return Ok(InterceptResultAdapter::Drop);
-                }
-
-                // 检查是否有网段限制及客户端IP是否在允许的网段内
-                let client_ip = client_socket_addr.ip().to_canonical();
-                let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
-
-                if !allowed_networks.is_empty() {
-                    // 有网段限制，检查客户端IP是否在允许的网段内
-                    let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
-
-                    if !ip_allowed {
-                        info!("Dropping request from {client_ip} as it's not in allowed networks");
-                        return Ok(InterceptResultAdapter::Drop);
-                    }
-                }
-
-                // IP检查通过，提供静态文件服务
-                match self.serve_request(&req, client_socket_addr).await {
-                    Ok(res) => {
-                        if res.status() == http::StatusCode::NOT_FOUND {
-                            return Ok(InterceptResultAdapter::Continue(req));
-                        } else {
-                            return Ok(InterceptResultAdapter::Return(res));
-                        }
-                    }
-                    Err(err) => {
-                        return Err(err);
-                    }
-                }
+                return Ok(ServiceType::StaticFileServing);
             }
         }
 
-        // 2. proxy stage
+        // 默认为正向代理
+        Ok(ServiceType::ForwardProxy)
+    }
+
+    /// 处理反向代理
+    async fn handle_reverse_proxy(
+        &self, req: Request<Incoming>, client_socket_addr: SocketAddr, original_scheme_host_port: SchemeHostPort,
+        location_config: &'static crate::reverse::LocationConfig,
+    ) -> Result<InterceptResultAdapter, io::Error> {
+        location_config
+            .handle(req, client_socket_addr, &original_scheme_host_port, &self.reverse_proxy_client)
+            .await
+            .map(InterceptResultAdapter::Return)
+    }
+
+    /// 处理静态文件托管
+    async fn handle_static_file_serving(
+        &self, req: Request<Incoming>, client_socket_addr: SocketAddr,
+    ) -> Result<InterceptResultAdapter, io::Error> {
+        // 检查是否允许提供静态文件服务
+        if crate::CONFIG.serving_control.prohibit_serving {
+            info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
+            return Ok(InterceptResultAdapter::Drop);
+        }
+
+        // 检查是否有网段限制及客户端IP是否在允许的网段内
+        let client_ip = client_socket_addr.ip().to_canonical();
+        let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
+
+        if !allowed_networks.is_empty() {
+            let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
+            if !ip_allowed {
+                info!("Dropping request from {client_ip} as it's not in allowed networks");
+                return Ok(InterceptResultAdapter::Drop);
+            }
+        }
+
+        // IP检查通过，提供静态文件服务
+        match self.serve_request(&req, client_socket_addr).await {
+            Ok(res) => {
+                if res.status() == http::StatusCode::NOT_FOUND {
+                    Ok(InterceptResultAdapter::Continue(req))
+                } else {
+                    Ok(InterceptResultAdapter::Return(res))
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// 处理正向代理
+    async fn handle_forward_proxy(
+        &self, req: Request<Incoming>, client_socket_addr: SocketAddr,
+    ) -> Result<InterceptResultAdapter, io::Error> {
+        let config_basic_auth = &crate::CONFIG.basic_auth;
+        let never_ask_for_auth = crate::CONFIG.never_ask_for_auth;
+
         match axum_handler::check_auth(req.headers(), http::header::PROXY_AUTHORIZATION, config_basic_auth) {
             Ok(username_option) => {
                 let username = username_option.unwrap_or("unknown".to_owned());
