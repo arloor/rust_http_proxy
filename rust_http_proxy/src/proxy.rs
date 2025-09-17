@@ -13,7 +13,7 @@ use crate::{
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
     raw_serve,
-    reverse::DEFAULT_HOST,
+    reverse::{LocationConfig, DEFAULT_HOST},
     METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
@@ -49,7 +49,7 @@ enum ServiceType {
     /// 反向代理
     ReverseProxy {
         original_scheme_host_port: SchemeHostPort,
-        location_config: &'static crate::reverse::LocationConfig,
+        location_config: &'static LocationConfig,
     },
     /// 静态文件托管
     StaticFileServing,
@@ -147,7 +147,7 @@ impl ProxyHandler {
     /// 处理反向代理
     async fn handle_reverse_proxy(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, original_scheme_host_port: SchemeHostPort,
-        location_config: &'static crate::reverse::LocationConfig,
+        location_config: &'static LocationConfig,
     ) -> Result<InterceptResultAdapter, io::Error> {
         location_config
             .handle(req, client_socket_addr, &original_scheme_host_port, &self.reverse_proxy_client)
