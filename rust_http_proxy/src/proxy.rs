@@ -57,6 +57,91 @@ enum ServiceType {
     ForwardProxy,
 }
 
+impl ServiceType {
+    /// 处理请求
+    async fn handle(
+        &self, req: Request<Incoming>, client_socket_addr: SocketAddr, proxy_handler: &ProxyHandler,
+    ) -> Result<InterceptResultAdapter, io::Error> {
+        match self {
+            ServiceType::ReverseProxy {
+                original_scheme_host_port,
+                location_config,
+            } => location_config
+                .handle(req, client_socket_addr, original_scheme_host_port, &proxy_handler.reverse_proxy_client)
+                .await
+                .map(InterceptResultAdapter::Return),
+            ServiceType::StaticFileServing => {
+                // 检查是否允许提供静态文件服务
+                if crate::CONFIG.serving_control.prohibit_serving {
+                    info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
+                    return Ok(InterceptResultAdapter::Drop);
+                }
+
+                // 检查是否有网段限制及客户端IP是否在允许的网段内
+                let client_ip = client_socket_addr.ip().to_canonical();
+                let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
+
+                if !allowed_networks.is_empty() {
+                    let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
+                    if !ip_allowed {
+                        info!("Dropping request from {client_ip} as it's not in allowed networks");
+                        return Ok(InterceptResultAdapter::Drop);
+                    }
+                }
+
+                // IP检查通过，提供静态文件服务
+                match proxy_handler.serve_request(&req, client_socket_addr).await {
+                    Ok(res) => {
+                        if res.status() == http::StatusCode::NOT_FOUND {
+                            Ok(InterceptResultAdapter::Continue(req))
+                        } else {
+                            Ok(InterceptResultAdapter::Return(res))
+                        }
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+            ServiceType::ForwardProxy => {
+                let config_basic_auth = &crate::CONFIG.basic_auth;
+                let never_ask_for_auth = crate::CONFIG.never_ask_for_auth;
+
+                match axum_handler::check_auth(req.headers(), http::header::PROXY_AUTHORIZATION, config_basic_auth) {
+                    Ok(username_option) => {
+                        let username = username_option.unwrap_or("unknown".to_owned());
+                        info!(
+                            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
+                            "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
+                            client_socket_addr.port(),
+                            username,
+                            req.method().as_str(),
+                            req.uri(),
+                            req.version(),
+                        );
+                        if Method::CONNECT == req.method() {
+                            proxy_handler
+                                .tunnel_proxy(req, client_socket_addr, username)
+                                .map(InterceptResultAdapter::Return)
+                        } else {
+                            proxy_handler
+                                .simple_proxy(req, client_socket_addr, username)
+                                .await
+                                .map(InterceptResultAdapter::Return)
+                        }
+                    }
+                    Err(e) => {
+                        warn!("auth check from {} error: {}", { client_socket_addr }, e);
+                        if never_ask_for_auth {
+                            Err(io::Error::new(ErrorKind::PermissionDenied, "wrong basic auth, closing socket..."))
+                        } else {
+                            Ok(InterceptResultAdapter::Return(build_authenticate_resp(true)))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
     fn from(val: InterceptResultAdapter) -> Self {
         match val {
@@ -90,17 +175,7 @@ impl ProxyHandler {
         let service_type = self.determine_service_type(&req)?;
 
         // 根据服务类型分发处理
-        match service_type {
-            ServiceType::ReverseProxy {
-                original_scheme_host_port,
-                location_config,
-            } => {
-                self.handle_reverse_proxy(req, client_socket_addr, original_scheme_host_port, location_config)
-                    .await
-            }
-            ServiceType::StaticFileServing => self.handle_static_file_serving(req, client_socket_addr).await,
-            ServiceType::ForwardProxy => self.handle_forward_proxy(req, client_socket_addr).await,
-        }
+        service_type.handle(req, client_socket_addr, self).await
     }
 
     /// 确定服务类型
@@ -142,91 +217,6 @@ impl ProxyHandler {
 
         // 默认为正向代理
         Ok(ServiceType::ForwardProxy)
-    }
-
-    /// 处理反向代理
-    async fn handle_reverse_proxy(
-        &self, req: Request<Incoming>, client_socket_addr: SocketAddr, original_scheme_host_port: SchemeHostPort,
-        location_config: &'static LocationConfig,
-    ) -> Result<InterceptResultAdapter, io::Error> {
-        location_config
-            .handle(req, client_socket_addr, &original_scheme_host_port, &self.reverse_proxy_client)
-            .await
-            .map(InterceptResultAdapter::Return)
-    }
-
-    /// 处理静态文件托管
-    async fn handle_static_file_serving(
-        &self, req: Request<Incoming>, client_socket_addr: SocketAddr,
-    ) -> Result<InterceptResultAdapter, io::Error> {
-        // 检查是否允许提供静态文件服务
-        if crate::CONFIG.serving_control.prohibit_serving {
-            info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
-            return Ok(InterceptResultAdapter::Drop);
-        }
-
-        // 检查是否有网段限制及客户端IP是否在允许的网段内
-        let client_ip = client_socket_addr.ip().to_canonical();
-        let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
-
-        if !allowed_networks.is_empty() {
-            let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
-            if !ip_allowed {
-                info!("Dropping request from {client_ip} as it's not in allowed networks");
-                return Ok(InterceptResultAdapter::Drop);
-            }
-        }
-
-        // IP检查通过，提供静态文件服务
-        match self.serve_request(&req, client_socket_addr).await {
-            Ok(res) => {
-                if res.status() == http::StatusCode::NOT_FOUND {
-                    Ok(InterceptResultAdapter::Continue(req))
-                } else {
-                    Ok(InterceptResultAdapter::Return(res))
-                }
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    /// 处理正向代理
-    async fn handle_forward_proxy(
-        &self, req: Request<Incoming>, client_socket_addr: SocketAddr,
-    ) -> Result<InterceptResultAdapter, io::Error> {
-        let config_basic_auth = &crate::CONFIG.basic_auth;
-        let never_ask_for_auth = crate::CONFIG.never_ask_for_auth;
-
-        match axum_handler::check_auth(req.headers(), http::header::PROXY_AUTHORIZATION, config_basic_auth) {
-            Ok(username_option) => {
-                let username = username_option.unwrap_or("unknown".to_owned());
-                info!(
-                    "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
-                    "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
-                    client_socket_addr.port(),
-                    username,
-                    req.method().as_str(),
-                    req.uri(),
-                    req.version(),
-                );
-                if Method::CONNECT == req.method() {
-                    self.tunnel_proxy(req, client_socket_addr, username)
-                        .map(InterceptResultAdapter::Return)
-                } else {
-                    self.simple_proxy(req, client_socket_addr, username)
-                        .await
-                        .map(InterceptResultAdapter::Return)
-                }
-            }
-            Err(e) => {
-                warn!("auth check from {} error: {}", { client_socket_addr }, e);
-                if never_ask_for_auth {
-                    Err(io::Error::new(ErrorKind::PermissionDenied, "wrong basic auth, closing socket..."))
-                } else {
-                    Ok(InterceptResultAdapter::Return(build_authenticate_resp(true)))
-                }
-            }
-        }
     }
 
     /// 代理普通请求
