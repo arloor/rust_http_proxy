@@ -4,14 +4,14 @@
 
 ## 功能特性
 
-1. 使用tls来对正向代理流量进行加密（`--over-tls`）。
-2. 类Nginx的静态资源托管。支持gzip压缩。支持Accept-Ranges以支持断点续传（备注：暂不支持多range，例如 `Range: bytes=0-100,100-` ）
+1. 使用 tls 来对正向代理流量进行加密（`--over-tls`）。
+2. 类 Nginx 的静态资源托管。支持 gzip 压缩。支持 Accept-Ranges 以支持断点续传（备注：暂不支持多 range，例如 `Range: bytes=0-100,100-` ）
 3. 支持反向代理（ `--reverse-proxy-config-file` ）。
-4. 基于Prometheus的可观测，可以监控代理的流量、外链访问等。
+4. 基于 Prometheus 的可观测，可以监控代理的流量、外链访问等。
 5. 采集网卡上行流量，展示在 `/net` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
-5. 支持多端口，多用户。
-6. 每天定时加载tls证书，acme证书过期重新签发时不需要重启服务。
-7. 连接空闲（10分钟没有IO）自动关闭。
+6. 支持多端口，多用户。
+7. 每天定时加载 tls 证书，acme 证书过期重新签发时不需要重启服务。
+8. 连接空闲（10 分钟没有 IO）自动关闭。
 
 提及的参数详见[命令行参数](#命令行参数)
 
@@ -25,15 +25,15 @@ install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
 /usr/bin/rust_http_proxy -p 7788
 ```
 
-### Docker 安装 
+### Docker 安装
 
-> 通过Github Action自动更新release，永远是最新版，可放心使用
+> 通过 Github Action 自动更新 release，永远是最新版，可放心使用
 
 ```shell
 docker run --rm -it --net host --pid host docker.io/arloor/rust_http_proxy -p 7788
 ```
 
-### ebpf版本安装
+### ebpf 版本安装
 
 ```bash
 curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy_bpf_static -o /tmp/rust_http_proxy
@@ -74,7 +74,7 @@ Options:
   -w, --web-content-path <WEB_CONTENT_PATH>
           [default: /usr/share/nginx/html]
   -r, --referer-keywords-to-self <REFERER>
-          Http Referer请求头处理 
+          Http Referer请求头处理
           1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值
           2. 外链访问监控：如果Referer不包含配置的值，并且访问html资源时，Prometheus counter req_from_out++，用于外链访问监控
           可以多次指定，也可以不指定
@@ -102,17 +102,17 @@ Options:
           Print help
 ```
 
-### SSL配置
+### SSL 配置
 
-其中，tls证书(`--cert`)和pem格式的私钥(`--key`)可以通过openssl命令一键生成：
+其中，tls 证书(`--cert`)和 pem 格式的私钥(`--key`)可以通过 openssl 命令一键生成：
 
 ```bash
 openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_proxy/privkey.pem -out /usr/share/rust_http_proxy/cert.pem -days 3650 -subj "/C=cn/ST=hl/L=sd/O=op/OU=as/CN=example.com"
 ```
 
-如需签名证书，请购买tls证书或免费解决方案（acme.sh等）
+如需签名证书，请购买 tls 证书或免费解决方案（acme.sh 等）
 
-测试TLS Proxy可以使用curl （7.52.0以上版本）:
+测试 TLS Proxy 可以使用 curl （7.52.0 以上版本）:
 
 ```bash
 curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --proxy-insecure
@@ -127,20 +127,22 @@ location = "/" # 默认为 /
 [YOUR_DOMAIN.upstream]
 url_base = "https://www.baidu.com"
 version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
-authority_override = "api.example.com" # 可选，覆盖发送给上游服务器的Host头
+headers = [
+    ["Host", "${host}"],
+] # 可选，覆盖发送给上游服务器的请求头
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。
 
-#### upstream配置说明
+#### upstream 配置说明
 
-- `url_base`: 上游服务器的基础URL
-- `version`: HTTP版本，可选值为 `H1`、`H2`、`AUTO`，默认为 `AUTO`
-- `authority_override`: 可选参数，用于覆盖发送给上游服务器的Host头。如果不设置，则会自动从`url_base`中提取Host
+- `url_base`: 上游服务器的基础 URL
+- `version`: HTTP 版本，可选值为 `H1`、`H2`、`AUTO`，默认为 `AUTO`
+- `headers`: 可选参数，用于覆盖发送给上游服务器的请求头。 支持变量 `${host}`，分别表示原请求的Host。
 
-#### 例子1: Github Proxy
+#### 例子 1: Github Proxy
 
-在github原始url前加上`https://YOUR_DOMAIN`，以便在国内访问raw.githubusercontent.com、github.com和gist.githubusercontent.com
+在 github 原始 url 前加上`https://YOUR_DOMAIN`，以便在国内访问 raw.githubusercontent.com、github.com 和 gist.githubusercontent.com
 
 启动参数中增加 `--enable-github-proxy`，相当于以下配置：
 
@@ -181,7 +183,7 @@ location = "/https://release-assets.githubusercontent.com"
 url_base = "https://release-assets.githubusercontent.com"
 ```
 
-#### 例子2： 反向代理https://cdnjs.cloudflare.com
+#### 例子 2： 反向代理https://cdnjs.cloudflare.com
 
 启动参数中增加 `--append-upstream-url=https://cdnjs.cloudflare.com`，相当于以下配置：
 
@@ -193,7 +195,7 @@ location = "/https://cdnjs.cloudflare.com"
 url_base = "https://cdnjs.cloudflare.com"
 ```
 
-#### 例子3: 改写Github Models的url为openai api的url格式
+#### 例子 3: 改写 Github Models 的 url 为 openai api 的 url 格式
 
 ```toml
 [[default_host]]
@@ -203,7 +205,7 @@ location = "/v1/chat/completions"
 url_base = "https://models.inference.ai.azure.com/chat/completions"
 ```
 
-#### 例子4: Host头覆盖 - 当上游服务器需要特定的Host头时
+#### 例子 4: Host 头覆盖 - 当上游服务器需要特定的 Host 头时
 
 ```toml
 [["api.example.com"]]
@@ -211,21 +213,25 @@ location = "/api/"
 
 ["api.example.com".upstream]
 url_base = "http://internal-service:8080"
-authority_override = "api.internal.com:8080"  # 覆盖Host头为api.internal.com
+headers = [
+    ["Host", "api.internal.com:8080"],
+]  # 覆盖Host头为api.internal.com
 
 [["cdn.example.com"]]
 location = "/assets/"
 
 ["cdn.example.com".upstream]
 url_base = "https://storage.cloud.com"
-authority_override = "myapp.storage.com"  # 覆盖Host头为myapp.storage.com
+headers = [
+    ["Host", "myapp.storage.com"],
+]  # 覆盖Host头为myapp.storage.com
 ```
 
 ## 可观测
 
 ### Prometheus Exporter
 
-提供了Prometheus的Exporter。如果设置了`--users`参数，则需要在header中设置authorization，否则会返回`401 UNAUTHORIZED`。
+提供了 Prometheus 的 Exporter。如果设置了`--users`参数，则需要在 header 中设置 authorization，否则会返回`401 UNAUTHORIZED`。
 
 ```text
 # HELP req_from_out Number of HTTP requests received.
@@ -236,23 +242,23 @@ req_from_out_total{referer="all",path="all"} 4
 # EOF
 ```
 
-可以使用[此Grafana大盘Template](https://grafana.com/grafana/dashboards/20185-rust-http-proxy/)来创建Grafana大盘，效果如下
+可以使用[此 Grafana 大盘 Template](https://grafana.com/grafana/dashboards/20185-rust-http-proxy/)来创建 Grafana 大盘，效果如下
 
 ![alt text](grafana-template1.png)
 ![alt text](grafana-template2.png)
 
-### Linux运行时的网速监控
+### Linux 运行时的网速监控
 
-在linux运行时，会监控网卡网速，并展示在 `/net` 。
+在 linux 运行时，会监控网卡网速，并展示在 `/net` 。
 
 ![](speed.png)
 
 ## 客户端
 
-- Clash系列
-  - [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev) 
+- Clash 系列
+  - [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev)
   - [ClashMetaForAndroid](https://github.com/MetaCubeX/ClashMetaForAndroid)
-  - [mihomo(clash-meta)](https://github.com/MetaCubeX/mihomo/tree/Meta) 
+  - [mihomo(clash-meta)](https://github.com/MetaCubeX/mihomo/tree/Meta)
 - 自研玩具
   - Rust：[sslocal(fork shadowsocks-rust)](https://github.com/arloor/shadowsocks-rust)
   - Golang：[forward](https://github.com/arloor/forward)
@@ -262,7 +268,7 @@ req_from_out_total{referer="all",path="all"} 4
 
 ### bpf
 
-使用ebpf来统计网卡出流量，仅在 `x86_64-unknown-linux-gnu` 上测试过。激活方式:
+使用 ebpf 来统计网卡出流量，仅在 `x86_64-unknown-linux-gnu` 上测试过。激活方式:
 
 ```bash
 cargo build --features bpf
@@ -284,7 +290,7 @@ yum install -y libbpf zlib-devel elfutils-libelf-devel pkgconf-pkg-config clang 
 
 ### jemalloc
 
-拥有更高的并发分配能力和减少内存碎片，不过会buffer更多的内存，因此top中RES数值会有上升。激活方式：
+拥有更高的并发分配能力和减少内存碎片，不过会 buffer 更多的内存，因此 top 中 RES 数值会有上升。激活方式：
 
 ```bash
 cargo build --features jemalloc
@@ -292,16 +298,16 @@ cargo build --features jemalloc
 
 ### aws_lc_rs
 
-`aws_lc_rs` 和 `ring` 是 `rustls` 的两个加密后端。本项目默认使用 `ring` 作为加密后端，也可选择[aws_lc_rs](https://crates.io/crates/aws-lc-rs)作为加密后端。`aws_lc_rs` 相比ring主要有两点优势:
+`aws_lc_rs` 和 `ring` 是 `rustls` 的两个加密后端。本项目默认使用 `ring` 作为加密后端，也可选择[aws_lc_rs](https://crates.io/crates/aws-lc-rs)作为加密后端。`aws_lc_rs` 相比 ring 主要有两点优势:
 
-1. 在[rustls的benchmark测试](https://github.com/aochagavia/rustls-bench-results)中，`aws_lc_rs` 的性能要优于 `ring` 。
-2. 支持美国联邦政府针对加密提出的[fips要求](https://csrc.nist.gov/pubs/fips/140-2/upd2/final)。
+1. 在[rustls 的 benchmark 测试](https://github.com/aochagavia/rustls-bench-results)中，`aws_lc_rs` 的性能要优于 `ring` 。
+2. 支持美国联邦政府针对加密提出的[fips 要求](https://csrc.nist.gov/pubs/fips/140-2/upd2/final)。
 
 不过，使用 `aws_lc_rs` 会增加一些编译难度，需要额外做以下操作：
 
-| 依赖的包 | 是否必须 |安装方式 |
-| --- | --- | --- |
-| `cmake` | 必须 | `apt-get install cmake` |
+| 依赖的包 | 是否必须 | 安装方式                |
+| -------- | -------- | ----------------------- |
+| `cmake`  | 必须     | `apt-get install cmake` |
 
 激活方式：
 
@@ -311,24 +317,23 @@ cargo build --no-default-features --features aws_lc_rs
 
 ## 高匿实现
 
-代理服务器收到的http请求有一些特征，如果代理服务器不能正确处理，则会暴露自己是一个代理。高匿代理就是能去除这些特征的代理。具体特征有三个：
+代理服务器收到的 http 请求有一些特征，如果代理服务器不能正确处理，则会暴露自己是一个代理。高匿代理就是能去除这些特征的代理。具体特征有三个：
 
-- 代理服务器收到的request line中有完整url，即包含schema、host。而正常http请求的url只包含路径
-- 代理服务器收到http header中有Proxy-Connection请求头，需要去掉
-- 代理服务器收到http header中有Proxy-Authentication请求头，需要去掉
+- 代理服务器收到的 request line 中有完整 url，即包含 schema、host。而正常 http 请求的 url 只包含路径
+- 代理服务器收到 http header 中有 Proxy-Connection 请求头，需要去掉
+- 代理服务器收到 http header 中有 Proxy-Authentication 请求头，需要去掉
 
-本代理能去除以上特征。下面是使用tcpdump测试的结果，分别展示代理服务器收到的http请求和nginx web服务器收到的http请求已验证去除以上特征。
+本代理能去除以上特征。下面是使用 tcpdump 测试的结果，分别展示代理服务器收到的 http 请求和 nginx web 服务器收到的 http 请求已验证去除以上特征。
 
 代理服务器收到的消息：
 
 ![](traffic_at_proxy.png)
 
-Nginx收到的消息：
+Nginx 收到的消息：
 
 ![](traffic_at_nginx.png)
 
-可以看到请求URL和`Proxy-Connection`都被正确处理了。
-
+可以看到请求 URL 和`Proxy-Connection`都被正确处理了。
 
 ## 容器测试
 
@@ -336,5 +341,5 @@ Nginx收到的消息：
 cargo clean
 cargo build -r --features bpf_vendored
 podman build . -f Dockerfile.test -t test --net host
-podman run --rm -it --privileged --net host --pid host test 
+podman run --rm -it --privileged --net host --pid host test
 ```
