@@ -145,7 +145,6 @@ impl LocationConfig {
             }
         }
 
-        // 如果配置了authority_override，则设置Host头
         if let Some(ref headers) = self.upstream.headers {
             for ele in headers {
                 if ele.1.is_empty() || ele.0.is_empty() {
