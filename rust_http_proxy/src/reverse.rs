@@ -64,7 +64,7 @@ impl LocationConfig {
         original_scheme_host_port: &SchemeHostPort,
         reverse_client: &legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let upstream_req = self.build_upstream_req(req)?;
+        let upstream_req = self.build_upstream_req(req, original_scheme_host_port)?;
         info!(
             "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
             SocketAddrFormat(&client_socket_addr).to_string(),
@@ -104,7 +104,9 @@ impl LocationConfig {
         }
     }
 
-    fn build_upstream_req(&self, req: Request<Incoming>) -> io::Result<Request<Incoming>> {
+    fn build_upstream_req(
+        &self, req: Request<Incoming>, original_scheme_host_port: &SchemeHostPort,
+    ) -> io::Result<Request<Incoming>> {
         let method = req.method().clone();
         let path_and_query = match req.uri().path_and_query() {
             Some(path_and_query) => path_and_query.as_str(),
@@ -146,9 +148,21 @@ impl LocationConfig {
         // 如果配置了authority_override，则设置Host头
         if let Some(ref headers) = self.upstream.headers {
             for ele in headers {
+                if ele.1.is_empty() || ele.0.is_empty() {
+                    warn!("skip empty header value for key: {}", ele.0);
+                    continue;
+                }
+                let mut header_value = ele.1.clone();
+                if ele.1 == "${host}" {
+                    if let Some(port) = original_scheme_host_port.port {
+                        header_value = format!("{}:{port}", original_scheme_host_port.host);
+                    } else {
+                        header_value = original_scheme_host_port.host.clone();
+                    }
+                }
                 if let Some(old_value) = header_map.insert(
                     HeaderName::from_str(&ele.0).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-                    HeaderValue::from_str(&ele.1).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+                    HeaderValue::from_str(&header_value).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
                 ) {
                     info!("override header {} from {old_value:?} to: {}", ele.0, ele.1);
                 }
