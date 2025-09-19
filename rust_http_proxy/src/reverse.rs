@@ -1,5 +1,5 @@
 use http::header::LOCATION;
-use http::{header, HeaderValue, Request, Response, Uri};
+use http::{header, HeaderName, HeaderValue, Request, Response, Uri};
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt as _;
 use hyper::body::Bytes;
@@ -10,6 +10,7 @@ use log::warn;
 use prom_label::LabelImpl;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::LazyLock;
 use std::{
     io::{self, ErrorKind},
@@ -143,12 +144,14 @@ impl LocationConfig {
         }
 
         // 如果配置了authority_override，则设置Host头
-        if let Some(ref authority_override) = self.upstream.authority_override {
-            if let Some(old_host) = header_map.insert(
-                header::HOST,
-                HeaderValue::from_str(authority_override).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-            ) {
-                info!("override host header from {old_host:?} to: {authority_override}");
+        if let Some(ref headers) = self.upstream.headers {
+            for ele in headers {
+                if let Some(old_value) = header_map.insert(
+                    HeaderName::from_str(&ele.0).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+                    HeaderValue::from_str(&ele.1).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+                ) {
+                    info!("override header {} from {old_value:?} to: {}", ele.0, ele.1);
+                }
             }
         }
         builder
@@ -191,7 +194,7 @@ pub(crate) struct Upstream {
     #[serde(default = "default_version")]
     pub(crate) version: Version,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) authority_override: Option<String>, // 可选的Host头覆盖
+    pub(crate) headers: Option<Vec<(String, String)>>, // 可选的Host头覆盖
 }
 
 // 定义默认值函数
@@ -303,7 +306,7 @@ pub(crate) fn parse_reverse_proxy_config(
                             upstream: crate::reverse::Upstream {
                                 url_base: (*upstream_url_base).to_owned() + path,
                                 version: crate::reverse::Version::Auto,
-                                authority_override: None,
+                                headers: None,
                             },
                         });
                     }
@@ -360,24 +363,24 @@ pub(crate) fn parse_reverse_proxy_config(
     let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
     for (host, location_configs) in &locations {
         for location_config in location_configs {
-            if let Some(authority_override) = location_config.upstream.authority_override.as_ref() {
-                // 如果配置了authority_override，则使用它来构建重定向路径
-                let url_base = location_config.upstream.url_base.parse::<Uri>()?;
-                let mut parts = http::uri::Parts::from(url_base);
-                parts.authority = Some(
-                    authority_override
-                        .parse()
-                        .map_err(|e| format!("parse host override error: {e}"))?,
-                );
-                let new_url_base = Uri::from_parts(parts)
-                    .map_err(|e| format!("build uri error: {e}"))?
-                    .to_string();
-                redirect_bachpaths.push(RedirectBackpaths {
-                    redirect_url: new_url_base,
-                    host: host.clone(),
-                    location: location_config.location.clone(),
-                });
-            }
+            // if let Some(authority_override) = location_config.upstream.authority_override.as_ref() {
+            //     // 如果配置了authority_override，则使用它来构建重定向路径
+            //     let url_base = location_config.upstream.url_base.parse::<Uri>()?;
+            //     let mut parts = http::uri::Parts::from(url_base);
+            //     parts.authority = Some(
+            //         authority_override
+            //             .parse()
+            //             .map_err(|e| format!("parse host override error: {e}"))?,
+            //     );
+            //     let new_url_base = Uri::from_parts(parts)
+            //         .map_err(|e| format!("build uri error: {e}"))?
+            //         .to_string();
+            //     redirect_bachpaths.push(RedirectBackpaths {
+            //         redirect_url: new_url_base,
+            //         host: host.clone(),
+            //         location: location_config.location.clone(),
+            //     });
+            // }
 
             // 使用原始的url_base构造重定向路径
             redirect_bachpaths.push(RedirectBackpaths {

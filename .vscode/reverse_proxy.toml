@@ -6,8 +6,10 @@ location = "/v1/chat/completions"
 upstream = { url_base = "https://models.inference.ai.azure.com/chat/completions" }
 
 [[default_host]]
-location = "/stock"
-upstream = { url_base = "https://www.arloor.com", authority_override = "stock.arloor.com" }
+location = "/grafana"
+upstream = { url_base = "http://192.168.5.16:3000/grafana", headers = [
+    ["Host", "localhost:7788"],
+] }
 
 # localhost 配置  
 [["127.0.0.1"]]
