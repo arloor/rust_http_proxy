@@ -1,4 +1,4 @@
-cargo build -r --features aws_lc_rs,bpf --no-default-features
+cargo build -r --features aws_lc_rs,bpf,mimalloc --no-default-features
 podman build . -f Dockerfile.dyn -t quay.io/arloor/rust_http_proxy:bpf --network host --env TARGET_PATH=
 podman login quay.io
 podman push quay.io/arloor/rust_http_proxy:bpf
