@@ -7,8 +7,10 @@ use hyper::body::Incoming;
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use log::info;
 use log::warn;
+use percent_encoding::percent_decode_str;
 use prom_label::LabelImpl;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -17,11 +19,12 @@ use std::{
     net::SocketAddr,
 };
 
+use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
-use crate::METRICS;
+use crate::{static_serve, METRICS};
 
 pub(crate) struct RedirectBackpaths {
     pub(crate) redirect_url: String,
@@ -40,10 +43,18 @@ const GITHUB_URL_BASE: [&str; 6] = [
 ];
 
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
-pub(crate) struct LocationConfig {
-    #[serde(default = "root")]
-    pub(crate) location: String,
-    pub(crate) upstream: Upstream,
+#[serde(untagged)]
+pub(crate) enum LocationConfig {
+    ReverseProxy {
+        #[serde(default = "root")]
+        location: String,
+        upstream: Upstream,
+    },
+    Serving {
+        #[serde(default = "root")]
+        location: String,
+        static_dir: String,
+    },
 }
 
 impl std::cmp::PartialOrd for LocationConfig {
@@ -54,74 +65,138 @@ impl std::cmp::PartialOrd for LocationConfig {
 
 impl std::cmp::Ord for LocationConfig {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.location.cmp(&other.location).reverse() // 越长越优先
+        self.location().cmp(other.location()).reverse() // 越长越优先
     }
 }
 
 impl LocationConfig {
+    /// 获取 location 路径
+    pub(crate) fn location(&self) -> &str {
+        match self {
+            LocationConfig::ReverseProxy { location, .. } => location,
+            LocationConfig::Serving { location, .. } => location,
+        }
+    }
+
+    /// 判断此 Location 是反向代理还是静态文件托管
+    pub(crate) fn is_reverse_proxy(&self) -> bool {
+        matches!(self, LocationConfig::ReverseProxy { .. })
+    }
+
+    pub(crate) fn is_static_serving(&self) -> bool {
+        matches!(self, LocationConfig::Serving { .. })
+    }
+
     pub(crate) async fn handle(
         &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
         original_scheme_host_port: &SchemeHostPort,
         reverse_client: &legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let upstream_req = self.build_upstream_req(req, original_scheme_host_port)?;
-        info!(
-            "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
-            SocketAddrFormat(&client_socket_addr).to_string(),
-            upstream_req.method(),
-            &upstream_req.uri(),
-            upstream_req.version(),
-            original_scheme_host_port,
-            self.location,
-        );
-        METRICS
-            .reverse_proxy_req
-            .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
-                client: client_socket_addr.ip().to_canonical().to_string(),
-                origin: original_scheme_host_port.to_string() + self.location.as_str(),
-                upstream: self.upstream.url_base.clone(),
-            }))
-            .inc();
-        METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
-        match reverse_client.request(upstream_req).await {
-            Ok(mut resp) => {
-                if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
-                    normalize302(original_scheme_host_port, resp.headers_mut())?;
-                    //修改302的location
+        match self {
+            LocationConfig::ReverseProxy { location, upstream } => {
+                let upstream_req = Self::build_upstream_req(location, upstream, req, original_scheme_host_port)?;
+                info!(
+                    "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
+                    SocketAddrFormat(&client_socket_addr).to_string(),
+                    upstream_req.method(),
+                    &upstream_req.uri(),
+                    upstream_req.version(),
+                    original_scheme_host_port,
+                    location,
+                );
+                METRICS
+                    .reverse_proxy_req
+                    .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
+                        client: client_socket_addr.ip().to_canonical().to_string(),
+                        origin: original_scheme_host_port.to_string() + location.as_str(),
+                        upstream: upstream.url_base.clone(),
+                    }))
+                    .inc();
+                METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
+                match reverse_client.request(upstream_req).await {
+                    Ok(mut resp) => {
+                        if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
+                            normalize302(original_scheme_host_port, resp.headers_mut())?;
+                            //修改302的location
+                        }
+                        Ok(resp.map(|body| {
+                            body.map_err(|e| {
+                                let e = e;
+                                io::Error::new(ErrorKind::InvalidData, e)
+                            })
+                            .boxed()
+                        }))
+                    }
+                    Err(e) => {
+                        warn!("reverse_proxy error: {e:?}");
+                        Err(io::Error::new(ErrorKind::InvalidData, e))
+                    }
                 }
-                Ok(resp.map(|body| {
-                    body.map_err(|e| {
-                        let e = e;
-                        io::Error::new(ErrorKind::InvalidData, e)
-                    })
-                    .boxed()
-                }))
             }
-            Err(e) => {
-                warn!("reverse_proxy error: {e:?}");
-                Err(io::Error::new(ErrorKind::InvalidData, e))
+            LocationConfig::Serving { static_dir, .. } => {
+                // 检查是否允许提供静态文件服务
+                if crate::CONFIG.serving_control.prohibit_serving {
+                    info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
+                    return Err(io::Error::new(ErrorKind::PermissionDenied, "Static serving is prohibited"));
+                }
+
+                // 检查是否有网段限制及客户端IP是否在允许的网段内
+                let client_ip = client_socket_addr.ip().to_canonical();
+                let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
+
+                if !allowed_networks.is_empty() {
+                    let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
+                    if !ip_allowed {
+                        info!("Dropping request from {client_ip} as it's not in allowed networks");
+                        return Err(io::Error::new(ErrorKind::PermissionDenied, "IP not in allowed networks"));
+                    }
+                }
+
+                // IP检查通过，提供静态文件服务
+                info!(
+                    "[serving] {:^35} ==> {} {:?} {:?} <== [static_dir: {}]",
+                    crate::ip_x::SocketAddrFormat(&client_socket_addr).to_string(),
+                    req.method(),
+                    req.uri(),
+                    req.version(),
+                    static_dir,
+                );
+
+                let raw_path = req.uri().path();
+                let path = percent_decode_str(raw_path)
+                    .decode_utf8()
+                    .unwrap_or(Cow::from(raw_path));
+                #[allow(clippy::expect_used)]
+                let path = path.strip_prefix(self.location()).expect("should start with location");
+                if AXUM_PATHS.contains(&path) {
+                    return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
+                }
+
+                static_serve::serve_http_request(&req, client_socket_addr, path, static_dir)
+                    .await
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
             }
         }
     }
 
     fn build_upstream_req(
-        &self, req: Request<Incoming>, original_scheme_host_port: &SchemeHostPort,
+        location: &str, upstream: &Upstream, req: Request<Incoming>, original_scheme_host_port: &SchemeHostPort,
     ) -> io::Result<Request<Incoming>> {
         let method = req.method().clone();
         let path_and_query = match req.uri().path_and_query() {
             Some(path_and_query) => path_and_query.as_str(),
             None => "",
         };
-        let upstream_url = self.upstream.url_base.clone() + &path_and_query[self.location.len()..]; // upstream.url_base + 原始url去除location的部分
+        let upstream_url = upstream.url_base.clone() + &path_and_query[location.len()..]; // upstream.url_base + 原始url去除location的部分
 
         let mut builder = Request::builder()
             .method(method)
             .uri(upstream_url)
-            .version(match self.upstream.version {
+            .version(match upstream.version {
                 Version::H1 => http::Version::HTTP_11,
                 Version::H2 => http::Version::HTTP_2,
                 Version::Auto => {
-                    if self.upstream.url_base.starts_with("https:") {
+                    if upstream.url_base.starts_with("https:") {
                         req.version()
                     } else {
                         http::Version::HTTP_11
@@ -145,7 +220,7 @@ impl LocationConfig {
             }
         }
 
-        if let Some(ref headers) = self.upstream.headers {
+        if let Some(ref headers) = upstream.headers {
             for ele in headers {
                 if ele.1.is_empty() || ele.0.is_empty() {
                     warn!("skip empty header value for key: {}", ele.0);
@@ -283,12 +358,33 @@ fn truncate_string(s: &str, n: usize) -> &str {
 }
 
 pub(crate) fn parse_reverse_proxy_config(
-    reverse_proxy_config_file: &Option<String>, append_upstream_url: &mut Vec<String>, enable_github_proxy: bool,
+    reverse_proxy_config_file: &Option<String>, default_static_dir: &Option<String>,
+    append_upstream_url: &mut Vec<String>, enable_github_proxy: bool,
 ) -> Result<ReverseProxyConfig, <Config as TryFrom<Param>>::Error> {
     let mut locations: HashMap<String, Vec<LocationConfig>> = match reverse_proxy_config_file {
         Some(path) => toml::from_str(&std::fs::read_to_string(path)?)?,
         None => HashMap::new(),
     };
+
+    // 如果设置了 static_dir，则在 default_host 的根目录添加 Serving 类型的 LocationConfig
+    if let Some(static_dir) = &default_static_dir {
+        if !locations.contains_key(crate::location::DEFAULT_HOST) {
+            locations.insert(crate::location::DEFAULT_HOST.to_string(), vec![]);
+        }
+        if let Some(vec) = locations.get_mut(crate::location::DEFAULT_HOST) {
+            // 检查是否已存在 location 为 "/" 的配置
+            if vec.iter().any(|config| {
+                    matches!(config, crate::location::LocationConfig::Serving { location, .. } | crate::location::LocationConfig::ReverseProxy { location, .. } if location == "/")
+                }) {
+                    log::error!("Location '/' already exists in reverse proxy config for DEFAULT_HOST. Cannot add static_dir.");
+                    std::process::exit(1);
+                }
+            vec.push(crate::location::LocationConfig::Serving {
+                location: "/".to_string(),
+                static_dir: static_dir.clone(),
+            });
+        }
+    }
     if enable_github_proxy {
         GITHUB_URL_BASE.iter().for_each(|domain| {
             append_upstream_url.push((*domain).to_owned());
@@ -314,11 +410,11 @@ pub(crate) fn parse_reverse_proxy_config(
                             other => other,
                         };
 
-                        vec.push(LocationConfig {
+                        vec.push(LocationConfig::ReverseProxy {
                             location: "/".to_string() + upstream_url_base + path,
-                            upstream: crate::reverse::Upstream {
+                            upstream: crate::location::Upstream {
                                 url_base: (*upstream_url_base).to_owned() + path,
-                                version: crate::reverse::Version::Auto,
+                                version: crate::location::Version::Auto,
                                 headers: None,
                             },
                         });
@@ -332,56 +428,64 @@ pub(crate) fn parse_reverse_proxy_config(
     }
     locations
         .iter_mut()
-        .for_each(|(_, reverse_proxy_configs)| reverse_proxy_configs.sort());
+        .for_each(|(_, location_configs)| location_configs.sort());
     for ele in &mut locations {
         for location_config in ele.1 {
-            if !location_config.location.starts_with('/') {
+            if !location_config.location().starts_with('/') {
                 return Err("location should start with '/'".into());
             }
-            match location_config.upstream.url_base.parse::<Uri>() {
-                Ok(upstream_url_base) => {
-                    if upstream_url_base.scheme().is_none() {
-                        return Err(format!(
-                            "wrong upstream_url_base: {} --- scheme is empty",
-                            location_config.upstream.url_base
-                        )
-                        .into());
+
+            // 对于反向代理配置，验证 upstream
+            if let LocationConfig::ReverseProxy {
+                location,
+                ref mut upstream,
+            } = location_config
+            {
+                match upstream.url_base.parse::<Uri>() {
+                    Ok(upstream_url_base) => {
+                        if upstream_url_base.scheme().is_none() {
+                            return Err(
+                                format!("wrong upstream_url_base: {} --- scheme is empty", upstream.url_base).into()
+                            );
+                        }
+                        if upstream_url_base.authority().is_none() {
+                            return Err(format!(
+                                "wrong upstream_url_base: {} --- authority is empty",
+                                upstream.url_base
+                            )
+                            .into());
+                        }
+                        if upstream_url_base.query().is_some() {
+                            return Err(format!(
+                                "wrong upstream_url_base: {} --- query is not empty",
+                                upstream.url_base
+                            )
+                            .into());
+                        }
+                        // 在某些情况下，补全upstream.url_base最后的/
+                        if location.ends_with('/')
+                            && upstream_url_base.path() == "/"
+                            && !upstream.url_base.ends_with('/')
+                        {
+                            upstream.url_base = upstream_url_base.to_string()
+                        }
                     }
-                    if upstream_url_base.authority().is_none() {
-                        return Err(format!(
-                            "wrong upstream_url_base: {} --- authority is empty",
-                            location_config.upstream.url_base
-                        )
-                        .into());
-                    }
-                    if upstream_url_base.query().is_some() {
-                        return Err(format!(
-                            "wrong upstream_url_base: {} --- query is not empty",
-                            location_config.upstream.url_base
-                        )
-                        .into());
-                    }
-                    // 在某些情况下，补全upstream.url_base最后的/
-                    if location_config.location.ends_with('/')
-                        && upstream_url_base.path() == "/"
-                        && !location_config.upstream.url_base.ends_with('/')
-                    {
-                        location_config.upstream.url_base = upstream_url_base.to_string()
-                    }
+                    Err(e) => return Err(format!("parse upstream upstream_url_base error:{e}").into()),
                 }
-                Err(e) => return Err(format!("parse upstream upstream_url_base error:{e}").into()),
             }
         }
     }
     let mut redirect_bachpaths = Vec::<RedirectBackpaths>::new();
     for (host, location_configs) in &locations {
         for location_config in location_configs {
-            // 使用原始的url_base构造重定向路径
-            redirect_bachpaths.push(RedirectBackpaths {
-                redirect_url: location_config.upstream.url_base.clone(),
-                host: host.clone(),
-                location: location_config.location.clone(),
-            });
+            // 只为反向代理配置构造重定向路径
+            if let LocationConfig::ReverseProxy { location, upstream } = location_config {
+                redirect_bachpaths.push(RedirectBackpaths {
+                    redirect_url: upstream.url_base.clone(),
+                    host: host.clone(),
+                    location: location.clone(),
+                });
+            }
         }
     }
     redirect_bachpaths.sort_by(|a, b| a.redirect_url.cmp(&b.redirect_url).reverse());

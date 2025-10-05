@@ -16,8 +16,8 @@ mod linux_axum_handler;
 mod linux_monitor;
 mod metrics;
 mod proxy;
-mod raw_serve;
-mod reverse;
+mod static_serve;
+mod location;
 
 use crate::axum_handler::{build_router, AppState};
 use crate::config::Config;

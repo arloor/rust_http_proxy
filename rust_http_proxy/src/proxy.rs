@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
@@ -9,11 +8,10 @@ use std::{
 
 use crate::{
     address::host_addr,
-    axum_handler::{self, AppProxyError, AXUM_PATHS},
+    axum_handler::{self, AppProxyError},
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
-    raw_serve,
-    reverse::{LocationConfig, DEFAULT_HOST},
+    location::{LocationConfig, DEFAULT_HOST},
     METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
@@ -28,7 +26,6 @@ use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
-use percent_encoding::percent_decode_str;
 use prometheus_client::encoding::EncodeLabelSet;
 use rand::Rng;
 use tokio::{net::TcpStream, pin};
@@ -38,6 +35,7 @@ pub struct ProxyHandler {
     reverse_proxy_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
 }
 
+#[allow(dead_code)]
 pub(crate) enum InterceptResultAdapter {
     Drop,
     Return(Response<BoxBody<Bytes, io::Error>>),
@@ -51,8 +49,10 @@ enum ServiceType {
         original_scheme_host_port: SchemeHostPort,
         location_config: &'static LocationConfig,
     },
-    /// 静态文件托管
-    StaticFileServing,
+    /// Location配置的静态文件托管
+    LocationStaticServing {
+        location_config: &'static LocationConfig,
+    },
     /// 正向代理
     ForwardProxy,
 }
@@ -70,36 +70,16 @@ impl ServiceType {
                 .handle(req, client_socket_addr, original_scheme_host_port, &proxy_handler.reverse_proxy_client)
                 .await
                 .map(InterceptResultAdapter::Return),
-            ServiceType::StaticFileServing => {
-                // 检查是否允许提供静态文件服务
-                if crate::CONFIG.serving_control.prohibit_serving {
-                    info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
-                    return Ok(InterceptResultAdapter::Drop);
-                }
-
-                // 检查是否有网段限制及客户端IP是否在允许的网段内
-                let client_ip = client_socket_addr.ip().to_canonical();
-                let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
-
-                if !allowed_networks.is_empty() {
-                    let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
-                    if !ip_allowed {
-                        info!("Dropping request from {client_ip} as it's not in allowed networks");
-                        return Ok(InterceptResultAdapter::Drop);
-                    }
-                }
-
-                // IP检查通过，提供静态文件服务
-                match proxy_handler.serve_request(&req, client_socket_addr).await {
-                    Ok(res) => {
-                        if res.status() == http::StatusCode::NOT_FOUND {
-                            Ok(InterceptResultAdapter::Continue(req))
-                        } else {
-                            Ok(InterceptResultAdapter::Return(res))
-                        }
-                    }
-                    Err(err) => Err(err),
-                }
+            ServiceType::LocationStaticServing { location_config } => {
+                // Location 配置的静态文件托管，逻辑在 location_config.handle 中处理
+                location_config
+                    .handle(req, client_socket_addr, &SchemeHostPort {
+                        scheme: "http".to_string(),
+                        host: "localhost".to_string(),
+                        port: None,
+                    }, &proxy_handler.reverse_proxy_client)
+                    .await
+                    .map(InterceptResultAdapter::Return)
             }
             ServiceType::ForwardProxy => {
                 let config_basic_auth = &crate::CONFIG.basic_auth;
@@ -190,7 +170,7 @@ impl ProxyHandler {
                 },
             )?;
 
-            // 尝试找到匹配的反向代理配置
+            // 尝试找到匹配的 Location 配置
             let location_config_of_host = crate::CONFIG
                 .reverse_proxy_config
                 .locations
@@ -200,18 +180,18 @@ impl ProxyHandler {
             if let Some(locations) = location_config_of_host {
                 if let Some(location_config) = locations
                     .iter()
-                    .find(|&ele| req.uri().path().starts_with(&ele.location))
+                    .find(|&ele| req.uri().path().starts_with(ele.location()))
                 {
-                    return Ok(ServiceType::ReverseProxy {
-                        original_scheme_host_port,
-                        location_config,
-                    });
+                    // 根据 LocationConfig 的配置判断服务类型
+                    if location_config.is_reverse_proxy() {
+                        return Ok(ServiceType::ReverseProxy {
+                            original_scheme_host_port,
+                            location_config,
+                        });
+                    } else if location_config.is_static_serving() {
+                        return Ok(ServiceType::LocationStaticServing { location_config });
+                    }
                 }
-            }
-
-            // 对于HTTP/2请求或URI中不包含host的请求，处理为静态文件托管
-            if req.version() == Version::HTTP_2 || req.uri().host().is_none() {
-                return Ok(ServiceType::StaticFileServing);
             }
         }
 
@@ -326,21 +306,6 @@ impl ProxyHandler {
 
             Ok(resp)
         }
-    }
-    async fn serve_request(
-        &self, req: &Request<Incoming>, client_socket_addr: SocketAddr,
-    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let raw_path = req.uri().path();
-        let path = percent_decode_str(raw_path)
-            .decode_utf8()
-            .unwrap_or(Cow::from(raw_path));
-        let path = path.as_ref();
-        if AXUM_PATHS.contains(&path) {
-            return raw_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-        }
-        raw_serve::serve_http_request(req, client_socket_addr, path)
-            .await
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
 }
 
