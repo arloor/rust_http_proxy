@@ -134,6 +134,9 @@ impl LocationConfig {
                 }
             }
             LocationConfig::Serving { static_dir, .. } => {
+                if AXUM_PATHS.contains(&req.uri().path()) {
+                    return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
+                }
                 // 检查是否允许提供静态文件服务
                 if crate::CONFIG.serving_control.prohibit_serving {
                     info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
