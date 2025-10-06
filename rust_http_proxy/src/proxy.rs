@@ -11,7 +11,7 @@ use crate::{
     axum_handler::{self, AppProxyError},
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
-    location::{LocationConfig, DEFAULT_HOST},
+    location::{LocationConfig, RequestInfo, DEFAULT_HOST},
     METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
@@ -50,9 +50,7 @@ enum ServiceType {
         location_config: &'static LocationConfig,
     },
     /// Location配置的静态文件托管
-    LocationStaticServing {
-        location_config: &'static LocationConfig,
-    },
+    LocationStaticServing { location_config: &'static LocationConfig },
     /// 正向代理
     ForwardProxy,
 }
@@ -67,19 +65,37 @@ impl ServiceType {
                 original_scheme_host_port,
                 location_config,
             } => location_config
-                .handle(req, client_socket_addr, original_scheme_host_port, &proxy_handler.reverse_proxy_client)
+                .handle(
+                    RequestInfo::Owned(Box::new(req)),
+                    client_socket_addr,
+                    original_scheme_host_port,
+                    &proxy_handler.reverse_proxy_client,
+                )
                 .await
                 .map(InterceptResultAdapter::Return),
             ServiceType::LocationStaticServing { location_config } => {
-                // Location 配置的静态文件托管，逻辑在 location_config.handle 中处理
-                location_config
-                    .handle(req, client_socket_addr, &SchemeHostPort {
-                        scheme: "http".to_string(),
-                        host: "localhost".to_string(),
-                        port: None,
-                    }, &proxy_handler.reverse_proxy_client)
+                match location_config
+                    .handle(
+                        RequestInfo::Borrowed(&req),
+                        client_socket_addr,
+                        &SchemeHostPort {
+                            scheme: "http".to_string(),
+                            host: "localhost".to_string(),
+                            port: None,
+                        },
+                        &proxy_handler.reverse_proxy_client,
+                    )
                     .await
-                    .map(InterceptResultAdapter::Return)
+                {
+                    Ok(resp) => {
+                        if resp.status() == http::StatusCode::NOT_FOUND {
+                            Ok(InterceptResultAdapter::Continue(req))
+                        } else {
+                            Ok(InterceptResultAdapter::Return(resp))
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
             }
             ServiceType::ForwardProxy => {
                 let config_basic_auth = &crate::CONFIG.basic_auth;

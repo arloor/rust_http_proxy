@@ -42,6 +42,11 @@ const GITHUB_URL_BASE: [&str; 6] = [
     "https://release-assets.githubusercontent.com",
 ];
 
+pub(crate) enum RequestInfo<'a> {
+    Borrowed(&'a Request<Incoming>),
+    Owned(Box<Request<Incoming>>),
+}
+
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum LocationConfig {
@@ -88,13 +93,16 @@ impl LocationConfig {
     }
 
     pub(crate) async fn handle(
-        &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
-        original_scheme_host_port: &SchemeHostPort,
+        &self, req: RequestInfo<'_>, client_socket_addr: SocketAddr, original_scheme_host_port: &SchemeHostPort,
         reverse_client: &legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         match self {
             LocationConfig::ReverseProxy { location, upstream } => {
-                let upstream_req = Self::build_upstream_req(location, upstream, req, original_scheme_host_port)?;
+                let req = match req {
+                    RequestInfo::Borrowed(..) => return Err(io::Error::new(ErrorKind::InvalidInput, "RequestInfo::Borrowed is not supported for ReverseProxy, because the request will be consumed.")),
+                    RequestInfo::Owned(r) => r,
+                };
+                let upstream_req = Self::build_upstream_req(location, upstream, *req, original_scheme_host_port)?;
                 info!(
                     "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
                     SocketAddrFormat(&client_socket_addr).to_string(),
@@ -134,6 +142,11 @@ impl LocationConfig {
                 }
             }
             LocationConfig::Serving { static_dir, .. } => {
+                // We need to properly handle both borrowed and owned variants
+                let req = match &req {
+                    RequestInfo::Borrowed(r) => *r,
+                    RequestInfo::Owned(ref r) => r,
+                };
                 if AXUM_PATHS.contains(&req.uri().path()) {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
                 }
@@ -175,7 +188,7 @@ impl LocationConfig {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
                 }
 
-                static_serve::serve_http_request(&req, client_socket_addr, path, static_dir)
+                static_serve::serve_http_request(req, client_socket_addr, path, static_dir)
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
             }
