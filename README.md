@@ -123,6 +123,7 @@ curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --pro
 ```toml
 [[YOUR_DOMAIN]]
 location = "/" # 默认为 /
+static_dir = "/usr/share/nginx/html" # 可选，表示托管静态资源的目录
 
 [YOUR_DOMAIN.upstream]
 url_base = "https://www.baidu.com"
@@ -130,6 +131,7 @@ version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
 headers = [
     ["Host", "${host}"],
 ] # 可选，覆盖发送给上游服务器的请求头
+
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。

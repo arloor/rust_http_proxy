@@ -11,6 +11,10 @@ upstream = { url_base = "http://192.168.5.16:3000/grafana", headers = [
     ["Host", "${host}"],
 ] }
 
+[[default_host]]
+location = "/file/"
+static_dir = "."
+
 # localhost 配置  
 [["127.0.0.1"]]
 location = "/"

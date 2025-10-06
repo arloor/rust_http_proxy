@@ -33,9 +33,8 @@ pub(crate) static GZIP: &str = "gzip";
 pub(crate) const SERVER_NAME: &str = "The Bad Server";
 
 pub async fn serve_http_request(
-    req: &Request<impl Body>, client_socket_addr: SocketAddr, path: &str,
+    req: &Request<impl Body>, client_socket_addr: SocketAddr, path: &str, static_dir: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let web_content_path = &crate::CONFIG.web_content_path;
     let referer_keywords_to_self = &crate::CONFIG.referer_keywords_to_self;
     let referer_header = req.headers().get(REFERER).map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
@@ -85,12 +84,12 @@ pub async fn serve_http_request(
                     "".to_string()
                 },
             );
-            let r = serve_path(web_content_path, path, req, can_gzip, true).await;
+            let r = serve_path(static_dir, path, req, can_gzip, true).await;
             let is_shell = path.ends_with(".sh");
             incr_counter_if_need(&r, is_outer_view_html, is_shell, &METRICS.http_req_counter, referer_header, path);
             r
         }
-        (&Method::HEAD, path) => serve_path(web_content_path, path, req, false, false).await,
+        (&Method::HEAD, path) => serve_path(static_dir, path, req, false, false).await,
         _ => not_found(),
     };
 }
@@ -135,7 +134,7 @@ fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Er
 }
 
 async fn serve_path(
-    web_content_path: &String, url_path: &str, req: &Request<impl Body>, can_gzip: bool, need_body: bool,
+    static_dir: &str, url_path: &str, req: &Request<impl Body>, can_gzip: bool, need_body: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     if String::from(url_path).contains("/..") {
         return not_found();
@@ -145,9 +144,9 @@ async fn serve_path(
         return not_found();
     }
     let path = if String::from(url_path).ends_with('/') {
-        format!("{web_content_path}{url_path}index.html")
+        format!("{static_dir}/{url_path}index.html")
     } else {
-        format!("{web_content_path}{url_path}")
+        format!("{static_dir}/{url_path}")
     };
     let mut path = PathBuf::from(path);
     let meta = match metadata(&path).await {
@@ -155,7 +154,7 @@ async fn serve_path(
             if meta.is_file() {
                 meta
             } else {
-                path = PathBuf::from(format!("{web_content_path}{url_path}/index.html"));
+                path = PathBuf::from(format!("{static_dir}{url_path}/index.html"));
                 match metadata(&path).await {
                     Ok(m) => m,
                     Err(_) => return not_found(),

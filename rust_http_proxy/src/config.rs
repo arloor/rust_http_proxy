@@ -7,7 +7,7 @@ use log_x::init_log;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::reverse::{parse_reverse_proxy_config, ReverseProxyConfig};
+use crate::location::{parse_reverse_proxy_config, ReverseProxyConfig};
 use crate::{DynError, IDLE_TIMEOUT};
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
@@ -39,13 +39,8 @@ pub struct Param {
     可以多次指定来实现多用户"
     )]
     users: Vec<String>,
-    #[arg(
-        short,
-        long,
-        value_name = "WEB_CONTENT_PATH",
-        default_value = "/usr/share/nginx/html"
-    )]
-    web_content_path: String,
+    #[arg(short, long, value_name = "WEB_CONTENT_PATH")]
+    web_content_path: Option<String>,
     #[arg(
         short,
         long,
@@ -93,7 +88,6 @@ pub(crate) struct Config {
     pub(crate) cert: String,
     pub(crate) key: String,
     pub(crate) basic_auth: HashMap<String, String>,
-    pub(crate) web_content_path: String,
     pub(crate) referer_keywords_to_self: Vec<String>,
     pub(crate) never_ask_for_auth: bool,
     pub(crate) serving_control: ServingControl,
@@ -122,6 +116,7 @@ impl TryFrom<Param> for Config {
         }
         let reverse_proxy_config = parse_reverse_proxy_config(
             &param.reverse_proxy_config_file,
+            &param.web_content_path,
             &mut param.append_upstream_url,
             param.enable_github_proxy,
         )?;
@@ -151,7 +146,6 @@ impl TryFrom<Param> for Config {
             cert: param.cert,
             key: param.key,
             basic_auth,
-            web_content_path: param.web_content_path,
             referer_keywords_to_self: param.referer_keywords_to_self,
             never_ask_for_auth: param.never_ask_for_auth,
             serving_control: ServingControl {
@@ -191,7 +185,7 @@ fn log_config(config: &Config) {
     if config.serving_control.prohibit_serving {
         warn!("do not serve web content to avoid being detected!");
     } else {
-        info!("serve web content of \"{}\"", config.web_content_path);
+        info!("Static file serving enabled");
         if !config.serving_control.allowed_networks.is_empty() {
             info!("Only allowing static content access from networks: {:?}", config.serving_control.allowed_networks);
         } else {
@@ -211,11 +205,22 @@ fn log_config(config: &Config) {
         .iter()
         .for_each(|reverse_proxy_config| {
             for ele in reverse_proxy_config.1 {
-                info!(
-                    "    {:<70} -> {}**",
-                    format!("http(s)://{}:port{}**", reverse_proxy_config.0, ele.location),
-                    ele.upstream.url_base,
-                );
+                match ele {
+                    crate::location::LocationConfig::ReverseProxy { location, upstream } => {
+                        info!(
+                            "    {:<70} -> {}**",
+                            format!("http(s)://{}:port{}**", reverse_proxy_config.0, location),
+                            upstream.url_base,
+                        );
+                    }
+                    crate::location::LocationConfig::Serving { location, static_dir } => {
+                        info!(
+                            "    {:<70} -> static_dir: {}",
+                            format!("http(s)://{}:port{}**", reverse_proxy_config.0, location),
+                            static_dir,
+                        );
+                    }
+                }
             }
         });
 }
