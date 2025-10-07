@@ -42,9 +42,21 @@ const GITHUB_URL_BASE: [&str; 6] = [
     "https://release-assets.githubusercontent.com",
 ];
 
-pub(crate) enum RequestInfo<'a> {
-    Borrowed(&'a Request<Incoming>),
-    Owned(Box<Request<Incoming>>),
+pub(crate) enum RequestSpec<'a> {
+    ForServing {
+        request: &'a Request<Incoming>,
+        client_socket_addr: SocketAddr,
+        location: &'a String,
+        static_dir: &'a String,
+    },
+    ForReverseProxy {
+        request: Box<Request<Incoming>>,
+        client_socket_addr: SocketAddr,
+        original_scheme_host_port: &'a SchemeHostPort,
+        location: &'a String,
+        upstream: &'a Upstream,
+        reverse_client: &'a legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
@@ -82,27 +94,20 @@ impl LocationConfig {
             LocationConfig::Serving { location, .. } => location,
         }
     }
+}
 
-    /// 判断此 Location 是反向代理还是静态文件托管
-    pub(crate) fn is_reverse_proxy(&self) -> bool {
-        matches!(self, LocationConfig::ReverseProxy { .. })
-    }
-
-    pub(crate) fn is_static_serving(&self) -> bool {
-        matches!(self, LocationConfig::Serving { .. })
-    }
-
-    pub(crate) async fn handle(
-        &self, req: RequestInfo<'_>, client_socket_addr: SocketAddr, original_scheme_host_port: &SchemeHostPort,
-        reverse_client: &legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
-    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+impl<'a> RequestSpec<'a> {
+    pub(crate) async fn handle(self) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         match self {
-            LocationConfig::ReverseProxy { location, upstream } => {
-                let req = match req {
-                    RequestInfo::Borrowed(..) => return Err(io::Error::new(ErrorKind::InvalidInput, "RequestInfo::Borrowed is not supported for ReverseProxy, because the request will be consumed.")),
-                    RequestInfo::Owned(r) => r,
-                };
-                let upstream_req = Self::build_upstream_req(location, upstream, *req, original_scheme_host_port)?;
+            RequestSpec::ForReverseProxy {
+                location,
+                upstream,
+                request,
+                client_socket_addr,
+                original_scheme_host_port,
+                reverse_client,
+            } => {
+                let upstream_req = Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
                 info!(
                     "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
                     SocketAddrFormat(&client_socket_addr).to_string(),
@@ -141,13 +146,13 @@ impl LocationConfig {
                     }
                 }
             }
-            LocationConfig::Serving { static_dir, .. } => {
-                // We need to properly handle both borrowed and owned variants
-                let req = match &req {
-                    RequestInfo::Borrowed(r) => *r,
-                    RequestInfo::Owned(ref r) => r,
-                };
-                if AXUM_PATHS.contains(&req.uri().path()) {
+            RequestSpec::ForServing {
+                location,
+                request,
+                client_socket_addr,
+                static_dir,
+            } => {
+                if AXUM_PATHS.contains(&request.uri().path()) {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
                 }
                 // 检查是否允许提供静态文件服务
@@ -172,23 +177,23 @@ impl LocationConfig {
                 info!(
                     "[serving] {:^35} ==> {} {:?} {:?} <== [static_dir: {}]",
                     crate::ip_x::SocketAddrFormat(&client_socket_addr).to_string(),
-                    req.method(),
-                    req.uri(),
-                    req.version(),
+                    request.method(),
+                    request.uri(),
+                    request.version(),
                     static_dir,
                 );
 
-                let raw_path = req.uri().path();
+                let raw_path = request.uri().path();
                 let path = percent_decode_str(raw_path)
                     .decode_utf8()
                     .unwrap_or(Cow::from(raw_path));
                 #[allow(clippy::expect_used)]
-                let path = path.strip_prefix(self.location()).expect("should start with location");
+                let path = path.strip_prefix(location).expect("should start with location");
                 if AXUM_PATHS.contains(&path) {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
                 }
 
-                static_serve::serve_http_request(req, client_socket_addr, path, static_dir)
+                static_serve::serve_http_request(request, client_socket_addr, path, static_dir)
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
             }

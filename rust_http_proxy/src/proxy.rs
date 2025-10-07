@@ -11,7 +11,7 @@ use crate::{
     axum_handler::{self, AppProxyError},
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
-    location::{LocationConfig, RequestInfo, DEFAULT_HOST},
+    location::{LocationConfig, RequestSpec, Upstream, DEFAULT_HOST},
     METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
@@ -43,50 +43,53 @@ pub(crate) enum InterceptResultAdapter {
 }
 
 /// 服务类型枚举
-enum ServiceType {
+enum ServiceType<'a> {
     /// 反向代理
     ReverseProxy {
         original_scheme_host_port: SchemeHostPort,
-        location_config: &'static LocationConfig,
+        location: &'a String,
+        upstream: &'a Upstream,
     },
     /// Location配置的静态文件托管
-    LocationStaticServing { location_config: &'static LocationConfig },
+    LocationStaticServing {
+        location: &'a String,
+        static_dir: &'a String,
+    },
     /// 正向代理
     ForwardProxy,
 }
 
-impl ServiceType {
+impl<'a> ServiceType<'a> {
     /// 处理请求
     async fn handle(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, proxy_handler: &ProxyHandler,
     ) -> Result<InterceptResultAdapter, io::Error> {
         match self {
             ServiceType::ReverseProxy {
+                ref original_scheme_host_port,
+                location,
+                upstream,
+            } => RequestSpec::ForReverseProxy {
+                request: Box::new(req),
+                client_socket_addr,
                 original_scheme_host_port,
-                location_config,
-            } => location_config
-                .handle(
-                    RequestInfo::Owned(Box::new(req)),
+                location,
+                upstream,
+                reverse_client: &proxy_handler.reverse_proxy_client,
+            }
+            .handle()
+            .await
+            .map(InterceptResultAdapter::Return),
+            ServiceType::LocationStaticServing { static_dir, location } => {
+                let res = RequestSpec::ForServing {
+                    request: &req,
                     client_socket_addr,
-                    original_scheme_host_port,
-                    &proxy_handler.reverse_proxy_client,
-                )
-                .await
-                .map(InterceptResultAdapter::Return),
-            ServiceType::LocationStaticServing { location_config } => {
-                match location_config
-                    .handle(
-                        RequestInfo::Borrowed(&req),
-                        client_socket_addr,
-                        &SchemeHostPort {
-                            scheme: "http".to_string(),
-                            host: "localhost".to_string(),
-                            port: None,
-                        },
-                        &proxy_handler.reverse_proxy_client,
-                    )
-                    .await
-                {
+                    location,
+                    static_dir,
+                }
+                .handle()
+                .await;
+                match res {
                     Ok(resp) => {
                         if resp.status() == http::StatusCode::NOT_FOUND {
                             Ok(InterceptResultAdapter::Continue(req))
@@ -175,7 +178,7 @@ impl ProxyHandler {
     }
 
     /// 确定服务类型
-    fn determine_service_type(&self, req: &Request<Incoming>) -> Result<ServiceType, io::Error> {
+    fn determine_service_type(&'_ self, req: &Request<Incoming>) -> Result<ServiceType<'_>, io::Error> {
         // 对于非CONNECT请求，检查是否需要反向代理或静态文件托管
         if Method::CONNECT != req.method() {
             let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
@@ -198,14 +201,17 @@ impl ProxyHandler {
                     .iter()
                     .find(|&ele| req.uri().path().starts_with(ele.location()))
                 {
-                    // 根据 LocationConfig 的配置判断服务类型
-                    if location_config.is_reverse_proxy() {
-                        return Ok(ServiceType::ReverseProxy {
-                            original_scheme_host_port,
-                            location_config,
-                        });
-                    } else if location_config.is_static_serving() {
-                        return Ok(ServiceType::LocationStaticServing { location_config });
+                    match location_config {
+                        LocationConfig::ReverseProxy { location, upstream } => {
+                            return Ok(ServiceType::ReverseProxy {
+                                original_scheme_host_port,
+                                location,
+                                upstream,
+                            });
+                        }
+                        LocationConfig::Serving { static_dir, location } => {
+                            return Ok(ServiceType::LocationStaticServing { location, static_dir });
+                        }
                     }
                 }
             }
