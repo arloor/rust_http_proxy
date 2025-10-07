@@ -70,8 +70,8 @@ pub struct Param {
     allow_serving_network: Vec<String>,
     #[arg(short, long, help = "if enable, proxy server will listen on https")]
     over_tls: bool,
-    #[arg(long, value_name = "FILE_PATH", help = r#"反向代理配置文件"#)]
-    reverse_proxy_config_file: Option<String>,
+    #[arg(long, value_name = "FILE_PATH", help = r#"静态文件托管和反向代理的配置文件"#)]
+    location_config_file: Option<String>,
     #[arg(long, help = r#"是否开启github proxy"#)]
     enable_github_proxy: bool,
     #[arg(
@@ -115,7 +115,7 @@ impl TryFrom<Param> for Config {
             }
         }
         let reverse_proxy_config = parse_reverse_proxy_config(
-            &param.reverse_proxy_config_file,
+            &param.location_config_file,
             &param.web_content_path,
             &mut param.append_upstream_url,
             param.enable_github_proxy,

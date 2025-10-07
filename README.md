@@ -6,7 +6,7 @@
 
 1. 使用 tls 来对正向代理流量进行加密（`--over-tls`）。
 2. 类 Nginx 的静态资源托管。支持 gzip 压缩。支持 Accept-Ranges 以支持断点续传（备注：暂不支持多 range，例如 `Range: bytes=0-100,100-` ）
-3. 支持反向代理（ `--reverse-proxy-config-file` ）。
+3. 支持反向代理。
 4. 基于 Prometheus 的可观测，可以监控代理的流量、外链访问等。
 5. 采集网卡上行流量，展示在 `/net` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
 6. 支持多端口，多用户。
@@ -72,7 +72,7 @@ Options:
           格式为 'username:password'
           可以多次指定来实现多用户
   -w, --web-content-path <WEB_CONTENT_PATH>
-          [default: /usr/share/nginx/html]
+
   -r, --referer-keywords-to-self <REFERER>
           Http Referer请求头处理
           1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值
@@ -90,8 +90,8 @@ Options:
           如未设置任何网段，且未设置prohibit_serving，则允许所有IP访问静态文件
   -o, --over-tls
           if enable, proxy server will listen on https
-      --reverse-proxy-config-file <FILE_PATH>
-          反向代理配置文件
+      --location-config-file <FILE_PATH>
+          静态文件托管和反向代理的配置文件
       --enable-github-proxy
           是否开启github proxy
       --append-upstream-url <https://example.com>
@@ -118,7 +118,23 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --proxy-insecure
 ```
 
+### 静态文件托管配置
+
+可以使用`--location-config-file`参数指定配置文件，格式为 toml。
+
+```toml
+[[YOUR_DOMAIN]]
+location = "/" # 默认为 /
+static_dir = "/usr/share/nginx/html" # 可选，表示托管静态资源的目录
+```
+
+> 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。
+
 ### 反向代理配置
+
+1. 可以使用 `--web-content-path <WEB_CONTENT_PATH>` 参数定指默认静态资源目录。
+
+2. 可以使用`--location-config-file` 通过配置文件指定特定域名、特定url的静态资源目录。
 
 ```toml
 [[YOUR_DOMAIN]]
@@ -131,7 +147,6 @@ version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
 headers = [
     ["Host", "${host}"],
 ] # 可选，覆盖发送给上游服务器的请求头
-
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。
@@ -140,7 +155,7 @@ headers = [
 
 - `url_base`: 上游服务器的基础 URL
 - `version`: HTTP 版本，可选值为 `H1`、`H2`、`AUTO`，默认为 `AUTO`
-- `headers`: 可选参数，用于覆盖发送给上游服务器的请求头。 支持变量 `${host}`，分别表示原请求的Host。
+- `headers`: 可选参数，用于覆盖发送给上游服务器的请求头。 支持变量 `${host}`，分别表示原请求的 Host。
 
 #### 例子 1: Github Proxy
 
