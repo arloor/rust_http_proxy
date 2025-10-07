@@ -42,23 +42,6 @@ const GITHUB_URL_BASE: [&str; 6] = [
     "https://release-assets.githubusercontent.com",
 ];
 
-pub(crate) enum RequestSpec<'a> {
-    ForServing {
-        request: &'a Request<Incoming>,
-        client_socket_addr: SocketAddr,
-        location: &'a String,
-        static_dir: &'a String,
-    },
-    ForReverseProxy {
-        request: Box<Request<Incoming>>,
-        client_socket_addr: SocketAddr,
-        original_scheme_host_port: &'a SchemeHostPort,
-        location: &'a String,
-        upstream: &'a Upstream,
-        reverse_client: &'a legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
-    },
-}
-
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum LocationConfig {
@@ -94,6 +77,23 @@ impl LocationConfig {
             LocationConfig::Serving { location, .. } => location,
         }
     }
+}
+
+pub(crate) enum RequestSpec<'a> {
+    ForServing {
+        request: &'a Request<Incoming>,
+        client_socket_addr: SocketAddr,
+        location: &'a String,
+        static_dir: &'a String,
+    },
+    ForReverseProxy {
+        request: Box<Request<Incoming>>,
+        client_socket_addr: SocketAddr,
+        original_scheme_host_port: &'a SchemeHostPort,
+        location: &'a String,
+        upstream: &'a Upstream,
+        reverse_client: &'a legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+    },
 }
 
 impl<'a> RequestSpec<'a> {
