@@ -9,10 +9,11 @@ use std::{
 use crate::{
     address::host_addr,
     axum_handler::{self, AppProxyError},
+    config::ForwardBypassConfig,
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
     location::{LocationConfig, RequestSpec, Upstream, DEFAULT_HOST},
-    METRICS,
+    CONFIG, METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -28,7 +29,11 @@ use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use prometheus_client::encoding::EncodeLabelSet;
 use rand::Rng;
+use std::sync::Arc;
 use tokio::{net::TcpStream, pin};
+use tokio_rustls::rustls::pki_types;
+use tokio_rustls::TlsConnector;
+
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
     forwad_proxy_client: ForwardProxyClient<Incoming>,
@@ -116,15 +121,23 @@ impl<'a> ServiceType<'a> {
                             req.uri(),
                             req.version(),
                         );
-                        if Method::CONNECT == req.method() {
-                            proxy_handler
-                                .tunnel_proxy(req, client_socket_addr, username)
-                                .map(InterceptResultAdapter::Return)
-                        } else {
-                            proxy_handler
+
+                        match *req.method() {
+                            Method::CONNECT => match CONFIG.forward_bypass.as_ref() {
+                                Some(forward_bypass_config) => {
+                                    let result = proxy_handler
+                                        .forward_bypass(req, client_socket_addr, username, forward_bypass_config)
+                                        .await;
+                                    result.map(InterceptResultAdapter::Return)
+                                }
+                                None => proxy_handler
+                                    .tunnel_proxy(req, client_socket_addr, username)
+                                    .map(InterceptResultAdapter::Return),
+                            },
+                            _ => proxy_handler
                                 .simple_proxy(req, client_socket_addr, username)
                                 .await
-                                .map(InterceptResultAdapter::Return)
+                                .map(InterceptResultAdapter::Return),
                         }
                     }
                     Err(e) => {
@@ -246,11 +259,175 @@ impl ProxyHandler {
         }
     }
 
+    async fn forward_bypass(
+        &self, mut req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
+        forward_bypass_config: &ForwardBypassConfig,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        let proxy_traffic = METRICS.proxy_traffic.clone();
+
+        // 获取客户端 IP：首先从 x-forwarded-for 请求头获取，其次使用 client_socket_addr
+        let client_ip = get_client_ip(&req, client_socket_addr);
+
+        // 如果请求没有 x-forwarded-for 头，添加该头
+        if req.headers().get("x-forwarded-for").is_none() {
+            req.headers_mut().insert(
+                http::header::HeaderName::from_static("x-forwarded-for"),
+                HeaderValue::from_str(&client_ip).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+            );
+        }
+
+        match host_addr(req.uri()) {
+            None => {
+                warn!("CONNECT host is not socket addr: {:?}", req.uri());
+                let mut resp = Response::new(full_body("CONNECT must be to a socket address"));
+                *resp.status_mut() = http::StatusCode::BAD_REQUEST;
+                Ok(resp)
+            }
+            Some(addr) => {
+                let access_label = AccessLabel {
+                    client: client_ip.clone(),
+                    target: addr.clone().to_string(),
+                    username,
+                };
+
+                // 首先建立 TCP 连接
+                let tcp_stream =
+                    match TcpStream::connect(format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port))
+                        .await
+                    {
+                        Ok(stream) => stream,
+                        Err(e) => {
+                            warn!("[forward_bypass tunnel establish error] [{}]: [{}] {} ", access_label, e.kind(), e);
+                            let mut resp = Response::new(full_body("Failed to connect to bypass server"));
+                            *resp.status_mut() = http::StatusCode::BAD_GATEWAY;
+                            return Ok(resp);
+                        }
+                    };
+
+                debug!(
+                    "[forward_bypass tunnel {}], [true path: {} -> {}]",
+                    access_label,
+                    client_socket_addr.ip().to_canonical().to_string() + ":" + &client_socket_addr.port().to_string(),
+                    tcp_stream
+                        .peer_addr()
+                        .map(|addr| addr.ip().to_canonical().to_string() + ":" + &addr.port().to_string())
+                        .unwrap_or("failed".to_owned())
+                );
+                let access_tag = access_label.to_string();
+
+                // 根据 is_https 决定是否建立 TLS 连接，然后统一处理
+                use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+                let stream = if forward_bypass_config.is_https {
+                    // 建立 TLS 连接
+                    let connector = build_tls_connector();
+                    // 需要 clone host 以避免生命周期问题
+                    let host = forward_bypass_config.host.clone();
+                    let server_name = pki_types::ServerName::try_from(host.as_str())
+                        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
+                        .to_owned();
+
+                    match connector.connect(server_name, tcp_stream).await {
+                        Ok(tls_stream) => BypassStream::Tls { stream: tls_stream },
+                        Err(e) => {
+                            warn!("[forward_bypass TLS handshake error] [{}]: {}", access_tag, e);
+                            let mut resp =
+                                Response::new(full_body("Failed to establish TLS connection to bypass server"));
+                            *resp.status_mut() = http::StatusCode::BAD_GATEWAY;
+                            return Ok(resp);
+                        }
+                    }
+                } else {
+                    // 使用普通 TCP 连接
+                    BypassStream::Tcp { stream: tcp_stream }
+                };
+
+                // 统一处理流
+                let dst_stream = CounterIO::new(stream, proxy_traffic.clone(), LabelImpl::new(access_label.clone()));
+                let mut reader = tokio::io::BufReader::new(dst_stream);
+
+                // 向bypass服务器发送CONNECT请求
+                let mut connect_request =
+                    format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\nX-Forwarded-For: {}\r\n", addr, addr, client_ip);
+
+                // 如果配置了 username 和 password，添加 Proxy-Authorization 头
+                if let (Some(username), Some(password)) =
+                    (&forward_bypass_config.username, &forward_bypass_config.password)
+                {
+                    let credentials = format!("{}:{}", username, password);
+                    let encoded =
+                        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
+                    connect_request.push_str(&format!("Proxy-Authorization: Basic {}\r\n", encoded));
+                }
+
+                connect_request.push_str("\r\n");
+
+                if let Err(e) = reader.get_mut().write_all(connect_request.as_bytes()).await {
+                    warn!("[forward_bypass write CONNECT error] [{}]: {}", access_tag, e);
+                    return Err(io::Error::other(e));
+                }
+
+                // 读取bypass服务器的响应（应该是200 OK）
+                let mut response_line = String::new();
+                if let Err(e) = reader.read_line(&mut response_line).await {
+                    warn!("[forward_bypass read response error] [{}]: {}", access_tag, e);
+                    return Err(io::Error::other(e));
+                }
+
+                // 检查响应是否是200
+                if !response_line.contains("200") {
+                    warn!("[forward_bypass unexpected response] [{}]: {}", access_tag, response_line);
+                    return Err(io::Error::other("unexpected response from bypass server"));
+                }
+
+                // 读取并丢弃响应头直到空行
+                loop {
+                    let mut header_line = String::new();
+                    if let Err(e) = reader.read_line(&mut header_line).await {
+                        warn!("[forward_bypass read header error] [{}]: {}", access_tag, e);
+                        return Err(io::Error::other("unexpected response from bypass server"));
+                    }
+                    if header_line == "\r\n" || header_line == "\n" {
+                        break;
+                    }
+                }
+
+                // 从BufReader中取回原始stream
+                let dst_stream = reader.into_inner();
+                tokio::task::spawn(async move {
+                    let src_upgraded = match hyper::upgrade::on(req).await {
+                        Ok(src_upgraded) => src_upgraded,
+                        Err(e) => {
+                            warn!("[forward_bypass upgrade error] [{}]: {}", access_tag, e);
+                            return Err(io::Error::other(e));
+                        }
+                    };
+
+                    if let Err(e) = tunnel(src_upgraded, dst_stream).await {
+                        warn!("[forward_bypass tunnel io error] [{}]: [{}] {} ", access_tag, e.kind(), e);
+                    };
+                    Ok(())
+                });
+                let mut response = Response::new(empty_body());
+                // 添加随机长度的padding
+                let max_num = 2048 / LOCAL_IP.len();
+                let count = rand::rng().random_range(1..max_num);
+                for _ in 0..count {
+                    response
+                        .headers_mut()
+                        .append(http::header::SERVER, HeaderValue::from_static(&LOCAL_IP));
+                }
+                Ok(response)
+            }
+        }
+    }
+
     /// 代理CONNECT请求
     /// HTTP/1.1 CONNECT    
     fn tunnel_proxy(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        let client_ip = get_client_ip(&req, client_socket_addr);
         // Received an HTTP request like:
         // ```
         // CONNECT www.domain.com:443 HTTP/1.1
@@ -270,7 +447,7 @@ impl ProxyHandler {
                 match hyper::upgrade::on(req).await {
                     Ok(src_upgraded) => {
                         let access_label = AccessLabel {
-                            client: client_socket_addr.ip().to_canonical().to_string(),
+                            client: client_ip,
                             target: addr.clone().to_string(),
                             username,
                         };
@@ -478,6 +655,93 @@ fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<Ht
     client
 }
 
+/// 创建 TLS 连接器
+/// Debug 模式：不验证证书（方便测试）
+/// Release 模式：使用平台证书验证器
+fn build_tls_connector() -> TlsConnector {
+    #[cfg(debug_assertions)]
+    {
+        use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+        use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+        use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
+
+        #[derive(Debug)]
+        struct NoVerifier;
+
+        impl ServerCertVerifier for NoVerifier {
+            fn verify_server_cert(
+                &self, _end_entity: &CertificateDer<'_>, _intermediates: &[CertificateDer<'_>],
+                _server_name: &ServerName<'_>, _ocsp_response: &[u8], _now: UnixTime,
+            ) -> Result<ServerCertVerified, tokio_rustls::rustls::Error> {
+                Ok(ServerCertVerified::assertion())
+            }
+
+            fn verify_tls12_signature(
+                &self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, tokio_rustls::rustls::Error> {
+                Ok(HandshakeSignatureValid::assertion())
+            }
+
+            fn verify_tls13_signature(
+                &self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, tokio_rustls::rustls::Error> {
+                Ok(HandshakeSignatureValid::assertion())
+            }
+
+            fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+                vec![
+                    SignatureScheme::RSA_PKCS1_SHA1,
+                    SignatureScheme::ECDSA_SHA1_Legacy,
+                    SignatureScheme::RSA_PKCS1_SHA256,
+                    SignatureScheme::ECDSA_NISTP256_SHA256,
+                    SignatureScheme::RSA_PKCS1_SHA384,
+                    SignatureScheme::ECDSA_NISTP384_SHA384,
+                    SignatureScheme::RSA_PKCS1_SHA512,
+                    SignatureScheme::ECDSA_NISTP521_SHA512,
+                    SignatureScheme::RSA_PSS_SHA256,
+                    SignatureScheme::RSA_PSS_SHA384,
+                    SignatureScheme::RSA_PSS_SHA512,
+                    SignatureScheme::ED25519,
+                    SignatureScheme::ED448,
+                ]
+            }
+        }
+
+        warn!("⚠️  DEBUG MODE: TLS certificate verification is DISABLED");
+        let config = ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerifier))
+            .with_no_client_auth();
+        TlsConnector::from(Arc::new(config))
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        use hyper_rustls::ConfigBuilderExt;
+        #[allow(clippy::expect_used)]
+        let config = tokio_rustls::rustls::ClientConfig::builder()
+            .try_with_platform_verifier()
+            .expect("Failed to create platform verifier")
+            .with_no_client_auth();
+        TlsConnector::from(Arc::new(config))
+    }
+}
+
+/// 获取客户端 IP 地址
+/// 优先从 x-forwarded-for 请求头获取（取第一个 IP），否则使用 socket 地址
+fn get_client_ip(req: &Request<Incoming>, client_socket_addr: SocketAddr) -> String {
+    req.headers()
+        .get("x-forwarded-for")
+        .and_then(|forwarded_for| {
+            forwarded_for
+                .to_str()
+                .ok()
+                .and_then(|s| s.split(',').next())
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| client_socket_addr.ip().to_canonical().to_string())
+}
+
 fn origin_form(uri: &mut Uri) -> io::Result<()> {
     let path = match uri.path_and_query() {
         Some(path) if path.as_str() != "/" => {
@@ -496,7 +760,10 @@ fn origin_form(uri: &mut Uri) -> io::Result<()> {
 
 // Create a TCP connection to host:port, build a tunnel between the connection and
 // the upgraded connection
-async fn tunnel(upgraded: Upgraded, target_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>) -> io::Result<()> {
+async fn tunnel<T>(upgraded: Upgraded, target_io: CounterIO<T, LabelImpl<AccessLabel>>) -> io::Result<()>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let mut upgraded = TokioIo::new(upgraded);
     let timed_target_io = TimeoutIO::new(target_io, crate::IDLE_TIMEOUT);
     pin!(timed_target_io);
@@ -565,6 +832,53 @@ pub fn empty_body() -> BoxBody<Bytes, io::Error> {
 
 pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
     Full::new(chunk.into()).map_err(|never| match never {}).boxed()
+}
+
+// 用于 forward_bypass 的流枚举，支持 TCP 和 TLS
+pin_project_lite::pin_project! {
+    #[project = BypassStreamProj]
+    enum BypassStream {
+        Tcp { #[pin] stream: TcpStream },
+        Tls { #[pin] stream: tokio_rustls::client::TlsStream<TcpStream> },
+    }
+}
+
+impl tokio::io::AsyncRead for BypassStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match self.project() {
+            BypassStreamProj::Tcp { stream } => stream.poll_read(cx, buf),
+            BypassStreamProj::Tls { stream } => stream.poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for BypassStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        match self.project() {
+            BypassStreamProj::Tcp { stream } => stream.poll_write(cx, buf),
+            BypassStreamProj::Tls { stream } => stream.poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
+        match self.project() {
+            BypassStreamProj::Tcp { stream } => stream.poll_flush(cx),
+            BypassStreamProj::Tls { stream } => stream.poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match self.project() {
+            BypassStreamProj::Tcp { stream } => stream.poll_shutdown(cx),
+            BypassStreamProj::Tls { stream } => stream.poll_shutdown(cx),
+        }
+    }
 }
 
 #[cfg(test)]

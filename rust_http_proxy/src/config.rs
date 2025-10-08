@@ -1,6 +1,7 @@
 use base64::engine::general_purpose;
 use base64::Engine;
 use clap::Parser;
+use http::Uri;
 use ipnetwork::IpNetwork;
 use log::{info, warn};
 use log_x::init_log;
@@ -82,6 +83,12 @@ pub struct Param {
         则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com"
     )]
     append_upstream_url: Vec<String>,
+    #[arg(
+        long,
+        value_name = "https://username:password@example.com:123",
+        help = "指定上游代理服务器"
+    )]
+    forward_bypass_url: Option<Uri>,
 }
 
 pub(crate) struct Config {
@@ -94,6 +101,15 @@ pub(crate) struct Config {
     pub(crate) over_tls: bool,
     pub(crate) port: Vec<u16>,
     pub(crate) reverse_proxy_config: ReverseProxyConfig,
+    pub(crate) forward_bypass: Option<ForwardBypassConfig>,
+}
+
+pub(crate) struct ForwardBypassConfig {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) is_https: bool,
+    pub(crate) username: Option<String>,
+    pub(crate) password: Option<String>,
 }
 
 pub(crate) struct ServingControl {
@@ -104,6 +120,47 @@ pub(crate) struct ServingControl {
 impl TryFrom<Param> for Config {
     type Error = DynError;
     fn try_from(mut param: Param) -> Result<Self, Self::Error> {
+        // 检测 forward_bypass 的合法性
+        if let Some(forward_bypass) = param.forward_bypass_url.as_ref() {
+            if forward_bypass.scheme_str() != Some("http") && forward_bypass.scheme_str() != Some("https") {
+                return Err("forward_bypass only support http or https scheme".into());
+            }
+            if forward_bypass.host().is_none() {
+                return Err("forward_bypass must have host".into());
+            }
+        }
+        let forward_bypass = param.forward_bypass_url.as_ref().map(|uri| {
+            // 从 authority 中提取 username 和 password
+            // authority 格式: [userinfo@]host[:port]
+            // userinfo 格式: username[:password]
+            let (username, password) = uri
+                .authority()
+                .and_then(|auth| {
+                    let auth_str = auth.as_str();
+                    if let Some(at_pos) = auth_str.find('@') {
+                        let userinfo = &auth_str[..at_pos];
+                        if let Some(colon_pos) = userinfo.find(':') {
+                            Some((Some(userinfo[..colon_pos].to_string()), Some(userinfo[colon_pos + 1..].to_string())))
+                        } else {
+                            Some((Some(userinfo.to_string()), None))
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or((None, None));
+
+            ForwardBypassConfig {
+                #[allow(clippy::expect_used)]
+                host: uri.host().expect("host").to_string(),
+                port: uri
+                    .port_u16()
+                    .unwrap_or_else(|| if uri.scheme_str() == Some("https") { 443 } else { 80 }),
+                is_https: uri.scheme_str() == Some("https"),
+                username,
+                password,
+            }
+        });
         let mut basic_auth = HashMap::new();
         for raw_user in param.users {
             let mut user = raw_user.split(':');
@@ -155,6 +212,7 @@ impl TryFrom<Param> for Config {
             over_tls: param.over_tls,
             port: param.port,
             reverse_proxy_config,
+            forward_bypass,
         })
     }
 }
