@@ -120,7 +120,9 @@ curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --pro
 
 ### 静态文件托管配置
 
-可以使用`--location-config-file`参数指定配置文件，格式为 toml。
+1. 可以使用 `--web-content-path <WEB_CONTENT_PATH>` 参数定指默认静态资源目录。
+
+2. 可以使用`--location-config-file` 通过配置文件指定特定域名、特定 url 的静态资源目录。
 
 ```toml
 [[YOUR_DOMAIN]]
@@ -132,14 +134,11 @@ static_dir = "/usr/share/nginx/html" # 可选，表示托管静态资源的目�
 
 ### 反向代理配置
 
-1. 可以使用 `--web-content-path <WEB_CONTENT_PATH>` 参数定指默认静态资源目录。
-
-2. 可以使用`--location-config-file` 通过配置文件指定特定域名、特定url的静态资源目录。
+可以使用`--location-config-file` 通过配置文件指定特定域名、特定 url 的反向代理配置。
 
 ```toml
 [[YOUR_DOMAIN]]
 location = "/" # 默认为 /
-static_dir = "/usr/share/nginx/html" # 可选，表示托管静态资源的目录
 
 [YOUR_DOMAIN.upstream]
 url_base = "https://www.baidu.com"
