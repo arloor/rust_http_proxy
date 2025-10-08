@@ -114,7 +114,7 @@ impl<'a> ServiceType<'a> {
                         let username = username_option.unwrap_or("unknown".to_owned());
                         info!(
                             "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
-                            "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
+                            "https://ip.im/".to_owned() + &get_client_ip(&req, client_socket_addr),
                             client_socket_addr.port(),
                             username,
                             req.method().as_str(),
@@ -375,10 +375,7 @@ impl ProxyHandler {
                 }
 
                 // 检查响应是否是200
-                let status_code = response_line
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or("");
+                let status_code = response_line.split_whitespace().nth(1).unwrap_or("");
                 if status_code != "200" {
                     warn!("[forward_bypass unexpected response] [{}]: {}", access_tag, response_line);
                     return Err(io::Error::other("unexpected response from bypass server"));
