@@ -375,7 +375,11 @@ impl ProxyHandler {
                 }
 
                 // 检查响应是否是200
-                if !response_line.contains("200") {
+                let status_code = response_line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("");
+                if status_code != "200" {
                     warn!("[forward_bypass unexpected response] [{}]: {}", access_tag, response_line);
                     return Err(io::Error::other("unexpected response from bypass server"));
                 }
