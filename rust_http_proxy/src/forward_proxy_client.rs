@@ -13,7 +13,6 @@ use http::{header, HeaderMap, HeaderValue, Version};
 use hyper::{
     body::{self, Body},
     client::conn::http1,
-    http::uri::Scheme,
     Request, Response,
 };
 use hyper_util::rt::TokioIo;
@@ -63,12 +62,7 @@ where
         }
 
         // 2. If no. Make a new connection
-        let scheme = match req.uri().scheme() {
-            Some(s) => s,
-            None => &Scheme::HTTP,
-        };
-
-        let c = match HttpConnection::connect(scheme, access_label, stream_map_func).await {
+        let c = match HttpConnection::connect(access_label, stream_map_func).await {
             Ok(c) => c,
             Err(err) => {
                 error!("failed to connect to host: {}, error: {}", &access_label.target, err);
@@ -181,18 +175,14 @@ where
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
     async fn connect(
-        scheme: &Scheme, access_label: &AccessLabel,
+        access_label: &AccessLabel,
         stream_map_func: impl FnOnce(BypassStream, AccessLabel) -> CounterIO<BypassStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        if *scheme != Scheme::HTTP && *scheme != Scheme::HTTPS {
-            return Err(io::Error::new(ErrorKind::InvalidInput, "invalid scheme"));
-        }
-
         let stream = TcpStream::connect(&access_label.target).await?;
-        let stream = if access_label.is_https {
+        let stream = if let Some(true) = access_label.is_https {
             // 建立 TLS 连接
             let connector = build_tls_connector();
-            // 需要 clone host 以避免生命周期问题
+
             let host = &access_label
                 .target
                 .split(':')
@@ -216,13 +206,12 @@ where
 
         let stream: CounterIO<BypassStream, LabelImpl<AccessLabel>> = stream_map_func(stream, access_label.clone());
 
-        HttpConnection::connect_http_http1(scheme, access_label, stream).await
+        HttpConnection::connect_http_http1(access_label, stream).await
     }
 
     async fn connect_http_http1(
-        scheme: &Scheme, access_label: &AccessLabel, stream: CounterIO<BypassStream, LabelImpl<AccessLabel>>,
+        access_label: &AccessLabel, stream: CounterIO<BypassStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        trace!("HTTP making new HTTP/1.1 connection to host: {access_label}, scheme: {scheme}");
         let stream = TimeoutIO::new(stream, CONNECTION_EXPIRE_DURATION);
 
         // HTTP/1.x

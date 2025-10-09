@@ -113,13 +113,17 @@ impl<'a> ServiceType<'a> {
                     Ok(username_option) => {
                         let username = username_option.unwrap_or("unknown".to_owned());
                         info!(
-                            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} ",
-                            "https://ip.im/".to_owned() + &get_client_ip(&req, client_socket_addr),
+                            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} X-Forwarded-For: {} ",
+                            "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
                             client_socket_addr.port(),
                             username,
                             req.method().as_str(),
                             req.uri(),
                             req.version(),
+                            req.headers()
+                                .get("X-Forwarded-For")
+                                .map(|v| v.to_str().unwrap_or("invalid utf8"))
+                                .unwrap_or(""),
                         );
 
                         match *req.method() {
@@ -202,6 +206,11 @@ impl ProxyHandler {
     fn determine_service_type(&'_ self, req: &Request<Incoming>) -> Result<ServiceType<'_>, io::Error> {
         // 对于非CONNECT请求，检查是否需要反向代理或静态文件托管
         if Method::CONNECT != req.method() {
+            // HTTP1 且 url中有host则判定为simple proxy
+            if (req.version() == Version::HTTP_10 || req.version() == Version::HTTP_11) && req.uri().host().is_some() {
+                return Ok(ServiceType::ForwardProxy);
+            }
+
             let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
                 req,
                 match crate::CONFIG.over_tls {
@@ -209,10 +218,6 @@ impl ProxyHandler {
                     false => "http",
                 },
             )?;
-            // HTTP1 且 url中有host则判定为simple proxy
-            if (req.version() == Version::HTTP_10 || req.version() == Version::HTTP_11) && req.uri().host().is_some() {
-                return Ok(ServiceType::ForwardProxy);
-            }
 
             // 尝试找到匹配的 Location 配置
             let location_config_of_host = crate::CONFIG
@@ -251,7 +256,14 @@ impl ProxyHandler {
     async fn simple_proxy(
         &self, mut req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let access_label = build_access_label(&req, client_socket_addr, username)?;
+        let addr = host_addr(req.uri())
+            .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("URI missing host: {}", req.uri())))?;
+        let access_label = AccessLabel {
+            client: client_socket_addr.ip().to_canonical().to_string(),
+            target: addr.to_string(),
+            username,
+            is_https: None,
+        };
         mod_http1_proxy_req(&mut req)?;
         match self
             .forwad_proxy_client
@@ -275,10 +287,13 @@ impl ProxyHandler {
         &self, mut req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
         forward_bypass_config: &ForwardBypassConfig,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let mut access_label = build_access_label(&req, client_socket_addr, username)?;
         let host = format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port);
-        access_label.is_https = forward_bypass_config.is_https;
-        access_label.target = host.clone();
+        let access_label = AccessLabel {
+            client: client_socket_addr.ip().to_canonical().to_string(),
+            target: host.clone(),
+            username,
+            is_https: Some(forward_bypass_config.is_https),
+        };
         // 删除代理特有的请求头
         req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
         // 如果配置了 username 和 password，添加 Proxy-Authorization 头
@@ -286,11 +301,12 @@ impl ProxyHandler {
             let credentials = format!("{}:{}", username, password);
             let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
             req.headers_mut().insert(
-                "Proxy-Authorization",
+                http::header::PROXY_AUTHORIZATION,
                 HeaderValue::from_str(format!("Basic {}", encoded).as_str())
                     .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
             );
         }
+        // 替换host头
         let host_header = HeaderValue::from_str(&host).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         let origin = req.headers_mut().insert(HOST, host_header.clone());
         if Some(host_header.clone()) != origin {
@@ -321,21 +337,10 @@ impl ProxyHandler {
     }
 
     async fn tunnel_proxy_bypass(
-        &self, mut req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
+        &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
         forward_bypass_config: &ForwardBypassConfig,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let proxy_traffic = METRICS.proxy_traffic.clone();
-
-        // 获取客户端 IP：首先从 x-forwarded-for 请求头获取，其次使用 client_socket_addr
-        let client_ip = get_client_ip(&req, client_socket_addr);
-
-        // 如果请求没有 x-forwarded-for 头，添加该头
-        if req.headers().get("x-forwarded-for").is_none() {
-            req.headers_mut().insert(
-                http::header::HeaderName::from_static("x-forwarded-for"),
-                HeaderValue::from_str(&client_ip).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-            );
-        }
 
         match host_addr(req.uri()) {
             None => {
@@ -345,26 +350,24 @@ impl ProxyHandler {
                 Ok(resp)
             }
             Some(addr) => {
+                let bypass_host = format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port);
                 let access_label = AccessLabel {
-                    client: client_ip.clone(),
-                    target: addr.clone().to_string(),
+                    client: client_socket_addr.ip().to_canonical().to_string(),
+                    target: bypass_host.clone(),
                     username,
-                    is_https: forward_bypass_config.is_https,
+                    is_https: Some(forward_bypass_config.is_https),
                 };
 
                 // 首先建立 TCP 连接
-                let tcp_stream =
-                    match TcpStream::connect(format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port))
-                        .await
-                    {
-                        Ok(stream) => stream,
-                        Err(e) => {
-                            warn!("[forward_bypass tunnel establish error] [{}]: [{}] {} ", access_label, e.kind(), e);
-                            let mut resp = Response::new(full_body("Failed to connect to bypass server"));
-                            *resp.status_mut() = http::StatusCode::BAD_GATEWAY;
-                            return Ok(resp);
-                        }
-                    };
+                let tcp_stream = match TcpStream::connect(bypass_host).await {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        warn!("[forward_bypass tunnel establish error] [{}]: [{}] {} ", access_label, e.kind(), e);
+                        let mut resp = Response::new(full_body("Failed to connect to bypass server"));
+                        *resp.status_mut() = http::StatusCode::BAD_GATEWAY;
+                        return Ok(resp);
+                    }
+                };
 
                 debug!(
                     "[forward_bypass tunnel {}], [true path: {} -> {}]",
@@ -409,6 +412,7 @@ impl ProxyHandler {
                 let mut reader = tokio::io::BufReader::new(dst_stream);
 
                 // 向bypass服务器发送CONNECT请求
+                let client_ip = get_client_ip(&req, client_socket_addr);
                 let mut connect_request =
                     format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\nX-Forwarded-For: {}\r\n", addr, addr, client_ip);
 
@@ -490,7 +494,6 @@ impl ProxyHandler {
     fn tunnel_proxy(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        let client_ip = get_client_ip(&req, client_socket_addr);
         // Received an HTTP request like:
         // ```
         // CONNECT www.domain.com:443 HTTP/1.1
@@ -510,10 +513,10 @@ impl ProxyHandler {
                 match hyper::upgrade::on(req).await {
                     Ok(src_upgraded) => {
                         let access_label = AccessLabel {
-                            client: client_ip,
+                            client: client_socket_addr.ip().to_canonical().to_string(),
                             target: addr.clone().to_string(),
                             username,
-                            is_https: false,
+                            is_https: None,
                         };
                         // Connect to remote server
                         match TcpStream::connect(addr.to_string()).await {
@@ -599,20 +602,6 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     // change absoulte uri to relative uri
     origin_form(req.uri_mut())?;
     Ok(())
-}
-
-fn build_access_label(
-    req: &Request<Incoming>, client_socket_addr: SocketAddr, username: String,
-) -> Result<AccessLabel, io::Error> {
-    let addr = host_addr(req.uri())
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("URI missing host: {}", req.uri())))?;
-    let access_label = AccessLabel {
-        client: client_socket_addr.ip().to_canonical().to_string(),
-        target: addr.to_string(),
-        username,
-        is_https: false,
-    };
-    Ok(access_label)
 }
 
 pub(crate) struct SchemeHostPort {
@@ -850,9 +839,9 @@ pub struct ReqLabels {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
 pub struct AccessLabel {
     pub client: String,
+    pub is_https: Option<bool>, // 只有bypass时，该字段才为Some
     pub target: String,
     pub username: String,
-    pub is_https: bool,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
