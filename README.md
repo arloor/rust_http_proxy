@@ -6,12 +6,13 @@
 
 1. 使用 tls 来对正向代理流量进行加密（`--over-tls`）。
 2. 类 Nginx 的静态资源托管。支持 gzip 压缩。支持 Accept-Ranges 以支持断点续传（备注：暂不支持多 range，例如 `Range: bytes=0-100,100-` ）
-3. 支持反向代理。
-4. 基于 Prometheus 的可观测，可以监控代理的流量、外链访问等。
-5. 采集网卡上行流量，展示在 `/net` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
-6. 支持多端口，多用户。
-7. 每天定时加载 tls 证书，acme 证书过期重新签发时不需要重启服务。
-8. 连接空闲（10 分钟没有 IO）自动关闭。
+3. 支持链式代理（通过--forward-bypass-url指定上游代理服务器）
+4. 支持反向代理。
+5. 基于 Prometheus 的可观测，可以监控代理的流量、外链访问等。
+6. 采集网卡上行流量，展示在 `/net` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
+7. 支持多端口，多用户。
+8. 每天定时加载 tls 证书，acme 证书过期重新签发时不需要重启服务。
+9. 连接空闲（10 分钟没有 IO）自动关闭。
 
 提及的参数详见[命令行参数](#命令行参数)
 
@@ -98,6 +99,8 @@ Options:
           便捷反向代理配置
           例如：--append-upstream-url=https://cdnjs.cloudflare.com
           则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
+      --forward-bypass-url <https://username:password@example.com:123>
+          指定上游代理服务器
   -h, --help
           Print help
 ```
