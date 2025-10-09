@@ -294,17 +294,17 @@ impl ProxyHandler {
             username,
             is_https: Some(forward_bypass_config.is_https),
         };
-        // 删除代理特有的请求头
-        req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
         // 如果配置了 username 和 password，添加 Proxy-Authorization 头
         if let (Some(username), Some(password)) = (&forward_bypass_config.username, &forward_bypass_config.password) {
             let credentials = format!("{}:{}", username, password);
             let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
-            req.headers_mut().insert(
+            if let Some(original) = req.headers_mut().insert(
                 http::header::PROXY_AUTHORIZATION,
                 HeaderValue::from_str(format!("Basic {}", encoded).as_str())
                     .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-            );
+            ) {
+                info!("change Proxy-Authorization header: {original:?} -> \"Basic {}\"", encoded);
+            };
         }
         // 替换host头
         let host_header = HeaderValue::from_str(&host).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
