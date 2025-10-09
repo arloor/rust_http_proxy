@@ -126,7 +126,7 @@ impl<'a> ServiceType<'a> {
                             Method::CONNECT => match CONFIG.forward_bypass.as_ref() {
                                 Some(forward_bypass_config) => {
                                     let result = proxy_handler
-                                        .forward_bypass(req, client_socket_addr, username, forward_bypass_config)
+                                        .tunnel_proxy_bypass(req, client_socket_addr, username, forward_bypass_config)
                                         .await;
                                     result.map(InterceptResultAdapter::Return)
                                 }
@@ -134,10 +134,18 @@ impl<'a> ServiceType<'a> {
                                     .tunnel_proxy(req, client_socket_addr, username)
                                     .map(InterceptResultAdapter::Return),
                             },
-                            _ => proxy_handler
-                                .simple_proxy(req, client_socket_addr, username)
-                                .await
-                                .map(InterceptResultAdapter::Return),
+                            _ => match CONFIG.forward_bypass.as_ref() {
+                                Some(forward_bypass_config) => {
+                                    let result = proxy_handler
+                                        .simple_proxy_bypass(req, client_socket_addr, username, forward_bypass_config)
+                                        .await;
+                                    result.map(InterceptResultAdapter::Return)
+                                }
+                                None => proxy_handler
+                                    .simple_proxy(req, client_socket_addr, username)
+                                    .await
+                                    .map(InterceptResultAdapter::Return),
+                            },
                         }
                     }
                     Err(e) => {
@@ -201,6 +209,10 @@ impl ProxyHandler {
                     false => "http",
                 },
             )?;
+            // HTTP1 且 url中有host则判定为simple proxy
+            if (req.version() == Version::HTTP_10 || req.version() == Version::HTTP_11) && req.uri().host().is_some() {
+                return Ok(ServiceType::ForwardProxy);
+            }
 
             // 尝试找到匹配的 Location 配置
             let location_config_of_host = crate::CONFIG
@@ -243,7 +255,7 @@ impl ProxyHandler {
         mod_http1_proxy_req(&mut req)?;
         match self
             .forwad_proxy_client
-            .send_request(req, &access_label, |stream: TcpStream, access_label: AccessLabel| {
+            .send_request(req, &access_label, |stream: BypassStream, access_label: AccessLabel| {
                 CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
             .await
@@ -259,7 +271,56 @@ impl ProxyHandler {
         }
     }
 
-    async fn forward_bypass(
+    async fn simple_proxy_bypass(
+        &self, mut req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
+        forward_bypass_config: &ForwardBypassConfig,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        let mut access_label = build_access_label(&req, client_socket_addr, username)?;
+        let host = format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port);
+        access_label.is_https = forward_bypass_config.is_https;
+        access_label.target = host.clone();
+        // 删除代理特有的请求头
+        req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
+        // 如果配置了 username 和 password，添加 Proxy-Authorization 头
+        if let (Some(username), Some(password)) = (&forward_bypass_config.username, &forward_bypass_config.password) {
+            let credentials = format!("{}:{}", username, password);
+            let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
+            req.headers_mut().insert(
+                "Proxy-Authorization",
+                HeaderValue::from_str(format!("Basic {}", encoded).as_str())
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+            );
+        }
+        let host_header = HeaderValue::from_str(&host).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        let origin = req.headers_mut().insert(HOST, host_header.clone());
+        if Some(host_header.clone()) != origin {
+            info!("change host header: {origin:?} -> {host_header:?}");
+        }
+
+        warn!("bypass {:?} {} {}", req.version(), req.method(), req.uri());
+
+        match self
+            .forwad_proxy_client
+            .send_request(req, &access_label, |stream: BypassStream, access_label: AccessLabel| {
+                CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+            })
+            .await
+        {
+            Ok(resp) => Ok(resp.map(|body| {
+                body.map_err(|e| {
+                    let e = e;
+                    io::Error::new(ErrorKind::InvalidData, e)
+                })
+                .boxed()
+            })),
+            Err(e) => {
+                warn!("[forward_bypass simple_proxy error] [{}]: [{}] {} ", access_label, e.kind(), e);
+                Err(e)
+            }
+        }
+    }
+
+    async fn tunnel_proxy_bypass(
         &self, mut req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
         forward_bypass_config: &ForwardBypassConfig,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
@@ -288,6 +349,7 @@ impl ProxyHandler {
                     client: client_ip.clone(),
                     target: addr.clone().to_string(),
                     username,
+                    is_https: forward_bypass_config.is_https,
                 };
 
                 // 首先建立 TCP 连接
@@ -451,6 +513,7 @@ impl ProxyHandler {
                             client: client_ip,
                             target: addr.clone().to_string(),
                             username,
+                            is_https: false,
                         };
                         // Connect to remote server
                         match TcpStream::connect(addr.to_string()).await {
@@ -547,6 +610,7 @@ fn build_access_label(
         client: client_socket_addr.ip().to_canonical().to_string(),
         target: addr.to_string(),
         username,
+        is_https: false,
     };
     Ok(access_label)
 }
@@ -659,7 +723,7 @@ fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<Ht
 /// 创建 TLS 连接器
 /// Debug 模式：不验证证书（方便测试）
 /// Release 模式：使用平台证书验证器
-fn build_tls_connector() -> TlsConnector {
+pub(crate) fn build_tls_connector() -> TlsConnector {
     #[cfg(debug_assertions)]
     {
         use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -788,6 +852,7 @@ pub struct AccessLabel {
     pub client: String,
     pub target: String,
     pub username: String,
+    pub is_https: bool,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
@@ -838,7 +903,7 @@ pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
 // 用于 forward_bypass 的流枚举，支持 TCP 和 TLS
 pin_project_lite::pin_project! {
     #[project = BypassStreamProj]
-    enum BypassStream {
+    pub(crate) enum BypassStream {
         Tcp { #[pin] stream: TcpStream },
         Tls { #[pin] stream: tokio_rustls::client::TlsStream<TcpStream> },
     }

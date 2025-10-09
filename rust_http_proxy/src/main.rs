@@ -14,10 +14,10 @@ mod ip_x;
 mod linux_axum_handler;
 #[cfg(target_os = "linux")]
 mod linux_monitor;
+mod location;
 mod metrics;
 mod proxy;
 mod static_serve;
-mod location;
 
 use crate::axum_handler::{build_router, AppState};
 use crate::config::Config;
@@ -28,6 +28,7 @@ use axum_handler::AppProxyError;
 use config::load_config;
 use futures_util::future::select_all;
 
+use log::warn;
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
 
@@ -85,7 +86,10 @@ impl ReqInterceptor for ProxyInterceptor {
     ) -> axum_bootstrap::InterceptResult<Self::Error> {
         match self.0.handle(req, ip).await {
             Ok(adaptor) => adaptor.into(),
-            Err(err) => InterceptResult::Error(AppProxyError::new(err)),
+            Err(err) => {
+                warn!("Request handling error: {:?}", err);
+                InterceptResult::Error(AppProxyError::new(err))
+            }
         }
     }
 }

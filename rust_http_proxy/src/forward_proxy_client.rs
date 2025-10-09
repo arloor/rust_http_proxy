@@ -22,8 +22,9 @@ use log::{debug, error, info, trace, warn};
 use lru_time_cache::LruCache;
 use prom_label::LabelImpl;
 use tokio::{net::TcpStream, sync::Mutex};
+use tokio_rustls::rustls::pki_types;
 
-use crate::proxy::AccessLabel;
+use crate::proxy::{build_tls_connector, AccessLabel, BypassStream};
 
 const CONNECTION_EXPIRE_DURATION: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 30 } else { 10 });
 
@@ -50,7 +51,7 @@ where
     #[inline]
     pub async fn send_request(
         &self, req: Request<B>, access_label: &AccessLabel,
-        stream_map_func: impl FnOnce(TcpStream, AccessLabel) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+        stream_map_func: impl FnOnce(BypassStream, AccessLabel) -> CounterIO<BypassStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
         if let Some(c) = self.get_cached_connection(access_label).await {
@@ -181,20 +182,45 @@ where
 {
     async fn connect(
         scheme: &Scheme, access_label: &AccessLabel,
-        stream_map_func: impl FnOnce(TcpStream, AccessLabel) -> CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+        stream_map_func: impl FnOnce(BypassStream, AccessLabel) -> CounterIO<BypassStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         if *scheme != Scheme::HTTP && *scheme != Scheme::HTTPS {
             return Err(io::Error::new(ErrorKind::InvalidInput, "invalid scheme"));
         }
 
         let stream = TcpStream::connect(&access_label.target).await?;
-        let stream: CounterIO<TcpStream, LabelImpl<AccessLabel>> = stream_map_func(stream, access_label.clone());
+        let stream = if access_label.is_https {
+            // 建立 TLS 连接
+            let connector = build_tls_connector();
+            // 需要 clone host 以避免生命周期问题
+            let host = &access_label
+                .target
+                .split(':')
+                .next()
+                .ok_or(io::Error::other("invalid host"))?;
+            let server_name = pki_types::ServerName::try_from(*host)
+                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
+                .to_owned();
+
+            match connector.connect(server_name, stream).await {
+                Ok(tls_stream) => BypassStream::Tls { stream: tls_stream },
+                Err(e) => {
+                    warn!("[forward_bypass TLS handshake error] [{}]: {}", access_label, e);
+                    return Err(e);
+                }
+            }
+        } else {
+            // 使用普通 TCP 连接
+            BypassStream::Tcp { stream }
+        };
+
+        let stream: CounterIO<BypassStream, LabelImpl<AccessLabel>> = stream_map_func(stream, access_label.clone());
 
         HttpConnection::connect_http_http1(scheme, access_label, stream).await
     }
 
     async fn connect_http_http1(
-        scheme: &Scheme, access_label: &AccessLabel, stream: CounterIO<TcpStream, LabelImpl<AccessLabel>>,
+        scheme: &Scheme, access_label: &AccessLabel, stream: CounterIO<BypassStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         trace!("HTTP making new HTTP/1.1 connection to host: {access_label}, scheme: {scheme}");
         let stream = TimeoutIO::new(stream, CONNECTION_EXPIRE_DURATION);
