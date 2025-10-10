@@ -122,8 +122,17 @@ impl<'a> ServiceType<'a> {
                             req.version(),
                             req.headers()
                                 .get("X-Forwarded-For")
-                                .map(|v| "X-Forwarded-For: https://ip.im/".to_owned()
-                                    + v.to_str().unwrap_or("invalid utf8"))
+                                .map(|v| {
+                                    // 取 X-Forwarded-For 中以逗号分隔的第一个 IP，并去除空白
+                                    let first_ip = v
+                                        .to_str()
+                                        .unwrap_or("invalid utf8")
+                                        .split(',')
+                                        .next()
+                                        .unwrap_or("invalid utf8")
+                                        .trim();
+                                    format!("X-Forwarded-For: https://ip.im/{}", first_ip)
+                                })
                                 .unwrap_or_default(),
                         );
 
