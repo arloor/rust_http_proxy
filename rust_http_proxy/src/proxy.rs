@@ -113,7 +113,7 @@ impl<'a> ServiceType<'a> {
                     Ok(username_option) => {
                         let username = username_option.unwrap_or("unknown".to_owned());
                         info!(
-                            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} X-Forwarded-For: {} ",
+                            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} {}",
                             "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
                             client_socket_addr.port(),
                             username,
@@ -122,8 +122,9 @@ impl<'a> ServiceType<'a> {
                             req.version(),
                             req.headers()
                                 .get("X-Forwarded-For")
-                                .map(|v| v.to_str().unwrap_or("invalid utf8"))
-                                .unwrap_or(""),
+                                .map(|v| "X-Forwarded-For: https://ip.im/".to_owned()
+                                    + v.to_str().unwrap_or("invalid utf8"))
+                                .unwrap_or_default(),
                         );
 
                         match *req.method() {
