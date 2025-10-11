@@ -179,7 +179,7 @@ where
         stream_map_func: impl FnOnce(BypassStream, AccessLabel) -> CounterIO<BypassStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = TcpStream::connect(&access_label.target).await?;
-        let stream = if let Some(true) = access_label.is_https {
+        let stream = if let Some(true) = access_label.relay_over_tls {
             // 建立 TLS 连接
             let connector = build_tls_connector();
 

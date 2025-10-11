@@ -272,7 +272,7 @@ impl ProxyHandler {
             client: client_socket_addr.ip().to_canonical().to_string(),
             target: addr.to_string(),
             username,
-            is_https: None,
+            relay_over_tls: None,
         };
         mod_http1_proxy_req(&mut req)?;
         match self
@@ -302,7 +302,7 @@ impl ProxyHandler {
             client: client_socket_addr.ip().to_canonical().to_string(),
             target: host.clone(),
             username,
-            is_https: Some(forward_bypass_config.is_https),
+            relay_over_tls: Some(forward_bypass_config.is_https),
         };
         // 如果配置了 username 和 password，添加 Proxy-Authorization 头
         if let (Some(username), Some(password)) = (&forward_bypass_config.username, &forward_bypass_config.password) {
@@ -365,7 +365,7 @@ impl ProxyHandler {
                     client: client_socket_addr.ip().to_canonical().to_string(),
                     target: bypass_host.clone(),
                     username,
-                    is_https: Some(forward_bypass_config.is_https),
+                    relay_over_tls: Some(forward_bypass_config.is_https),
                 };
 
                 // 首先建立 TCP 连接
@@ -526,7 +526,7 @@ impl ProxyHandler {
                             client: client_socket_addr.ip().to_canonical().to_string(),
                             target: addr.clone().to_string(),
                             username,
-                            is_https: None,
+                            relay_over_tls: None,
                         };
                         // Connect to remote server
                         match TcpStream::connect(addr.to_string()).await {
@@ -849,7 +849,7 @@ pub struct ReqLabels {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
 pub struct AccessLabel {
     pub client: String,
-    pub is_https: Option<bool>, // 只有bypass时，该字段才为Some
+    pub relay_over_tls: Option<bool>, // 只有bypass时，该字段才为Some
     pub target: String,
     pub username: String,
 }
