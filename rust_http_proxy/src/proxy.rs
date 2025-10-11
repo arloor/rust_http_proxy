@@ -113,7 +113,7 @@ impl<'a> ServiceType<'a> {
                     Ok(username_option) => {
                         let username = username_option.unwrap_or("unknown".to_owned());
                         info!(
-                            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} {}",
+                            "{:>29} {:<5} {:^8} {:^7} {:?} {:?} {} {}",
                             "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
                             client_socket_addr.port(),
                             username,
@@ -134,6 +134,12 @@ impl<'a> ServiceType<'a> {
                                     format!("X-Forwarded-For: https://ip.im/{}", first_ip)
                                 })
                                 .unwrap_or_default(),
+                            match &CONFIG.forward_bypass {
+                                Some(bypass) => {
+                                    format!("bypass: {}", bypass)
+                                }
+                                None => "".to_owned(),
+                            }
                         );
 
                         match *req.method() {

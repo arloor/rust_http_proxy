@@ -112,6 +112,12 @@ pub(crate) struct ForwardBypassConfig {
     pub(crate) password: Option<String>,
 }
 
+impl std::fmt::Display for ForwardBypassConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}://{}:{}", if self.is_https { "https" } else { "http" }, self.host, self.port)
+    }
+}
+
 pub(crate) struct ServingControl {
     pub(crate) prohibit_serving: bool,
     pub(crate) allowed_networks: Vec<IpNetwork>,
