@@ -107,6 +107,7 @@ impl<'a> RequestSpec<'a> {
                 original_scheme_host_port,
                 reverse_client,
             } => {
+                check_serving_control(client_socket_addr)?;
                 let upstream_req = Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
                 info!(
                     "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
@@ -152,23 +153,7 @@ impl<'a> RequestSpec<'a> {
                 client_socket_addr,
                 static_dir,
             } => {
-                // 检查是否允许提供静态文件服务
-                if crate::CONFIG.serving_control.prohibit_serving {
-                    info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
-                    return Err(io::Error::new(ErrorKind::PermissionDenied, "Static serving is prohibited"));
-                }
-
-                // 检查是否有网段限制及客户端IP是否在允许的网段内
-                let client_ip = client_socket_addr.ip().to_canonical();
-                let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
-
-                if !allowed_networks.is_empty() {
-                    let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
-                    if !ip_allowed {
-                        info!("Dropping request from {client_ip} as it's not in allowed networks");
-                        return Err(io::Error::new(ErrorKind::PermissionDenied, "IP not in allowed networks"));
-                    }
-                }
+                check_serving_control(client_socket_addr)?;
 
                 if AXUM_PATHS.contains(&request.uri().path()) {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
@@ -268,6 +253,26 @@ impl<'a> RequestSpec<'a> {
             .body(req.into_body())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
+}
+
+fn check_serving_control(client_socket_addr: SocketAddr) -> Result<(), io::Error> {
+    // 检查是否允许提供静态文件服务
+    if crate::CONFIG.serving_control.prohibit_serving {
+        info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
+        return Err(io::Error::new(ErrorKind::PermissionDenied, "Static serving is prohibited"));
+    }
+    // 检查是否有网段限制及客户端IP是否在允许的网段内
+    let client_ip = client_socket_addr.ip().to_canonical();
+    let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
+
+    if !allowed_networks.is_empty() {
+        let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
+        if !ip_allowed {
+            info!("Dropping request from {client_ip} as it's not in allowed networks");
+            return Err(io::Error::new(ErrorKind::PermissionDenied, "IP not in allowed networks"));
+        }
+    }
+    Ok(())
 }
 
 fn normalize302(
