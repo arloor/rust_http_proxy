@@ -23,7 +23,7 @@ use prom_label::LabelImpl;
 use tokio::{net::TcpStream, sync::Mutex};
 use tokio_rustls::rustls::pki_types;
 
-use crate::proxy::{build_tls_connector, AccessLabel, BypassStream};
+use crate::proxy::{build_tls_connector, AccessLabel, EitherTlsStream};
 
 const CONNECTION_EXPIRE_DURATION: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 30 } else { 10 });
 
@@ -50,7 +50,7 @@ where
     #[inline]
     pub async fn send_request(
         &self, req: Request<B>, access_label: &AccessLabel,
-        stream_map_func: impl FnOnce(BypassStream, AccessLabel) -> CounterIO<BypassStream, LabelImpl<AccessLabel>>,
+        stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
         if let Some(c) = self.get_cached_connection(access_label).await {
@@ -176,7 +176,7 @@ where
 {
     async fn connect(
         access_label: &AccessLabel,
-        stream_map_func: impl FnOnce(BypassStream, AccessLabel) -> CounterIO<BypassStream, LabelImpl<AccessLabel>>,
+        stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = TcpStream::connect(&access_label.target).await?;
         let stream = if let Some(true) = access_label.relay_over_tls {
@@ -193,7 +193,7 @@ where
                 .to_owned();
 
             match connector.connect(server_name, stream).await {
-                Ok(tls_stream) => BypassStream::Tls { stream: tls_stream },
+                Ok(tls_stream) => EitherTlsStream::Tls { stream: tls_stream },
                 Err(e) => {
                     warn!("[forward_bypass TLS handshake error] [{}]: {}", access_label, e);
                     return Err(e);
@@ -201,16 +201,16 @@ where
             }
         } else {
             // 使用普通 TCP 连接
-            BypassStream::Tcp { stream }
+            EitherTlsStream::Tcp { stream }
         };
 
-        let stream: CounterIO<BypassStream, LabelImpl<AccessLabel>> = stream_map_func(stream, access_label.clone());
+        let stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>> = stream_map_func(stream, access_label.clone());
 
         HttpConnection::connect_http_http1(access_label, stream).await
     }
 
     async fn connect_http_http1(
-        access_label: &AccessLabel, stream: CounterIO<BypassStream, LabelImpl<AccessLabel>>,
+        access_label: &AccessLabel, stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = TimeoutIO::new(stream, CONNECTION_EXPIRE_DURATION);
 

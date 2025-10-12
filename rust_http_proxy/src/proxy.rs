@@ -31,8 +31,8 @@ use prometheus_client::encoding::EncodeLabelSet;
 use rand::Rng;
 use std::sync::Arc;
 use tokio::{net::TcpStream, pin};
-use tokio_rustls::rustls::pki_types;
 use tokio_rustls::TlsConnector;
+use tokio_rustls::{client::TlsStream, rustls::pki_types};
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
@@ -294,7 +294,7 @@ impl ProxyHandler {
         mod_http1_proxy_req(&mut req)?;
         match self
             .forwad_proxy_client
-            .send_request(req, &access_label, |stream: BypassStream, access_label: AccessLabel| {
+            .send_request(req, &access_label, |stream: EitherTlsStream, access_label: AccessLabel| {
                 CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
             .await
@@ -344,7 +344,7 @@ impl ProxyHandler {
 
         match self
             .forwad_proxy_client
-            .send_request(req, &access_label, |stream: BypassStream, access_label: AccessLabel| {
+            .send_request(req, &access_label, |stream: EitherTlsStream, access_label: AccessLabel| {
                 CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
             .await
@@ -420,7 +420,7 @@ impl ProxyHandler {
                         .to_owned();
 
                     match connector.connect(server_name, tcp_stream).await {
-                        Ok(tls_stream) => BypassStream::Tls { stream: tls_stream },
+                        Ok(tls_stream) => EitherTlsStream::Tls { stream: tls_stream },
                         Err(e) => {
                             warn!("[forward_bypass TLS handshake error] [{}]: {}", access_tag, e);
                             let mut resp =
@@ -431,7 +431,7 @@ impl ProxyHandler {
                     }
                 } else {
                     // 使用普通 TCP 连接
-                    BypassStream::Tcp { stream: tcp_stream }
+                    EitherTlsStream::Tcp { stream: tcp_stream }
                 };
 
                 // 统一处理流
@@ -918,38 +918,38 @@ pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
 
 // 用于 forward_bypass 的流枚举，支持 TCP 和 TLS
 pin_project_lite::pin_project! {
-    #[project = BypassStreamProj]
-    pub(crate) enum BypassStream {
+    #[project = EitherTlsStreamProj]
+    pub(crate) enum EitherTlsStream {
         Tcp { #[pin] stream: TcpStream },
-        Tls { #[pin] stream: tokio_rustls::client::TlsStream<TcpStream> },
+        Tls { #[pin] stream: TlsStream<TcpStream> },
     }
 }
 
-impl tokio::io::AsyncRead for BypassStream {
+impl tokio::io::AsyncRead for EitherTlsStream {
     fn poll_read(
         self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<io::Result<()>> {
         match self.project() {
-            BypassStreamProj::Tcp { stream } => stream.poll_read(cx, buf),
-            BypassStreamProj::Tls { stream } => stream.poll_read(cx, buf),
+            EitherTlsStreamProj::Tcp { stream } => stream.poll_read(cx, buf),
+            EitherTlsStreamProj::Tls { stream } => stream.poll_read(cx, buf),
         }
     }
 }
 
-impl tokio::io::AsyncWrite for BypassStream {
+impl tokio::io::AsyncWrite for EitherTlsStream {
     fn poll_write(
         self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
         match self.project() {
-            BypassStreamProj::Tcp { stream } => stream.poll_write(cx, buf),
-            BypassStreamProj::Tls { stream } => stream.poll_write(cx, buf),
+            EitherTlsStreamProj::Tcp { stream } => stream.poll_write(cx, buf),
+            EitherTlsStreamProj::Tls { stream } => stream.poll_write(cx, buf),
         }
     }
 
     fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
         match self.project() {
-            BypassStreamProj::Tcp { stream } => stream.poll_flush(cx),
-            BypassStreamProj::Tls { stream } => stream.poll_flush(cx),
+            EitherTlsStreamProj::Tcp { stream } => stream.poll_flush(cx),
+            EitherTlsStreamProj::Tls { stream } => stream.poll_flush(cx),
         }
     }
 
@@ -957,8 +957,8 @@ impl tokio::io::AsyncWrite for BypassStream {
         self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
         match self.project() {
-            BypassStreamProj::Tcp { stream } => stream.poll_shutdown(cx),
-            BypassStreamProj::Tls { stream } => stream.poll_shutdown(cx),
+            EitherTlsStreamProj::Tcp { stream } => stream.poll_shutdown(cx),
+            EitherTlsStreamProj::Tls { stream } => stream.poll_shutdown(cx),
         }
     }
 }
