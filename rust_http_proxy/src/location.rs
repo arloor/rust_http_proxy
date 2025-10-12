@@ -152,9 +152,6 @@ impl<'a> RequestSpec<'a> {
                 client_socket_addr,
                 static_dir,
             } => {
-                if AXUM_PATHS.contains(&request.uri().path()) {
-                    return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-                }
                 // 检查是否允许提供静态文件服务
                 if crate::CONFIG.serving_control.prohibit_serving {
                     info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
@@ -171,6 +168,10 @@ impl<'a> RequestSpec<'a> {
                         info!("Dropping request from {client_ip} as it's not in allowed networks");
                         return Err(io::Error::new(ErrorKind::PermissionDenied, "IP not in allowed networks"));
                     }
+                }
+
+                if AXUM_PATHS.contains(&request.uri().path()) {
+                    return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
                 }
 
                 // IP检查通过，提供静态文件服务

@@ -102,7 +102,10 @@ impl<'a> ServiceType<'a> {
                             Ok(InterceptResultAdapter::Return(resp))
                         }
                     }
-                    Err(e) => Err(e),
+                    Err(e) => match e.kind() {
+                        ErrorKind::PermissionDenied => Ok(InterceptResultAdapter::Drop),
+                        _ => Err(e),
+                    },
                 }
             }
             ServiceType::ForwardProxy => {
