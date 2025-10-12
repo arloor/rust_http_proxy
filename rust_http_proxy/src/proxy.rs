@@ -74,17 +74,25 @@ impl<'a> ServiceType<'a> {
                 ref original_scheme_host_port,
                 location,
                 upstream,
-            } => RequestSpec::ForReverseProxy {
-                request: Box::new(req),
-                client_socket_addr,
-                original_scheme_host_port,
-                location,
-                upstream,
-                reverse_client: &proxy_handler.reverse_proxy_client,
+            } => {
+                let res = RequestSpec::ForReverseProxy {
+                    request: Box::new(req),
+                    client_socket_addr,
+                    original_scheme_host_port,
+                    location,
+                    upstream,
+                    reverse_client: &proxy_handler.reverse_proxy_client,
+                }
+                .handle()
+                .await;
+                match res {
+                    Ok(resp) => Ok(InterceptResultAdapter::Return(resp)),
+                    Err(e) => match e.kind() {
+                        ErrorKind::PermissionDenied => Ok(InterceptResultAdapter::Drop),
+                        _ => Err(e),
+                    },
+                }
             }
-            .handle()
-            .await
-            .map(InterceptResultAdapter::Return),
             ServiceType::LocationStaticServing { static_dir, location } => {
                 let res = RequestSpec::ForServing {
                     request: &req,
