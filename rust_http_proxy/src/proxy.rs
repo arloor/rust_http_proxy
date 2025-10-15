@@ -396,7 +396,7 @@ impl ProxyHandler {
                             .tunnel_bypass_setup_duration
                             .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
                                 target: access_label.target.clone(),
-                                real_target: Some(addr.to_string()),
+                                final_target: Some(addr.to_string()),
                             }))
                             .observe(duration.as_millis() as f64);
                         stream
@@ -570,7 +570,7 @@ impl ProxyHandler {
                                     .tunnel_bypass_setup_duration
                                     .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
                                         target: access_label.target.clone(),
-                                        real_target: None,
+                                        final_target: None,
                                     }))
                                     .observe(duration.as_millis() as f64);
 
@@ -900,7 +900,7 @@ pub struct AccessLabel {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
 pub struct TunnelHandshakeLabel {
     pub target: String,
-    pub real_target: Option<String>, // 是否是通过bypass中继的
+    pub final_target: Option<String>, // 是否是通过bypass中继的
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
