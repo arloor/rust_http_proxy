@@ -389,7 +389,18 @@ impl ProxyHandler {
 
                 // 首先建立 TCP 连接
                 let tcp_stream = match TcpStream::connect(bypass_host.clone()).await {
-                    Ok(stream) => stream,
+                    Ok(stream) => {
+                        // 记录从接收请求到完成bypass握手的耗时
+                        let duration = start_time.elapsed();
+                        METRICS
+                            .tunnel_bypass_setup_duration
+                            .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
+                                target: access_label.target.clone(),
+                                real_target: Some(addr.to_string()),
+                            }))
+                            .observe(duration.as_millis() as f64);
+                        stream
+                    }
                     Err(e) => {
                         warn!("[forward_bypass tunnel establish error] [{}]: [{}] {} ", access_label, e.kind(), e);
                         let mut resp = Response::new(full_body("Failed to connect to bypass server"));
@@ -490,16 +501,6 @@ impl ProxyHandler {
 
                 // 从BufReader中取回原始stream
                 let dst_stream = reader.into_inner();
-
-                // 记录从接收请求到完成bypass握手的耗时
-                let duration = start_time.elapsed();
-                METRICS
-                    .tunnel_bypass_setup_duration
-                    .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
-                        target: access_label.target,
-                        real_target: Some(addr.to_string()),
-                    }))
-                    .observe(duration.as_millis() as f64);
 
                 tokio::task::spawn(async move {
                     let src_upgraded = match hyper::upgrade::on(req).await {
