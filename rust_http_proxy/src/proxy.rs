@@ -571,7 +571,7 @@ impl ProxyHandler {
                                         target: access_label.target.clone(),
                                         real_target: None,
                                     }))
-                                    .observe(duration.as_secs_f64());
+                                    .observe(duration.as_millis() as f64);
 
                                 // if the DST server did not respond the FIN(shutdown) from the SRC client, then you will see a pair of FIN-WAIT-2 and CLOSE_WAIT in the proxy server
                                 // which two socketAddrs are in the true path.
