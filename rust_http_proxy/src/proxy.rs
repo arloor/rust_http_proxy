@@ -495,8 +495,9 @@ impl ProxyHandler {
                 let duration = start_time.elapsed();
                 METRICS
                     .tunnel_bypass_setup_duration
-                    .get_or_create(&LabelImpl::new(Target {
+                    .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
                         target: access_label.target,
+                        relay: true,
                     }))
                     .observe(duration.as_millis() as f64);
 
@@ -566,8 +567,9 @@ impl ProxyHandler {
                                 let duration = start_time.elapsed();
                                 METRICS
                                     .tunnel_bypass_setup_duration
-                                    .get_or_create(&LabelImpl::new(Target {
+                                    .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
                                         target: access_label.target.clone(),
+                                        relay: false,
                                     }))
                                     .observe(duration.as_secs_f64());
 
@@ -895,8 +897,9 @@ pub struct AccessLabel {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
-pub struct Target {
+pub struct TunnelHandshakeLabel {
     pub target: String,
+    pub relay: bool,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
