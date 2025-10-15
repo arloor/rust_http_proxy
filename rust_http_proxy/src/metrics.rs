@@ -1,4 +1,4 @@
-use crate::proxy::{AccessLabel, ReqLabels, ReverseProxyReqLabel};
+use crate::proxy::{AccessLabel, ReqLabels, ReverseProxyReqLabel, Target};
 use log::info;
 use prom_label::{Label, LabelImpl};
 use prometheus_client::metrics::counter::Counter;
@@ -20,7 +20,7 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
 
     // Summary指标：统计tunnel_proxy_bypass从接收请求到完成bypass握手的耗时
-    let tunnel_handshake_duration = Family::<LabelImpl<AccessLabel>, Histogram>::new_with_constructor(|| {
+    let tunnel_handshake_duration = Family::<LabelImpl<Target>, Histogram>::new_with_constructor(|| {
         // 使用细粒度的buckets来统计耗时分布，单位是ms
         Histogram::new([0.001, 0.1, 3.0, 5.0, 10.0, 15.0, 30.0, 50.0, 100.0, 200.0, 300.0])
     });
@@ -127,7 +127,7 @@ pub(crate) struct Metrics {
     pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     pub(crate) reverse_proxy_req: Family<LabelImpl<ReverseProxyReqLabel>, Counter>,
-    pub(crate) tunnel_bypass_setup_duration: Family<LabelImpl<AccessLabel>, Histogram>,
+    pub(crate) tunnel_bypass_setup_duration: Family<LabelImpl<Target>, Histogram>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) net_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]

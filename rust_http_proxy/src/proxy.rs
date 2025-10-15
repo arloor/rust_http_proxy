@@ -495,7 +495,9 @@ impl ProxyHandler {
                 let duration = start_time.elapsed();
                 METRICS
                     .tunnel_bypass_setup_duration
-                    .get_or_create(&LabelImpl::new(access_label.clone()))
+                    .get_or_create(&LabelImpl::new(Target {
+                        target: access_label.target,
+                    }))
                     .observe(duration.as_millis() as f64);
 
                 tokio::task::spawn(async move {
@@ -564,7 +566,9 @@ impl ProxyHandler {
                                 let duration = start_time.elapsed();
                                 METRICS
                                     .tunnel_bypass_setup_duration
-                                    .get_or_create(&LabelImpl::new(access_label.clone()))
+                                    .get_or_create(&LabelImpl::new(Target {
+                                        target: access_label.target.clone(),
+                                    }))
                                     .observe(duration.as_secs_f64());
 
                                 // if the DST server did not respond the FIN(shutdown) from the SRC client, then you will see a pair of FIN-WAIT-2 and CLOSE_WAIT in the proxy server
@@ -888,6 +892,11 @@ pub struct AccessLabel {
     pub relay_over_tls: Option<bool>, // 只有bypass时，该字段才为Some
     pub target: String,
     pub username: String,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
+pub struct Target {
+    pub target: String,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
