@@ -93,6 +93,8 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     );
 
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
+    register_metric_cleaner(reverse_proxy_req.clone(), "reverse_proxy_req".to_owned(), 24);
+    register_metric_cleaner(tunnel_handshake_duration.clone(), "tunnel_handshake_duration".to_owned(), 24);
     // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
 
     Metrics {
@@ -185,7 +187,9 @@ pub(crate) fn update_cgroup_metrics() {
 // 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（数据突降）的数据。
 // 不过，虽然能够处理reset，但increase会用最后一个出现的值-第一个出现的值。在我们清空的实现下，reset后第一个出现的值肯定不是0，所以increase的算出来的值会稍少（少第一次出现的值）
 // 因此对于准确性要求较高的http_req_counter，这里的清空间隔就放大一点
-fn register_metric_cleaner<T: Label + Send + Sync>(counter: Family<T, Counter>, name: String, interval_in_hour: u64) {
+fn register_metric_cleaner<T: Label + Send + Sync, M: 'static + Send + Sync>(
+    counter: Family<T, M>, name: String, interval_in_hour: u64,
+) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(interval_in_hour * 60 * 60)).await;
