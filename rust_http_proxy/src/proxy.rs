@@ -367,6 +367,8 @@ impl ProxyHandler {
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
         forward_bypass_config: &ForwardBypassConfig,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        // 开始计时
+        let start_time = std::time::Instant::now();
         let proxy_traffic = METRICS.proxy_traffic.clone();
 
         match host_addr(req.uri()) {
@@ -488,6 +490,14 @@ impl ProxyHandler {
 
                 // 从BufReader中取回原始stream
                 let dst_stream = reader.into_inner();
+
+                // 记录从接收请求到完成bypass握手的耗时
+                let duration = start_time.elapsed();
+                METRICS
+                    .tunnel_bypass_setup_duration
+                    .get_or_create(&LabelImpl::new(access_label.clone()))
+                    .observe(duration.as_millis() as f64);
+
                 tokio::task::spawn(async move {
                     let src_upgraded = match hyper::upgrade::on(req).await {
                         Ok(src_upgraded) => src_upgraded,
@@ -521,6 +531,8 @@ impl ProxyHandler {
     fn tunnel_proxy(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        // 开始计时
+        let start_time = std::time::Instant::now();
         // Received an HTTP request like:
         // ```
         // CONNECT www.domain.com:443 HTTP/1.1
@@ -548,6 +560,13 @@ impl ProxyHandler {
                         // Connect to remote server
                         match TcpStream::connect(addr.to_string()).await {
                             Ok(target_stream) => {
+                                // 记录从接收请求到成功建立连接的耗时
+                                let duration = start_time.elapsed();
+                                METRICS
+                                    .tunnel_bypass_setup_duration
+                                    .get_or_create(&LabelImpl::new(access_label.clone()))
+                                    .observe(duration.as_secs_f64());
+
                                 // if the DST server did not respond the FIN(shutdown) from the SRC client, then you will see a pair of FIN-WAIT-2 and CLOSE_WAIT in the proxy server
                                 // which two socketAddrs are in the true path.
                                 // use this command to check:

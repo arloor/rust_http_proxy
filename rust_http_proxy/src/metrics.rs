@@ -5,6 +5,7 @@ use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 #[cfg(target_os = "linux")]
 use prometheus_client::metrics::gauge::Gauge;
+use prometheus_client::metrics::histogram::Histogram;
 use prometheus_client::registry::Registry;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -17,6 +18,18 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     registry.register("reverse_proxy_req", "Number of reverse proxy requests", reverse_proxy_req.clone());
     let proxy_traffic = Family::<LabelImpl<AccessLabel>, Counter>::default();
     registry.register("proxy_traffic", "num proxy_traffic", proxy_traffic.clone());
+
+    // Summary指标：统计tunnel_proxy_bypass从接收请求到完成bypass握手的耗时
+    let tunnel_handshake_duration = Family::<LabelImpl<AccessLabel>, Histogram>::new_with_constructor(|| {
+        // 使用细粒度的buckets来统计耗时分布，单位是ms
+        Histogram::new([0.001, 0.1, 3.0, 5.0, 10.0, 15.0, 30.0, 50.0, 100.0, 200.0, 300.0])
+    });
+    registry.register(
+        "tunnel_bypass_setup_duration",
+        "Duration in seconds from receiving request to completing bypass server handshake",
+        tunnel_handshake_duration.clone(),
+    );
+
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     let net_bytes = Family::<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>::default();
     #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -29,7 +42,11 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     #[cfg(target_os = "linux")]
     let cgroup_cpu_total_ns = Counter::default();
     #[cfg(target_os = "linux")]
-    registry.register("cgroup_cpu_total_ns", "Total CPU time used by cgroup in nanoseconds", cgroup_cpu_total_ns.clone());
+    registry.register(
+        "cgroup_cpu_total_ns",
+        "Total CPU time used by cgroup in nanoseconds",
+        cgroup_cpu_total_ns.clone(),
+    );
     #[cfg(target_os = "linux")]
     let cgroup_cpu_user_ns = Counter::default();
     #[cfg(target_os = "linux")]
@@ -37,23 +54,43 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     #[cfg(target_os = "linux")]
     let cgroup_cpu_system_ns = Counter::default();
     #[cfg(target_os = "linux")]
-    registry.register("cgroup_cpu_system_ns", "System CPU time used by cgroup in nanoseconds", cgroup_cpu_system_ns.clone());
+    registry.register(
+        "cgroup_cpu_system_ns",
+        "System CPU time used by cgroup in nanoseconds",
+        cgroup_cpu_system_ns.clone(),
+    );
     #[cfg(target_os = "linux")]
     let cgroup_memory_current_bytes = Gauge::default();
     #[cfg(target_os = "linux")]
-    registry.register("cgroup_memory_current_bytes", "Current memory usage by cgroup in bytes", cgroup_memory_current_bytes.clone());
+    registry.register(
+        "cgroup_memory_current_bytes",
+        "Current memory usage by cgroup in bytes",
+        cgroup_memory_current_bytes.clone(),
+    );
     #[cfg(target_os = "linux")]
     let cgroup_memory_peak_bytes = Gauge::default();
     #[cfg(target_os = "linux")]
-    registry.register("cgroup_memory_peak_bytes", "Peak memory usage by cgroup in bytes", cgroup_memory_peak_bytes.clone());
+    registry.register(
+        "cgroup_memory_peak_bytes",
+        "Peak memory usage by cgroup in bytes",
+        cgroup_memory_peak_bytes.clone(),
+    );
     #[cfg(target_os = "linux")]
     let cgroup_memory_rss_bytes = Gauge::default();
     #[cfg(target_os = "linux")]
-    registry.register("cgroup_memory_rss_bytes", "RSS memory usage by cgroup in bytes", cgroup_memory_rss_bytes.clone());
+    registry.register(
+        "cgroup_memory_rss_bytes",
+        "RSS memory usage by cgroup in bytes",
+        cgroup_memory_rss_bytes.clone(),
+    );
     #[cfg(target_os = "linux")]
     let cgroup_memory_cache_bytes = Gauge::default();
     #[cfg(target_os = "linux")]
-    registry.register("cgroup_memory_cache_bytes", "Cache memory usage by cgroup in bytes", cgroup_memory_cache_bytes.clone());
+    registry.register(
+        "cgroup_memory_cache_bytes",
+        "Cache memory usage by cgroup in bytes",
+        cgroup_memory_cache_bytes.clone(),
+    );
 
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
     // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
@@ -63,6 +100,7 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         http_req_counter,
         proxy_traffic,
         reverse_proxy_req,
+        tunnel_bypass_setup_duration: tunnel_handshake_duration,
         #[cfg(all(target_os = "linux", feature = "bpf"))]
         net_bytes,
         #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -89,6 +127,7 @@ pub(crate) struct Metrics {
     pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
     pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
     pub(crate) reverse_proxy_req: Family<LabelImpl<ReverseProxyReqLabel>, Counter>,
+    pub(crate) tunnel_bypass_setup_duration: Family<LabelImpl<AccessLabel>, Histogram>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     pub(crate) net_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -113,14 +152,27 @@ pub(crate) struct Metrics {
 pub(crate) fn update_cgroup_metrics() {
     use crate::cgroup_stats::collect_cgroup_stats;
     use log::warn;
-    
+
     match collect_cgroup_stats() {
         Ok(stats) => {
-            METRICS.cgroup_cpu_total_ns.inner().store(stats.cpu_total_ns, std::sync::atomic::Ordering::Relaxed);
-            METRICS.cgroup_cpu_user_ns.inner().store(stats.cpu_user_ns, std::sync::atomic::Ordering::Relaxed);
-            METRICS.cgroup_cpu_system_ns.inner().store(stats.cpu_system_ns, std::sync::atomic::Ordering::Relaxed);
-            METRICS.cgroup_memory_current_bytes.set(stats.memory_current_bytes as i64);
-            METRICS.cgroup_memory_peak_bytes.set(stats.memory_peak_bytes.unwrap_or(0) as i64);
+            METRICS
+                .cgroup_cpu_total_ns
+                .inner()
+                .store(stats.cpu_total_ns, std::sync::atomic::Ordering::Relaxed);
+            METRICS
+                .cgroup_cpu_user_ns
+                .inner()
+                .store(stats.cpu_user_ns, std::sync::atomic::Ordering::Relaxed);
+            METRICS
+                .cgroup_cpu_system_ns
+                .inner()
+                .store(stats.cpu_system_ns, std::sync::atomic::Ordering::Relaxed);
+            METRICS
+                .cgroup_memory_current_bytes
+                .set(stats.memory_current_bytes as i64);
+            METRICS
+                .cgroup_memory_peak_bytes
+                .set(stats.memory_peak_bytes.unwrap_or(0) as i64);
             METRICS.cgroup_memory_rss_bytes.set(stats.memory_rss_bytes as i64);
             METRICS.cgroup_memory_cache_bytes.set(stats.memory_cache_bytes as i64);
         }
