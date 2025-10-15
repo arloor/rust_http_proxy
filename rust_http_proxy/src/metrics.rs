@@ -22,7 +22,9 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     // Summary指标：统计tunnel_proxy_bypass从接收请求到完成bypass握手的耗时
     let tunnel_handshake_duration = Family::<LabelImpl<TunnelHandshakeLabel>, Histogram>::new_with_constructor(|| {
         // 使用细粒度的buckets来统计耗时分布，单位是ms
-        Histogram::new([1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 30.0, 50.0, 100.0, 200.0, 300.0])
+        Histogram::new([
+            1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 15.0, 22.0, 30.0, 40.0, 50.0, 100.0, 200.0,
+        ])
     });
     registry.register(
         "tunnel_bypass_setup_duration",
