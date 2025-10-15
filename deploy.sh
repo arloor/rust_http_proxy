@@ -1,7 +1,7 @@
-# cargo build -r --features aws_lc_rs,bpf,mimalloc --no-default-features
-# podman build . -f Dockerfile.dyn -t quay.io/arloor/rust_http_proxy:bpf --network host --env TARGET_PATH=
-# podman login quay.io
-# podman push quay.io/arloor/rust_http_proxy:bpf
+cargo build -r --features aws_lc_rs,bpf,mimalloc --no-default-features
+podman build . -f Dockerfile.dyn -t quay.io/arloor/rust_http_proxy:bpf --network host --env TARGET_PATH=
+podman login quay.io
+podman push quay.io/arloor/rust_http_proxy:bpf
 
 #! /bin/bash
 hosts="wee.arloor.dev hk.arloor.dev us.arloor.dev hi.arloor.dev ttl.arloor.com xq.arloor.com ti.arloor.com"

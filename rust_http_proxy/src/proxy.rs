@@ -388,7 +388,7 @@ impl ProxyHandler {
                 };
 
                 // 首先建立 TCP 连接
-                let tcp_stream = match TcpStream::connect(bypass_host).await {
+                let tcp_stream = match TcpStream::connect(bypass_host.clone()).await {
                     Ok(stream) => stream,
                     Err(e) => {
                         warn!("[forward_bypass tunnel establish error] [{}]: [{}] {} ", access_label, e.kind(), e);
@@ -497,7 +497,7 @@ impl ProxyHandler {
                     .tunnel_bypass_setup_duration
                     .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
                         target: access_label.target,
-                        relay: true,
+                        relay: Some(bypass_host.clone()),
                     }))
                     .observe(duration.as_millis() as f64);
 
@@ -569,7 +569,7 @@ impl ProxyHandler {
                                     .tunnel_bypass_setup_duration
                                     .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
                                         target: access_label.target.clone(),
-                                        relay: false,
+                                        relay: None,
                                     }))
                                     .observe(duration.as_secs_f64());
 
@@ -899,7 +899,7 @@ pub struct AccessLabel {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
 pub struct TunnelHandshakeLabel {
     pub target: String,
-    pub relay: bool,
+    pub relay: Option<String>, // 是否是通过bypass中继的
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
