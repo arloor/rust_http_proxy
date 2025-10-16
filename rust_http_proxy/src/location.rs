@@ -292,7 +292,7 @@ fn normalize302(
     if let Some(replacement) = lookup_replacement(
         original_scheme_host_port,
         redirect_url.to_string(),
-        &crate::CONFIG.reverse_proxy_config.redirect_bachpaths,
+        &crate::CONFIG.location_specs.redirect_bachpaths,
     ) {
         let origin = resp_headers.insert(
             LOCATION,
@@ -370,7 +370,7 @@ static ALL_REVERSE_PROXY_REQ: LazyLock<prom_label::LabelImpl<ReverseProxyReqLabe
     })
 });
 
-pub(crate) struct ReverseProxyConfig {
+pub(crate) struct LocationSpecs {
     pub(crate) locations: HashMap<String, Vec<LocationConfig>>,
     pub(crate) redirect_bachpaths: Vec<RedirectBackpaths>,
 }
@@ -387,7 +387,7 @@ fn truncate_string(s: &str, n: usize) -> &str {
 pub(crate) fn parse_reverse_proxy_config(
     reverse_proxy_config_file: &Option<String>, default_static_dir: &Option<String>,
     append_upstream_url: &mut Vec<String>, enable_github_proxy: bool,
-) -> Result<ReverseProxyConfig, <Config as TryFrom<Param>>::Error> {
+) -> Result<LocationSpecs, <Config as TryFrom<Param>>::Error> {
     let mut locations: HashMap<String, Vec<LocationConfig>> = match reverse_proxy_config_file {
         Some(path) => toml::from_str(&std::fs::read_to_string(path)?)?,
         None => HashMap::new(),
@@ -520,7 +520,7 @@ pub(crate) fn parse_reverse_proxy_config(
         log::info!("find redirect back path for: {}**", ele.redirect_url);
     }
     // println!("{}",toml::to_string_pretty(&locations)?);
-    Ok(ReverseProxyConfig {
+    Ok(LocationSpecs {
         locations,
         redirect_bachpaths,
     })

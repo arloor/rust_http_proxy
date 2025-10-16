@@ -248,10 +248,10 @@ impl ProxyHandler {
 
             // 尝试找到匹配的 Location 配置
             let location_config_of_host = crate::CONFIG
-                .reverse_proxy_config
+                .location_specs
                 .locations
                 .get(&req_domain.0)
-                .or(crate::CONFIG.reverse_proxy_config.locations.get(DEFAULT_HOST));
+                .or(crate::CONFIG.location_specs.locations.get(DEFAULT_HOST));
 
             if let Some(locations) = location_config_of_host {
                 if let Some(location_config) = locations

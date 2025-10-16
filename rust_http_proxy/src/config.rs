@@ -8,7 +8,7 @@ use log_x::init_log;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::location::{parse_reverse_proxy_config, ReverseProxyConfig};
+use crate::location::{parse_reverse_proxy_config, LocationSpecs};
 use crate::{DynError, IDLE_TIMEOUT};
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
@@ -100,7 +100,7 @@ pub(crate) struct Config {
     pub(crate) serving_control: ServingControl,
     pub(crate) over_tls: bool,
     pub(crate) port: Vec<u16>,
-    pub(crate) reverse_proxy_config: ReverseProxyConfig,
+    pub(crate) location_specs: LocationSpecs,
     pub(crate) forward_bypass: Option<ForwardBypassConfig>,
 }
 
@@ -217,7 +217,7 @@ impl TryFrom<Param> for Config {
             },
             over_tls: param.over_tls,
             port: param.port,
-            reverse_proxy_config,
+            location_specs: reverse_proxy_config,
             forward_bypass,
         })
     }
@@ -260,31 +260,27 @@ fn log_config(config: &Config) {
         }
     }
     info!("basic auth is {:?}", config.basic_auth);
-    if !config.reverse_proxy_config.locations.is_empty() {
+    if !config.location_specs.locations.is_empty() {
         info!("reverse proxy config: ");
     }
-    config
-        .reverse_proxy_config
-        .locations
-        .iter()
-        .for_each(|reverse_proxy_config| {
-            for ele in reverse_proxy_config.1 {
-                match ele {
-                    crate::location::LocationConfig::ReverseProxy { location, upstream } => {
-                        info!(
-                            "    {:<70} -> {}**",
-                            format!("http(s)://{}:port{}**", reverse_proxy_config.0, location),
-                            upstream.url_base,
-                        );
-                    }
-                    crate::location::LocationConfig::Serving { location, static_dir } => {
-                        info!(
-                            "    {:<70} -> static_dir: {}",
-                            format!("http(s)://{}:port{}**", reverse_proxy_config.0, location),
-                            static_dir,
-                        );
-                    }
+    config.location_specs.locations.iter().for_each(|reverse_proxy_config| {
+        for ele in reverse_proxy_config.1 {
+            match ele {
+                crate::location::LocationConfig::ReverseProxy { location, upstream } => {
+                    info!(
+                        "    {:<70} -> {}**",
+                        format!("http(s)://{}:port{}**", reverse_proxy_config.0, location),
+                        upstream.url_base,
+                    );
+                }
+                crate::location::LocationConfig::Serving { location, static_dir } => {
+                    info!(
+                        "    {:<70} -> static_dir: {}",
+                        format!("http(s)://{}:port{}**", reverse_proxy_config.0, location),
+                        static_dir,
+                    );
                 }
             }
-        });
+        }
+    });
 }
