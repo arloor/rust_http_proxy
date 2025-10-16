@@ -228,13 +228,13 @@ impl<'a> RequestSpec<'a> {
         }
 
         if let Some(ref headers) = upstream.headers {
-            for ele in headers {
-                if ele.1.is_empty() || ele.0.is_empty() {
-                    warn!("skip empty header value for key: {}", ele.0);
+            for (key, value) in headers {
+                if value.is_empty() || key.is_empty() {
+                    warn!("skip empty header value for key: {}", key);
                     continue;
                 }
-                let mut header_value = ele.1.clone();
-                if ele.1 == "${host}" {
+                let mut header_value = value.clone();
+                if value == "${host}" {
                     if let Some(port) = original_scheme_host_port.port {
                         header_value = format!("{}:{port}", original_scheme_host_port.host);
                     } else {
@@ -242,10 +242,10 @@ impl<'a> RequestSpec<'a> {
                     }
                 }
                 if let Some(old_value) = header_map.insert(
-                    HeaderName::from_str(&ele.0).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+                    HeaderName::from_str(key).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
                     HeaderValue::from_str(&header_value).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
                 ) {
-                    info!("override header {} from {old_value:?} to: {}", ele.0, ele.1);
+                    info!("override header {} from {old_value:?} to: {}", key, value);
                 }
             }
         }
@@ -303,13 +303,13 @@ fn normalize302(
     Ok(())
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Eq, PartialEq)]
 pub(crate) struct Upstream {
     pub(crate) url_base: String, // https://google.com
     #[serde(default = "default_version")]
     pub(crate) version: Version,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) headers: Option<Vec<(String, String)>>, // 可选的Host头覆盖
+    pub(crate) headers: Option<HashMap<String, String>>, // 可选的头部覆盖
 }
 
 // 定义默认值函数
@@ -384,11 +384,11 @@ fn truncate_string(s: &str, n: usize) -> &str {
     }
 }
 
-pub(crate) fn parse_reverse_proxy_config(
-    reverse_proxy_config_file: &Option<String>, default_static_dir: &Option<String>,
+pub(crate) fn parse_location_specs(
+    location_config_file: &Option<String>, default_static_dir: &Option<String>,
     append_upstream_url: &mut Vec<String>, enable_github_proxy: bool,
 ) -> Result<LocationSpecs, <Config as TryFrom<Param>>::Error> {
-    let mut locations: HashMap<String, Vec<LocationConfig>> = match reverse_proxy_config_file {
+    let mut locations: HashMap<String, Vec<LocationConfig>> = match location_config_file {
         Some(path) => toml::from_str(&std::fs::read_to_string(path)?)?,
         None => HashMap::new(),
     };

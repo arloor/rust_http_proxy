@@ -1,9 +1,0 @@
-default_host:
-  - location: /v1/chat/completions
-    upstream:
-      url_base: https://models.inference.ai.azure.com/chat/completions
-127.0.0.1:
-  - location: / # 默认为 /
-    upstream:
-      url_base: https://www.baidu.com
-      version: H1 # 可以填H1、H2、AUTO，默认为AUTO

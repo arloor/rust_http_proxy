@@ -8,7 +8,7 @@ use log_x::init_log;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::location::{parse_reverse_proxy_config, LocationSpecs};
+use crate::location::{parse_location_specs, LocationSpecs};
 use crate::{DynError, IDLE_TIMEOUT};
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
@@ -177,7 +177,7 @@ impl TryFrom<Param> for Config {
                 basic_auth.insert(format!("Basic {base64}"), username);
             }
         }
-        let reverse_proxy_config = parse_reverse_proxy_config(
+        let location_specs = parse_location_specs(
             &param.location_config_file,
             &param.web_content_path,
             &mut param.append_upstream_url,
@@ -217,7 +217,7 @@ impl TryFrom<Param> for Config {
             },
             over_tls: param.over_tls,
             port: param.port,
-            location_specs: reverse_proxy_config,
+            location_specs,
             forward_bypass,
         })
     }
