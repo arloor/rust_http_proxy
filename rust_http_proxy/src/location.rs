@@ -234,7 +234,7 @@ impl<'a> RequestSpec<'a> {
                     continue;
                 }
                 let mut header_value = value.clone();
-                if value == "${host}" {
+                if value == "${host}" { // TIPS: 即使本程序在反向代理的request中增加Host头部，如果upstream在H2协议中不读取Host头部，则仍然会使用uri中的host进行跨域检测，容易出现origin not allowed的问题
                     if let Some(port) = original_scheme_host_port.port {
                         header_value = format!("{}:{port}", original_scheme_host_port.host);
                     } else {
