@@ -63,7 +63,7 @@ pub struct Param {
     #[arg(
         long,
         value_name = "CIDR",
-        help = "允许访问静态文件托管的网段，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8\n\
+        help = "允许访问静态文件托管的网段白名单，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8\n\
         可以多次指定来允许多个网段\n\
         如设置了prohibit_serving，则此参数无效\n\
         如未设置任何网段，且未设置prohibit_serving，则允许所有IP访问静态文件"
