@@ -698,10 +698,9 @@ fn extract_scheme_host_port(
                 host: host_in_url.clone(),
                 port: uri.port_u16(),
             },
-            RequestDomain(if let Some(host_in_header) = host_in_header {
-                host_in_header
-            } else {
-                host_in_url
+            RequestDomain(match host_in_header {
+                Some(host) => host,  // 优先使用H2协议的Host头
+                None => host_in_url, // 其次使用H2协议的uri中的host
             }),
         ))
     } else {
