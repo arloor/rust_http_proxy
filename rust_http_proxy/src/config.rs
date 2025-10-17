@@ -58,7 +58,7 @@ pub struct Param {
         当作为正向代理使用时建议开启，否则有被嗅探的风险。"
     )]
     never_ask_for_auth: bool,
-    #[arg(long, help = "禁止所有静态文件托管，为了避免被嗅探")]
+    #[arg(long, help = "禁止所有静态文件托管/反向代理，避免被嗅探")]
     prohibit_serving: bool,
     #[arg(
         long,
