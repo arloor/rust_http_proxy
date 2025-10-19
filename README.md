@@ -146,7 +146,7 @@ location = "/" # 默认为 /
 [YOUR_DOMAIN.upstream]
 url_base = "https://www.baidu.com"
 version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
-headers = { Host = "${host}" } # 可选，覆盖发送给上游服务器的请求头
+headers = { Host = "#{host}" } # 可选，覆盖发送给上游服务器的请求头
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。
@@ -155,7 +155,7 @@ headers = { Host = "${host}" } # 可选，覆盖发送给上游服务器的请�
 
 - `url_base`: 上游服务器的基础 URL
 - `version`: HTTP 版本，可选值为 `H1`、`H2`、`AUTO`，默认为 `AUTO`
-- `headers`: 可选参数，用于覆盖发送给上游服务器的请求头。 支持变量 `${host}`，分别表示原请求的 Host。
+- `headers`: 可选参数，用于覆盖发送给上游服务器的请求头。 支持变量 `#{host}`，分别表示原请求的 Host。
 
 #### 例子 1: Github Proxy
 

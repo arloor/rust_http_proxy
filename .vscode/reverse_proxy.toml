@@ -7,7 +7,7 @@ upstream = { url_base = "https://models.inference.ai.azure.com/chat/completions"
 
 [[default_host]]
 location = "/grafana"
-upstream = { url_base = "http://192.168.5.16:3000/grafana", headers = { Host = "${host}" } }
+upstream = { url_base = "http://192.168.5.16:3000/grafana", headers = { Host = "#{host}" } }
 
 [[default_host]]
 location = "/file/"

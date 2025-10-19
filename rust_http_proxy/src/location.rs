@@ -234,7 +234,8 @@ impl<'a> RequestSpec<'a> {
                     continue;
                 }
                 let mut header_value = value.clone();
-                if value == "${host}" { // TIPS: 即使本程序在反向代理的request中增加Host头部，如果upstream在H2协议中不读取Host头部，则仍然会使用uri中的host进行跨域检测，容易出现origin not allowed的问题
+                if value == "#{host}" {
+                    // TIPS: 即使本程序在反向代理的request中增加Host头部，如果upstream在H2协议中不读取Host头部，则仍然会使用uri中的host进行跨域检测，容易出现origin not allowed的问题
                     if let Some(port) = original_scheme_host_port.port {
                         header_value = format!("{}:{port}", original_scheme_host_port.host);
                     } else {
@@ -385,8 +386,8 @@ fn truncate_string(s: &str, n: usize) -> &str {
 }
 
 pub(crate) fn parse_location_specs(
-    location_config_file: &Option<String>, default_static_dir: &Option<String>,
-    append_upstream_url: &mut Vec<String>, enable_github_proxy: bool,
+    location_config_file: &Option<String>, default_static_dir: &Option<String>, append_upstream_url: &mut Vec<String>,
+    enable_github_proxy: bool,
 ) -> Result<LocationSpecs, <Config as TryFrom<Param>>::Error> {
     let mut locations: HashMap<String, Vec<LocationConfig>> = match location_config_file {
         Some(path) => toml::from_str(&std::fs::read_to_string(path)?)?,
