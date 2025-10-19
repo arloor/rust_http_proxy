@@ -6,7 +6,7 @@
 
 1. 使用 tls 来对正向代理流量进行加密（`--over-tls`）。
 2. 类 Nginx 的静态资源托管。支持 gzip 压缩。支持 Accept-Ranges 以支持断点续传（备注：暂不支持多 range，例如 `Range: bytes=0-100,100-` ）
-3. 支持链式代理（通过--forward-bypass-url指定上游代理服务器）
+3. 支持链式代理（通过--forward-bypass-url 指定上游代理服务器）
 4. 支持反向代理。
 5. 基于 Prometheus 的可观测，可以监控代理的流量、外链访问等。
 6. 采集网卡上行流量，展示在 `/net` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
@@ -146,9 +146,7 @@ location = "/" # 默认为 /
 [YOUR_DOMAIN.upstream]
 url_base = "https://www.baidu.com"
 version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
-headers = [
-    ["Host", "${host}"],
-] # 可选，覆盖发送给上游服务器的请求头
+headers = { Host = "${host}" } # 可选，覆盖发送给上游服务器的请求头
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。
@@ -232,18 +230,14 @@ location = "/api/"
 
 ["api.example.com".upstream]
 url_base = "http://internal-service:8080"
-headers = [
-    ["Host", "api.internal.com:8080"],
-]  # 覆盖Host头为api.internal.com
+headers = { Host = "api.internal.com:8080" }  # 覆盖Host头为api.internal.com
 
 [["cdn.example.com"]]
 location = "/assets/"
 
 ["cdn.example.com".upstream]
 url_base = "https://storage.cloud.com"
-headers = [
-    ["Host", "myapp.storage.com"],
-]  # 覆盖Host头为myapp.storage.com
+headers = { Host = "myapp.storage.com" }  # 覆盖Host头为myapp.storage.com
 ```
 
 ## 可观测
