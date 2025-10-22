@@ -84,15 +84,20 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
                     "".to_string()
                 };
 
-                if local_port < 10000 && local_port != 22 && peer_port > 1024 {
-                    connections.push((peer_addr, local_addr, local_port, process_info));
-                }
+                connections.push((peer_addr, peer_port, local_addr, local_port, process_info));
             }
 
             // 按照连接信息进行分组和计数
             let mut connection_counts: HashMap<String, usize> = HashMap::new();
-            for (peer_addr, local_addr, local_port, process_info) in connections {
-                let connection_str = format!("{peer_addr:>15}   => {local_addr:>15}:{local_port:<5} {process_info}");
+            for (peer_addr, peer_port, local_addr, local_port, process_info) in connections {
+                let connection_str = match socket_direction {
+                    SocketDirection::Incoming => {
+                        format!("{peer_addr:>15}   => {local_addr:>15}:{local_port:<5} {process_info}")
+                    }
+                    SocketDirection::Outgoing => {
+                        format!("{local_addr:>15}   => {peer_addr:>15}:{peer_port:<5} {process_info}")
+                    }
+                };
                 *connection_counts.entry(connection_str).or_insert(0) += 1;
             }
 
