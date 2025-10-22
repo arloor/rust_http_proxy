@@ -17,6 +17,7 @@ enum SocketDirection {
 impl SocketDirection {
     fn ss_condition(&self) -> &'static str {
         match self {
+            // cat /proc/sys/net/ipv4/ip_local_port_range来查看临时端口范围
             SocketDirection::Incoming => "sport < 32768 && sport != 22 && dport >= 32768",
             SocketDirection::Outgoing => "sport >= 32768 && dport < 32768",
         }
@@ -40,7 +41,7 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
 
     let mut headers = HeaderMap::new();
 
-    // ss -ntp state established state close-wait 'sport < 32768 && sport != 22  && dport >= 32768' // cat /proc/sys/net/ipv4/ip_local_port_range来查看临时端口范围
+    // ss -ntp state established state close-wait 'sport < 32768 && sport != 22  && dport >= 32768' 
     match std::process::Command::new("ss")
         .arg("-ntp")
         .arg("state")
