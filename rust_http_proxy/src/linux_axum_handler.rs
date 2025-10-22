@@ -16,14 +16,14 @@ pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
 
     let mut headers = HeaderMap::new();
 
-    // ss -ntp state established state close-wait 'sport <= 10000 && sport != 22  && dport > 1024'
+    // ss -ntp state established state close-wait 'sport < 32768 && sport != 22  && dport >= 32768' // cat /proc/sys/net/ipv4/ip_local_port_range来查看临时端口范围
     match std::process::Command::new("ss")
         .arg("-ntp")
         .arg("state")
         .arg("established")
         .arg("state")
         .arg("close-wait")
-        .arg("sport <= 10000 && sport != 22  && dport > 1024")
+        .arg("sport < 32768 && sport != 22  && dport >= 32768")
         .output()
     {
         Ok(output) => {
