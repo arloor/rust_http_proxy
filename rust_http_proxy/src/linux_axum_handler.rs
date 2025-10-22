@@ -17,7 +17,7 @@ enum SocketDirection {
 impl SocketDirection {
     fn ss_condition(&self) -> &'static str {
         match self {
-            SocketDirection::Incoming => "dport < 32768 && dport != 22 && sport >= 32768",
+            SocketDirection::Incoming => "sport < 32768 && sport != 22 && dport >= 32768",
             SocketDirection::Outgoing => "sport >= 32768 && dport < 32768",
         }
     }
