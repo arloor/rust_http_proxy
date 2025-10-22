@@ -9,9 +9,33 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 
+enum SocketDirection {
+    Incoming,
+    Outgoing,
+}
+
+impl SocketDirection {
+    fn ss_condition(&self) -> &'static str {
+        match self {
+            SocketDirection::Incoming => "dport < 32768 && dport != 22 && sport >= 32768",
+            SocketDirection::Outgoing => "sport >= 32768 && dport < 32768",
+        }
+    }
+}
+
 // Linux特定的处理函数
 #[axum_macros::debug_handler]
-pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
+pub async fn count_incoming_stream() -> Result<(HeaderMap, String), AppError> {
+    count_stream(SocketDirection::Incoming).await
+}
+
+// Linux特定的处理函数
+#[axum_macros::debug_handler]
+pub async fn count_outcoming_stream() -> Result<(HeaderMap, String), AppError> {
+    count_stream(SocketDirection::Outgoing).await
+}
+
+async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, String), AppError> {
     use std::cmp::Ordering;
 
     let mut headers = HeaderMap::new();
@@ -23,7 +47,7 @@ pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
         .arg("established")
         .arg("state")
         .arg("close-wait")
-        .arg("sport < 32768 && sport != 22  && dport >= 32768")
+        .arg(socket_direction.ss_condition())
         .output()
     {
         Ok(output) => {
@@ -68,8 +92,7 @@ pub async fn count_stream() -> Result<(HeaderMap, String), AppError> {
             // 按照连接信息进行分组和计数
             let mut connection_counts: HashMap<String, usize> = HashMap::new();
             for (peer_addr, local_addr, local_port, process_info) in connections {
-                let connection_str =
-                    format!("{peer_addr:>15}   => {local_addr:>15}:{local_port:<5} {process_info}");
+                let connection_str = format!("{peer_addr:>15}   => {local_addr:>15}:{local_port:<5} {process_info}");
                 *connection_counts.entry(connection_str).or_insert(0) += 1;
             }
 

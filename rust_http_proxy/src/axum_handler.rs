@@ -67,7 +67,8 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
         ));
     #[cfg(target_os = "linux")]
     let router = router
-        .route("/nt", get(linux_axum_handler::count_stream))
+        .route("/nt", get(linux_axum_handler::count_incoming_stream))
+        .route("/nt2", get(linux_axum_handler::count_outcoming_stream))
         .route("/net", get(linux_axum_handler::net_html))
         .route("/netx", get(linux_axum_handler::netx_html))
         .route("/net.json", get(linux_axum_handler::net_json));
