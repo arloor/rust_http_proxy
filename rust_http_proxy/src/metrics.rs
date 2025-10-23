@@ -92,10 +92,10 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         cgroup_memory_cache_bytes.clone(),
     );
 
-    register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 24);
+    register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 2);
     register_metric_cleaner(reverse_proxy_req.clone(), "reverse_proxy_req".to_owned(), 24);
-    register_metric_cleaner(tunnel_handshake_duration.clone(), "tunnel_handshake_duration".to_owned(), 24);
-    // register_metric_cleaner(http_req_counter.clone(), 7 * 24);
+    register_metric_cleaner(tunnel_handshake_duration.clone(), "tunnel_handshake_duration".to_owned(), 2);
+    register_metric_cleaner(http_req_counter.clone(), "http_req_counter".to_owned(), 7 * 24);
 
     Metrics {
         registry,
