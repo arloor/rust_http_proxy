@@ -93,10 +93,10 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
             for (peer_addr, peer_port, local_addr, local_port, process_info) in connections {
                 let connection_str = match socket_direction {
                     SocketDirection::Incoming => {
-                        format!("{peer_addr:>39}   => {local_addr:>39}:{local_port:<5} {process_info}")
+                        format!("{peer_addr:>41}   => {local_addr:>41}:{local_port:<5} {process_info}")
                     }
                     SocketDirection::Outgoing => {
-                        format!("{local_addr:>39}   => {peer_addr:>39}:{peer_port:<5} {process_info}")
+                        format!("{local_addr:>41}   => {peer_addr:>41}:{peer_port:<5} {process_info}")
                     }
                 };
                 *connection_counts.entry(connection_str).or_insert(0) += 1;
