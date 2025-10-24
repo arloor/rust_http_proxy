@@ -41,7 +41,7 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
 
     let mut headers = HeaderMap::new();
 
-    // ss -ntp state established state close-wait 'sport < 32768 && sport != 22  && dport >= 32768' 
+    // ss -ntp state established state close-wait 'sport < 32768 && sport != 22  && dport >= 32768'
     match std::process::Command::new("ss")
         .arg("-ntp")
         .arg("state")
@@ -139,7 +139,7 @@ fn parse_ip_and_port(addr_port: &str) -> (String, u16) {
             // 提取端口（在右括号后面的冒号之后）
             if let Some(port_start) = addr_port[bracket_end..].find(':') {
                 if let Ok(port) = addr_port[bracket_end + port_start + 1..].parse::<u16>() {
-                    return (addr, port);
+                    return (format!("[{addr}]"), port);
                 }
             }
         }
