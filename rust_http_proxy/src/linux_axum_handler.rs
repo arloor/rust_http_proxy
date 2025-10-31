@@ -6,7 +6,8 @@ use axum_bootstrap::AppError;
 use http::{HeaderMap, HeaderValue};
 use log::{debug, warn};
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, Error};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 enum SocketDirection {
@@ -72,11 +73,11 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
 
                 // 提取本地地址和端口
                 let local_addr_port = fields[3];
-                let (local_addr, local_port) = parse_ip_and_port(local_addr_port);
+                let (local_addr, local_port) = parse_ip_and_port(local_addr_port)?;
 
                 // 提取对端地址和端口
                 let peer_addr_port = fields[4];
-                let (peer_addr, peer_port) = parse_ip_and_port(peer_addr_port);
+                let (peer_addr, peer_port) = parse_ip_and_port(peer_addr_port)?;
 
                 // 提取进程信息
                 let process_info = if fields.len() >= 6 {
@@ -129,39 +130,39 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
     }
 }
 
-fn parse_ip_and_port(addr_port: &str) -> (String, u16) {
+fn parse_ip_and_port(addr_port: &str) -> Result<(String, u16), io::Error> {
     // 如果是IPv6地址，格式通常是[ipv6]:port
     if addr_port.starts_with('[') {
-        if let Some(bracket_end) = addr_port.rfind(']') {
-            // 提取IPv6地址
-            let ipv6_addr = &addr_port[1..bracket_end];
+        let bracket_end = addr_port.rfind(']').ok_or(Error::other("cannot find ]"))?;
+        // 提取IPv6地址
+        let ipv6_addr = &addr_port[1..bracket_end];
+        let ipv6_addr = ipv6_addr
+            .parse::<Ipv6Addr>()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid IPv6 address"))?;
 
-            // 提取端口（在右括号后面的冒号之后）
-            if let Some(port_start) = addr_port[bracket_end..].find(':') {
-                if let Ok(port) = addr_port[bracket_end + port_start + 1..].parse::<u16>() {
-                    // 检查是否为IPv4映射地址（::ffff:）
-                    if let Some(ipv4_part) = ipv6_addr.strip_prefix("::ffff:") {
-                        // 作为IPv4地址处理，不使用方括号
-                        return (ipv4_part.to_string(), port);
-                    } else {
-                        // 真正的IPv6地址，保留方括号
-                        return (format!("[{ipv6_addr}]"), port);
-                    }
-                }
-            }
+        // 提取端口（在右括号后面的冒号之后）
+        let port_start = addr_port[bracket_end..]
+            .find(':')
+            .ok_or(io::Error::other("cannot find port part"))?;
+        let port = addr_port[bracket_end + port_start + 1..]
+            .parse::<u16>()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid port"))?;
+        match ipv6_addr.to_canonical() {
+            IpAddr::V4(addr) => Ok((addr.to_string(), port)),
+            IpAddr::V6(addr) => Ok((format!("[{addr}]"), port)),
         }
     } else {
         // IPv4地址，格式通常是ipv4:port
-        if let Some(colon_pos) = addr_port.rfind(':') {
-            let addr = addr_port[..colon_pos].to_string();
-            if let Ok(port) = addr_port[colon_pos + 1..].parse::<u16>() {
-                return (addr, port);
-            }
-        }
+        let colon_pos = addr_port.rfind(':').ok_or(Error::other("cannot find :"))?;
+        let ipv4_addr = addr_port[..colon_pos].to_string();
+        let ipv4_addr = ipv4_addr
+            .parse::<Ipv4Addr>()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid IPv4 address"))?;
+        let port = addr_port[colon_pos + 1..]
+            .parse::<u16>()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid port"))?;
+        Ok((ipv4_addr.to_string(), port))
     }
-
-    // 如果解析失败，返回默认值
-    (addr_port.to_string(), 0)
 }
 
 // 解析进程信息，返回格式为"pid/command"
