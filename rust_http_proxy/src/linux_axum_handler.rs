@@ -134,12 +134,19 @@ fn parse_ip_and_port(addr_port: &str) -> (String, u16) {
     if addr_port.starts_with('[') {
         if let Some(bracket_end) = addr_port.rfind(']') {
             // 提取IPv6地址
-            let addr = addr_port[1..bracket_end].replace("::ffff:", "");
+            let ipv6_addr = &addr_port[1..bracket_end];
 
             // 提取端口（在右括号后面的冒号之后）
             if let Some(port_start) = addr_port[bracket_end..].find(':') {
                 if let Ok(port) = addr_port[bracket_end + port_start + 1..].parse::<u16>() {
-                    return (format!("[{addr}]"), port);
+                    // 检查是否为IPv4映射地址（::ffff:）
+                    if let Some(ipv4_part) = ipv6_addr.strip_prefix("::ffff:") {
+                        // 作为IPv4地址处理，不使用方括号
+                        return (ipv4_part.to_string(), port);
+                    } else {
+                        // 真正的IPv6地址，保留方括号
+                        return (format!("[{ipv6_addr}]"), port);
+                    }
                 }
             }
         }
