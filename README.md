@@ -1,5 +1,7 @@
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/arloor/rust_http_proxy)
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/arloor/rust_http_proxy)
+
 基于 `hyper` 、 `axum` 、 `rustls` 的**静态资源托管服务器**、**正向代理**、**反向代理**、**API server**。
 
 ## 功能特性
