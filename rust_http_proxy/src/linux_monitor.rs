@@ -35,7 +35,7 @@ impl TimeValue {
     }
 }
 
-pub(crate) const IGNORED_INTERFACES: &[&str; 7] = &["lo", "podman", "veth", "flannel", "cni0", "utun", "docker"];
+pub(crate) const IGNORED_INTERFACES: &[&str; 8] = &["lo", "podman", "veth", "flannel", "cni0", "utun", "docker", "wg"];
 
 #[derive(Clone)]
 pub struct NetMonitor {
