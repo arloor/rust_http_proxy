@@ -69,7 +69,7 @@ socket_filter = { version = "0.2", optional = true }
 cgroup_traffic = { version = "0.2", optional = true }
 pnet = { version = "0.35", optional = true }
 axum-macros = "0.5"
-axum-extra = "0.10.0"
+axum-extra = "0.12"
 
 [features]
 default = ["ring"]
