@@ -1,8 +1,7 @@
-use crate::axum_handler::{AppState, HtmlTemplate};
+use crate::axum_handler::{AppProxyError, AppState, HtmlTemplate};
 use askama::Template;
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum_bootstrap::AppError;
 use http::{HeaderMap, HeaderValue};
 use log::{debug, warn};
 use std::collections::HashMap;
@@ -27,17 +26,17 @@ impl SocketDirection {
 
 // Linux特定的处理函数
 #[axum_macros::debug_handler]
-pub async fn count_incoming_stream() -> Result<(HeaderMap, String), AppError> {
+pub async fn count_incoming_stream() -> Result<(HeaderMap, String), AppProxyError> {
     count_stream(SocketDirection::Incoming).await
 }
 
 // Linux特定的处理函数
 #[axum_macros::debug_handler]
-pub async fn count_outcoming_stream() -> Result<(HeaderMap, String), AppError> {
+pub async fn count_outcoming_stream() -> Result<(HeaderMap, String), AppProxyError> {
     count_stream(SocketDirection::Outgoing).await
 }
 
-async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, String), AppError> {
+async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, String), AppProxyError> {
     use std::cmp::Ordering;
 
     let mut headers = HeaderMap::new();
@@ -58,7 +57,7 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
             debug!("ss command stdout: {stdout}");
             if !stderr.is_empty() {
                 warn!("ss command stderr: {stderr}");
-                return Err(AppError::new(io::Error::other(stderr)));
+                return Err(AppProxyError::new(io::Error::other(stderr)));
             }
 
             // 解析 ss 命令输出
@@ -125,7 +124,7 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
         }
         Err(e) => {
             warn!("ss command error: {e}");
-            Err(AppError::new(e))
+            Err(AppProxyError::new(e))
         }
     }
 }
@@ -198,7 +197,7 @@ fn parse_process_info(process_field: &str) -> String {
 
 pub async fn net_html(
     State(_): State<Arc<AppState>>, axum_extra::extract::Host(host): axum_extra::extract::Host,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<impl IntoResponse, AppProxyError> {
     Ok(HtmlTemplate(NetTemplate {
         hostname: host.to_string(),
     }))
@@ -206,13 +205,15 @@ pub async fn net_html(
 
 pub async fn netx_html(
     State(_): State<Arc<AppState>>, axum_extra::extract::Host(host): axum_extra::extract::Host,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<impl IntoResponse, AppProxyError> {
     Ok(HtmlTemplate(NetXTemplate {
         hostname: host.to_string(),
     }))
 }
 
-pub async fn net_json(State(_): State<Arc<AppState>>) -> Result<axum::Json<crate::linux_monitor::Snapshot>, AppError> {
+pub async fn net_json(
+    State(_): State<Arc<AppState>>,
+) -> Result<axum::Json<crate::linux_monitor::Snapshot>, AppProxyError> {
     use crate::linux_monitor::NET_MONITOR;
     Ok(axum::Json(NET_MONITOR.net_json().await))
 }

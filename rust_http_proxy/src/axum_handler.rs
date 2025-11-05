@@ -4,7 +4,6 @@ use axum::extract::{ConnectInfo, MatchedPath, State};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use axum_bootstrap::AppError;
 
 use http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use log::{debug, warn};
@@ -131,7 +130,7 @@ pub(crate) fn check_auth(
 
 async fn serve_metrics(
     State(state): State<Arc<AppState>>, headers: HeaderMap,
-) -> Result<(StatusCode, HeaderMap, String), AppError> {
+) -> Result<(StatusCode, HeaderMap, String), AppProxyError> {
     let mut header_map = HeaderMap::new();
     match check_auth(&headers, http::header::AUTHORIZATION, &state.basic_auth) {
         Ok(some_user) => {
@@ -150,7 +149,7 @@ async fn serve_metrics(
     #[cfg(target_os = "linux")]
     crate::metrics::update_cgroup_metrics();
     let mut buffer = String::new();
-    encode(&mut buffer, &METRICS.registry).map_err(AppError::new)?;
+    encode(&mut buffer, &METRICS.registry).map_err(AppProxyError::new)?;
     Ok((http::StatusCode::OK, header_map, buffer))
 }
 
