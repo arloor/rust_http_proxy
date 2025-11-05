@@ -52,8 +52,8 @@ async fn count_stream(socket_direction: SocketDirection) -> Result<(HeaderMap, S
         .output()
     {
         Ok(output) => {
-            let stdout = String::from_utf8(output.stdout).unwrap_or_default();
-            let stderr = String::from_utf8(output.stderr).unwrap_or_default();
+            let stdout = String::from_utf8(output.stdout)?;
+            let stderr = String::from_utf8(output.stderr)?;
             debug!("ss command stdout: {stdout}");
             if !stderr.is_empty() {
                 warn!("ss command stderr: {stderr}");
