@@ -5,59 +5,24 @@
     <title>{{ title }}</title>
     <style>
         body {
-            font-family: Tahoma, Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-        }
-        .container {
-            width: 35em;
-            margin: 0 auto;
-            padding: 5em 0;
+            font-family: sans-serif;
+            max-width: 600px;
+            margin: 80px auto;
+            padding: 20px;
+            color: #333;
         }
         h1 {
-            font-size: 36px;
-            color: #E65100;
-            font-weight: bold;
-            margin: 0 0 0.5em 0;
-            padding: 0.5em 0;
-            border-bottom: 3px solid #E65100;
-            text-align: center;
+            font-size: 24px;
+            margin: 0 0 16px 0;
         }
         p {
-            margin: 1em 0;
-            line-height: 1.5em;
-        }
-        .error-details {
-            color: #5D6D7E;
-            font-size: 18px;
-            font-weight: bold;
-            text-align: center;
-            background-color: #F8F9FA;
-            padding: 1.5em;
-            border-left: 5px solid #6C757D;
-            margin: 2em 0;
-        }
-        hr {
-            border: none;
-            border-top: 1px solid #EEEEEE;
-            margin: 20px 0;
-        }
-        .footer {
-            color: #999999;
-            font-size: 16px;
-            text-align: center;
+            margin: 0;
+            color: #666;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>{{ title }}</h1>
-        <div class="error-details">
-            <p>{{ msg }}</p>
-        </div>
-        <div class="footer">
-            <p>Rust HTTP Proxy Server</p>
-        </div>
-    </div>
+    <h1>{{ title }}</h1>
+    <p>{{ msg }}</p>
 </body>
 </html>
