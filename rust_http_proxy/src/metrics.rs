@@ -25,8 +25,8 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         Histogram::new([1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0])
     });
     registry.register(
-        "tunnel_bypass_setup_duration",
-        "Duration in seconds from receiving request to completing bypass server handshake",
+        "tunnel_handshake_duration",
+        "Duration in seconds from receiving request to completing tunnel handshake",
         tunnel_handshake_duration.clone(),
     );
 
