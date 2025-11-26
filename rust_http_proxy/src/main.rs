@@ -76,6 +76,12 @@ async fn main() -> Result<(), DynError> {
             async move {
                 let res = future.await;
                 info!("HTTP Proxy server on port {port} exited with: {res:?}");
+                if let Err(ref err) = res {
+                    if err.kind() == std::io::ErrorKind::AddrInUse {
+                        log::error!("Port {port} is already in use. Exiting.");
+                        std::process::exit(1);
+                    }
+                }
                 res
             }
         })
@@ -114,7 +120,7 @@ impl ReqInterceptor for ProxyInterceptor {
 
 fn create_future(
     port: u16, proxy_handler: Arc<ProxyHandler>,
-) -> (impl Future<Output = Result<(), DynError>>, Sender<()>) {
+) -> (impl Future<Output = Result<(), std::io::Error>>, Sender<()>) {
     let config = &crate::CONFIG;
     let basic_auth = config.basic_auth.clone();
 
