@@ -99,7 +99,9 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
     let basic_auth = config.basic_auth.clone();
 
     let router = build_router(AppState { basic_auth });
-    axum_bootstrap::new_server(port, router)
+    let (server, shutdown_tx) = axum_bootstrap::new_server(port, router);
+
+    let server = server
         .with_timeout(IDLE_TIMEOUT)
         .with_tls_param(match config.over_tls {
             true => Some(TlsParam {
@@ -109,7 +111,11 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
             }),
             false => None,
         })
-        .with_interceptor(ProxyInterceptor(proxy_handler))
-        .run()
-        .await
+        .with_interceptor(ProxyInterceptor(proxy_handler));
+
+    // Spawn a task to handle signals and send shutdown signal
+    tokio::spawn(async move {
+        let _ = axum_bootstrap::handle_signal(shutdown_tx).await;
+    });
+    server.run().await
 }

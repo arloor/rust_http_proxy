@@ -61,7 +61,7 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
                 // logging of errors so disable that
                 .on_failure(()),
             CorsLayer::permissive(),
-            TimeoutLayer::new(Duration::from_secs(30)),
+            TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)),
             CompressionLayer::new(),
         ));
     #[cfg(target_os = "linux")]
