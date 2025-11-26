@@ -140,7 +140,7 @@ async fn serve_path(
         return not_found();
     }
     // 禁止访问.git目录
-    if String::from(url_path).starts_with("/.git/") {
+    if String::from(url_path).starts_with(".git/") {
         return not_found();
     }
     let path = if String::from(url_path).ends_with('/') {
