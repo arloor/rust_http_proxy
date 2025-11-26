@@ -115,7 +115,9 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
 
     // Spawn a task to handle signals and send shutdown signal
     tokio::spawn(async move {
-        let _ = axum_bootstrap::handle_signal(shutdown_tx).await;
+        if (axum_bootstrap::wait_signal().await).is_ok() {
+            let _ = shutdown_tx.send(()).await;
+        }
     });
     server.run().await
 }
