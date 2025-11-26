@@ -31,7 +31,9 @@ use futures_util::future::select_all;
 use log::warn;
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
+use tokio::sync::mpsc::Sender;
 
+use std::future::Future;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -64,14 +66,26 @@ async fn main() -> Result<(), DynError> {
     crate::ebpf::init_once();
     #[cfg(target_os = "linux")]
     crate::linux_monitor::init_once();
+
+    let mut shutdown_tx_list = vec![];
     let futures = ports
         .iter()
         .map(|port| {
-            let proxy_handler = proxy_handler.clone();
-            async move { bootstrap(*port, proxy_handler).await }
+            let (future, shutdown_tx) = bootstrap(*port, proxy_handler.clone());
+            shutdown_tx_list.push(shutdown_tx);
+            future
         })
         .map(Box::pin)
         .collect::<Vec<_>>();
+
+    // Spawn a task to handle signals and send shutdown signal
+    tokio::spawn(async move {
+        if (axum_bootstrap::wait_signal().await).is_ok() {
+            for ele in shutdown_tx_list {
+                let _ = ele.send(()).await;
+            }
+        }
+    });
     select_all(futures.into_iter()).await.0?;
     Ok(())
 }
@@ -94,7 +108,7 @@ impl ReqInterceptor for ProxyInterceptor {
     }
 }
 
-async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), DynError> {
+fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> (impl Future<Output = Result<(), DynError>>, Sender<()>) {
     let config = &crate::CONFIG;
     let basic_auth = config.basic_auth.clone();
 
@@ -112,12 +126,5 @@ async fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> Result<(), Dy
             false => None,
         })
         .with_interceptor(ProxyInterceptor(proxy_handler));
-
-    // Spawn a task to handle signals and send shutdown signal
-    tokio::spawn(async move {
-        if (axum_bootstrap::wait_signal().await).is_ok() {
-            let _ = shutdown_tx.send(()).await;
-        }
-    });
-    server.run().await
+    (server.run(), shutdown_tx)
 }
