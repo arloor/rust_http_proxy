@@ -16,9 +16,9 @@ use crate::{DynError, IDLE_TIMEOUT};
 #[command(author, version=None, about, long_about = None)]
 pub struct Param {
     #[arg(long, value_name = "LOG_DIR", default_value = "/tmp")]
-    log_dir: String,
+    pub log_dir: String,
     #[arg(long, value_name = "LOG_FILE", default_value = "proxy.log")]
-    log_file: String,
+    pub log_file: String,
     #[arg(
         short,
         long,
