@@ -71,7 +71,7 @@ async fn main() -> Result<(), DynError> {
     let futures = ports
         .iter()
         .map(|port| {
-            let (future, shutdown_tx) = bootstrap(*port, proxy_handler.clone());
+            let (future, shutdown_tx) = create_future(*port, proxy_handler.clone());
             shutdown_tx_list.push(shutdown_tx);
             future
         })
@@ -108,7 +108,7 @@ impl ReqInterceptor for ProxyInterceptor {
     }
 }
 
-fn bootstrap(port: u16, proxy_handler: Arc<ProxyHandler>) -> (impl Future<Output = Result<(), DynError>>, Sender<()>) {
+fn create_future(port: u16, proxy_handler: Arc<ProxyHandler>) -> (impl Future<Output = Result<(), DynError>>, Sender<()>) {
     let config = &crate::CONFIG;
     let basic_auth = config.basic_auth.clone();
 
