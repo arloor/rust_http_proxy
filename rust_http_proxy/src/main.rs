@@ -20,11 +20,12 @@ mod proxy;
 mod static_serve;
 
 use crate::axum_handler::{build_router, AppState};
-use crate::config::Config;
+use crate::config::{Config, Param};
 use crate::metrics::METRICS;
 
 use axum_bootstrap::{InterceptResult, ReqInterceptor, TlsParam};
 use axum_handler::AppProxyError;
+use clap::Parser as _;
 use config::load_config;
 use futures_util::future::join_all;
 
@@ -34,7 +35,7 @@ use std::error::Error as stdError;
 use tokio::sync::mpsc::Sender;
 
 use std::future::Future;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub(crate) const IDLE_TIMEOUT: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 10 }); // 3 minutes
@@ -49,19 +50,13 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-static CONFIG: LazyLock<Config> = LazyLock::new(|| {
-    // This will be initialized when the program starts
-    // to ensure we have a default configuration
-    #[allow(clippy::expect_used)]
-    load_config().expect("Failed to load config")
-});
-
 pub const BUILD_TIME: &str = build_time::build_time_local!("%Y-%m-%d %H:%M:%S %:z");
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    let ports = CONFIG.port.clone();
-    let proxy_handler = Arc::new(ProxyHandler::new()?);
+    let config = Arc::new(load_config(Param::parse())?);
+    let ports = config.port.clone();
+    let proxy_handler = Arc::new(ProxyHandler::new(config.clone())?);
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();
     #[cfg(target_os = "linux")]
@@ -71,7 +66,7 @@ async fn main() -> Result<(), DynError> {
     let main_futures = ports
         .iter()
         .map(|port| {
-            let (main_future, shutdown_tx) = create_future(*port, proxy_handler.clone());
+            let (main_future, shutdown_tx) = create_future(*port, proxy_handler.clone(), config.clone());
             shutdown_tx_list.push(shutdown_tx);
             async move {
                 let res = main_future.await;
@@ -119,9 +114,8 @@ impl ReqInterceptor for ProxyInterceptor {
 }
 
 fn create_future(
-    port: u16, proxy_handler: Arc<ProxyHandler>,
+    port: u16, proxy_handler: Arc<ProxyHandler>, config: Arc<Config>,
 ) -> (impl Future<Output = Result<(), std::io::Error>>, Sender<()>) {
-    let config = &crate::CONFIG;
     let basic_auth = config.basic_auth.clone();
 
     let router = build_router(AppState { basic_auth });

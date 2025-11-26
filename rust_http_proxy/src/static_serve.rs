@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
@@ -33,9 +34,9 @@ pub(crate) static GZIP: &str = "gzip";
 pub(crate) const SERVER_NAME: &str = "The Bad Server";
 
 pub async fn serve_http_request(
-    req: &Request<impl Body>, client_socket_addr: SocketAddr, path: &str, static_dir: &str,
+    req: &Request<impl Body>, client_socket_addr: SocketAddr, path: &str, static_dir: &str, config: &Config,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    let referer_keywords_to_self = &crate::CONFIG.referer_keywords_to_self;
+    let referer_keywords_to_self = &config.referer_keywords_to_self;
     let referer_header = req.headers().get(REFERER).map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
         && !referer_keywords_to_self.is_empty()
