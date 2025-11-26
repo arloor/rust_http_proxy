@@ -68,13 +68,13 @@ async fn main() -> Result<(), DynError> {
     crate::linux_monitor::init_once();
 
     let mut shutdown_tx_list = vec![];
-    let futures = ports
+    let main_futures = ports
         .iter()
         .map(|port| {
-            let (future, shutdown_tx) = create_future(*port, proxy_handler.clone());
+            let (main_future, shutdown_tx) = create_future(*port, proxy_handler.clone());
             shutdown_tx_list.push(shutdown_tx);
             async move {
-                let res = future.await;
+                let res = main_future.await;
                 info!("HTTP Proxy server on port {port} exited with: {res:?}");
                 if let Err(ref err) = res {
                     if err.kind() == std::io::ErrorKind::AddrInUse {
@@ -96,7 +96,7 @@ async fn main() -> Result<(), DynError> {
             }
         }
     });
-    join_all(futures.into_iter()).await;
+    join_all(main_futures.into_iter()).await;
     Ok(())
 }
 
