@@ -62,6 +62,7 @@ enum ServiceType<'a> {
     },
     /// 正向代理
     ForwardProxy,
+    NonMatch,
 }
 
 impl<'a> ServiceType<'a> {
@@ -70,6 +71,7 @@ impl<'a> ServiceType<'a> {
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, proxy_handler: &ProxyHandler,
     ) -> Result<InterceptResultAdapter, io::Error> {
         match self {
+            ServiceType::NonMatch => Ok(InterceptResultAdapter::Continue(req)),
             ServiceType::ReverseProxy {
                 ref original_scheme_host_port,
                 location,
@@ -231,51 +233,56 @@ impl ProxyHandler {
 
     /// 确定服务类型
     fn determine_service_type(&'_ self, req: &Request<Incoming>) -> Result<ServiceType<'_>, io::Error> {
-        // 对于非CONNECT请求，检查是否需要反向代理或静态文件托管
-        if Method::CONNECT != req.method() {
-            // HTTP1 且 url中有host则判定为simple proxy
-            if (req.version() == Version::HTTP_10 || req.version() == Version::HTTP_11) && req.uri().host().is_some() {
-                return Ok(ServiceType::ForwardProxy);
-            }
-
-            let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
-                req,
-                match crate::CONFIG.over_tls {
-                    true => "https",
-                    false => "http",
-                },
-            )?;
-
-            // 尝试找到匹配的 Location 配置
-            let location_config_of_host = crate::CONFIG
-                .location_specs
-                .locations
-                .get(&req_domain.0)
-                .or(crate::CONFIG.location_specs.locations.get(DEFAULT_HOST));
-
-            if let Some(locations) = location_config_of_host {
-                if let Some(location_config) = locations
-                    .iter()
-                    .find(|&ele| req.uri().path().starts_with(ele.location()))
+        match req.method() {
+            &Method::CONNECT => Ok(ServiceType::ForwardProxy),
+            _ => {
+                // HTTP1 且 url中有host则判定为simple proxy
+                if (req.version() == Version::HTTP_10 || req.version() == Version::HTTP_11)
+                    && req.uri().host().is_some()
                 {
-                    match location_config {
-                        LocationConfig::ReverseProxy { location, upstream } => {
-                            return Ok(ServiceType::ReverseProxy {
-                                original_scheme_host_port,
-                                location,
-                                upstream,
-                            });
-                        }
-                        LocationConfig::Serving { static_dir, location } => {
-                            return Ok(ServiceType::LocationStaticServing { location, static_dir });
+                    return Ok(ServiceType::ForwardProxy);
+                }
+
+                let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
+                    req,
+                    match crate::CONFIG.over_tls {
+                        true => "https",
+                        false => "http",
+                    },
+                )?;
+
+                // 尝试找到匹配的 Location 配置
+                let location_config_of_host = crate::CONFIG
+                    .location_specs
+                    .locations
+                    .get(&req_domain.0)
+                    .or(crate::CONFIG.location_specs.locations.get(DEFAULT_HOST));
+
+                if let Some(locations) = location_config_of_host {
+                    if let Some(location_config) = locations
+                        .iter()
+                        .find(|&ele| req.uri().path().starts_with(ele.location()))
+                    {
+                        match location_config {
+                            LocationConfig::ReverseProxy { location, upstream } => {
+                                return Ok(ServiceType::ReverseProxy {
+                                    original_scheme_host_port,
+                                    location,
+                                    upstream,
+                                });
+                            }
+                            LocationConfig::Serving { static_dir, location } => {
+                                return Ok(ServiceType::LocationStaticServing { location, static_dir });
+                            }
                         }
                     }
                 }
+                // 没有匹配的 Location 配置，返回 NonMatch
+                Ok(ServiceType::NonMatch)
             }
         }
 
         // 默认为正向代理
-        Ok(ServiceType::ForwardProxy)
     }
 
     /// 代理普通请求
