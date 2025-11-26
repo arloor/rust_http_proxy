@@ -358,3 +358,15 @@ cargo build -r --features bpf_vendored
 podman build . -f Dockerfile.test -t test --net host
 podman run --rm -it --privileged --net host --pid host test
 ```
+
+
+## windows 服务
+
+```powershell
+cargo build -p rust_http_proxy --bin proxy_service --features winservice
+sc.exe create rust_http_proxy binPath= "C:\Users\arloor\rust_http_proxy\target\debug\proxy_service.exe -p 7777 -k C:\Users\arloor\rust_http_proxy\privkey.pem -c C:\Users\arloor\rust_http_proxy\cert.pem -o"
+sc.exe start rust_http_proxy
+
+sc.exe stop rust_http_proxy
+sc.exe delete rust_http_proxy
+```
