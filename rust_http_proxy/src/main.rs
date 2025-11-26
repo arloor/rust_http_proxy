@@ -26,9 +26,9 @@ use crate::metrics::METRICS;
 use axum_bootstrap::{InterceptResult, ReqInterceptor, TlsParam};
 use axum_handler::AppProxyError;
 use config::load_config;
-use futures_util::future::select_all;
+use futures_util::future::join_all;
 
-use log::warn;
+use log::{info, warn};
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
 use tokio::sync::mpsc::Sender;
@@ -73,7 +73,11 @@ async fn main() -> Result<(), DynError> {
         .map(|port| {
             let (future, shutdown_tx) = create_future(*port, proxy_handler.clone());
             shutdown_tx_list.push(shutdown_tx);
-            future
+            async move {
+                let res = future.await;
+                info!("HTTP Proxy server on port {port} exited with: {res:?}");
+                res
+            }
         })
         .map(Box::pin)
         .collect::<Vec<_>>();
@@ -86,7 +90,7 @@ async fn main() -> Result<(), DynError> {
             }
         }
     });
-    select_all(futures.into_iter()).await.0?;
+    join_all(futures.into_iter()).await;
     Ok(())
 }
 
@@ -108,7 +112,9 @@ impl ReqInterceptor for ProxyInterceptor {
     }
 }
 
-fn create_future(port: u16, proxy_handler: Arc<ProxyHandler>) -> (impl Future<Output = Result<(), DynError>>, Sender<()>) {
+fn create_future(
+    port: u16, proxy_handler: Arc<ProxyHandler>,
+) -> (impl Future<Output = Result<(), DynError>>, Sender<()>) {
     let config = &crate::CONFIG;
     let basic_auth = config.basic_auth.clone();
 
