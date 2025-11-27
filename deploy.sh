@@ -7,6 +7,7 @@ podman push quay.io/arloor/rust_http_proxy:bpf
 hosts="wee.arloor.dev hk.arloor.dev us.arloor.dev hi.arloor.dev ttl.arloor.com xq.arloor.com ti.arloor.com"
 for i in ${hosts}; do
     ssh -o StrictHostKeyChecking=no root@${i} '
+            . pass
             hostname;
             systemctl restart proxy;
             podman rmi -a 2>/dev/null
