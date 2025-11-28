@@ -364,10 +364,13 @@ podman run --rm -it --privileged --net host --pid host test
 
 ```powershell
 cargo build -p rust_http_proxy --bin rust_http_proxy_service --features winservice -r
+
+##开启服务
 sc.exe create rust_http_proxy binPath= "C:\Users\arloor\rust_http_proxy\target\release\rust_http_proxy_service.exe -p 7777 -k C:\Users\arloor\rust_http_proxy\privkey.pem -c C:\Users\arloor\rust_http_proxy\cert.pem -o"
 sc.exe start rust_http_proxy
 sc.exe config rust_http_proxy start= auto
 
+## 停止和删除服务
 sc.exe stop rust_http_proxy
 sc.exe delete rust_http_proxy
 ```
