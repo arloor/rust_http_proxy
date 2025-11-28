@@ -75,7 +75,7 @@ Options:
           格式为 'username:password'
           可以多次指定来实现多用户
   -w, --web-content-path <WEB_CONTENT_PATH>
-
+          静态文件托管的根目录
   -r, --referer-keywords-to-self <REFERER>
           Http Referer请求头处理
           1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值
@@ -89,7 +89,7 @@ Options:
       --allow-serving-network <CIDR>
           允许访问静态文件托管的网段白名单，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8
           可以多次指定来允许多个网段
-          如设置了read_serving，则此参数无效
+          如设置了prohibit_serving，则此参数无效
           如未设置任何网段，且未设置prohibit_serving，则允许所有IP访问静态文件
   -o, --over-tls
           if enable, proxy server will listen on https
@@ -363,8 +363,8 @@ podman run --rm -it --privileged --net host --pid host test
 ## windows 服务
 
 ```powershell
-cargo build -p rust_http_proxy --bin proxy_service --features winservice
-sc.exe create rust_http_proxy binPath= "C:\Users\arloor\rust_http_proxy\target\debug\proxy_service.exe -p 7777 -k C:\Users\arloor\rust_http_proxy\privkey.pem -c C:\Users\arloor\rust_http_proxy\cert.pem -o"
+cargo build -p rust_http_proxy --bin rust_http_proxy_service --features winservice -r
+sc.exe create rust_http_proxy binPath= "C:\Users\arloor\rust_http_proxy\target\release\rust_http_proxy_service.exe -p 7777 -k C:\Users\arloor\rust_http_proxy\privkey.pem -c C:\Users\arloor\rust_http_proxy\cert.pem -o"
 sc.exe start rust_http_proxy
 sc.exe config rust_http_proxy start= auto
 

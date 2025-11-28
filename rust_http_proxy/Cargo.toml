@@ -12,8 +12,8 @@ name = "rust_http_proxy"
 path = "src/main.rs"
 
 [[bin]]
-name = "proxy_service"
-path = "src/bin/winservice.rs"
+name = "rust_http_proxy_service"
+path = "src/winservice.rs"
 required-features = ["winservice"]
 
 [dependencies]

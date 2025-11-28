@@ -25,7 +25,7 @@ use std::{
 };
 
 use clap::Parser;
-use log::{error, info};
+use log::error;
 use rust_http_proxy::{config::Param, create_futures, DynError};
 use tokio::sync::{mpsc::Sender, oneshot};
 use windows_service::{
@@ -39,6 +39,14 @@ const SERVICE_NAME: &str = "rust_http_proxy";
 const SERVICE_EXIT_CODE_ARGUMENT_ERROR: u32 = 100;
 const SERVICE_EXIT_CODE_EXITED_UNEXPECTEDLY: u32 = 101;
 const SERVICE_EXIT_CODE_CREATE_FAILED: u32 = 102;
+
+// 使用jemalloc作为全局内存分配器
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[inline]
 fn set_service_status(

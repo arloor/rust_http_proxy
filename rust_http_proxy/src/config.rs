@@ -40,7 +40,7 @@ pub struct Param {
     可以多次指定来实现多用户"
     )]
     users: Vec<String>,
-    #[arg(short, long, value_name = "WEB_CONTENT_PATH")]
+    #[arg(short, long, value_name = "WEB_CONTENT_PATH", help = "静态文件托管的根目录")]
     web_content_path: Option<String>,
     #[arg(
         short,
