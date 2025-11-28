@@ -9,11 +9,11 @@ use std::{
 use crate::{
     address::host_addr,
     axum_handler::{self, AppProxyError},
-    config::ForwardBypassConfig,
+    config::{Config, ForwardBypassConfig},
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
     location::{LocationConfig, RequestSpec, Upstream, DEFAULT_HOST},
-    CONFIG, METRICS,
+    METRICS,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
@@ -36,6 +36,7 @@ use tokio_rustls::{client::TlsStream, rustls::pki_types};
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
+    config: Arc<Config>,
     forwad_proxy_client: ForwardProxyClient<Incoming>,
     reverse_proxy_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
 }
@@ -68,7 +69,7 @@ enum ServiceType<'a> {
 impl<'a> ServiceType<'a> {
     /// 处理请求
     async fn handle(
-        &self, req: Request<Incoming>, client_socket_addr: SocketAddr, proxy_handler: &ProxyHandler,
+        &self, req: Request<Incoming>, client_socket_addr: SocketAddr, proxy_handler: &ProxyHandler, config: &Config,
     ) -> Result<InterceptResultAdapter, io::Error> {
         match self {
             ServiceType::NonMatch => Ok(InterceptResultAdapter::Continue(req)),
@@ -84,6 +85,7 @@ impl<'a> ServiceType<'a> {
                     location,
                     upstream,
                     reverse_client: &proxy_handler.reverse_proxy_client,
+                    config,
                 }
                 .handle()
                 .await;
@@ -101,6 +103,7 @@ impl<'a> ServiceType<'a> {
                     client_socket_addr,
                     location,
                     static_dir,
+                    config,
                 }
                 .handle()
                 .await;
@@ -119,8 +122,8 @@ impl<'a> ServiceType<'a> {
                 }
             }
             ServiceType::ForwardProxy => {
-                let config_basic_auth = &crate::CONFIG.basic_auth;
-                let never_ask_for_auth = crate::CONFIG.never_ask_for_auth;
+                let config_basic_auth = &config.basic_auth;
+                let never_ask_for_auth = config.never_ask_for_auth;
 
                 match axum_handler::check_auth(req.headers(), http::header::PROXY_AUTHORIZATION, config_basic_auth) {
                     Ok(username_option) => {
@@ -147,7 +150,7 @@ impl<'a> ServiceType<'a> {
                                     format!("X-Forwarded-For: https://ip.im/{}", first_ip)
                                 })
                                 .unwrap_or_default(),
-                            match &CONFIG.forward_bypass {
+                            match &config.forward_bypass {
                                 Some(bypass) => {
                                     format!("bypass: {}", bypass)
                                 }
@@ -156,7 +159,7 @@ impl<'a> ServiceType<'a> {
                         );
 
                         match *req.method() {
-                            Method::CONNECT => match CONFIG.forward_bypass.as_ref() {
+                            Method::CONNECT => match config.forward_bypass.as_ref() {
                                 Some(forward_bypass_config) => {
                                     let result = proxy_handler
                                         .tunnel_proxy_bypass(req, client_socket_addr, username, forward_bypass_config)
@@ -167,7 +170,7 @@ impl<'a> ServiceType<'a> {
                                     .tunnel_proxy(req, client_socket_addr, username)
                                     .map(InterceptResultAdapter::Return),
                             },
-                            _ => match CONFIG.forward_bypass.as_ref() {
+                            _ => match config.forward_bypass.as_ref() {
                                 Some(forward_bypass_config) => {
                                     let result = proxy_handler
                                         .simple_proxy_bypass(req, client_socket_addr, username, forward_bypass_config)
@@ -212,11 +215,12 @@ impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
 use hyper_rustls::HttpsConnectorBuilder;
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
-    pub fn new() -> Result<Self, crate::DynError> {
+    pub fn new(config: Arc<Config>) -> Result<Self, crate::DynError> {
         let reverse_client = build_hyper_legacy_client();
         let http1_client = ForwardProxyClient::<Incoming>::new();
 
         Ok(ProxyHandler {
+            config,
             reverse_proxy_client: reverse_client,
             forwad_proxy_client: http1_client,
         })
@@ -228,7 +232,7 @@ impl ProxyHandler {
         let service_type = self.determine_service_type(&req)?;
 
         // 根据服务类型分发处理
-        service_type.handle(req, client_socket_addr, self).await
+        service_type.handle(req, client_socket_addr, self, &self.config).await
     }
 
     /// 确定服务类型
@@ -243,20 +247,20 @@ impl ProxyHandler {
                     return Ok(ServiceType::ForwardProxy);
                 }
 
-                let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
-                    req,
-                    match crate::CONFIG.over_tls {
-                        true => "https",
-                        false => "http",
-                    },
-                )?;
+            let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
+                req,
+                match self.config.over_tls {
+                    true => "https",
+                    false => "http",
+                },
+            )?;
 
-                // 尝试找到匹配的 Location 配置
-                let location_config_of_host = crate::CONFIG
-                    .location_specs
-                    .locations
-                    .get(&req_domain.0)
-                    .or(crate::CONFIG.location_specs.locations.get(DEFAULT_HOST));
+            // 尝试找到匹配的 Location 配置
+            let location_config_of_host = self.config.location_specs.locations.get(&req_domain.0).or(self
+                .config
+                .location_specs
+                .locations
+                .get(DEFAULT_HOST));
 
                 if let Some(locations) = location_config_of_host {
                     if let Some(location_config) = locations

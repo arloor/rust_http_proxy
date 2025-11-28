@@ -20,7 +20,7 @@ use std::{
 };
 
 use crate::axum_handler::AXUM_PATHS;
-use crate::config::{Config, Param};
+use crate::config::{Config, Param, ServingControl};
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
@@ -85,6 +85,7 @@ pub(crate) enum RequestSpec<'a> {
         client_socket_addr: SocketAddr,
         location: &'a String,
         static_dir: &'a String,
+        config: &'a Config,
     },
     ForReverseProxy {
         request: Box<Request<Incoming>>,
@@ -93,6 +94,7 @@ pub(crate) enum RequestSpec<'a> {
         location: &'a String,
         upstream: &'a Upstream,
         reverse_client: &'a legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+        config: &'a Config,
     },
 }
 
@@ -106,8 +108,9 @@ impl<'a> RequestSpec<'a> {
                 client_socket_addr,
                 original_scheme_host_port,
                 reverse_client,
+                config,
             } => {
-                check_serving_control(client_socket_addr)?;
+                check_serving_control(client_socket_addr, &config.serving_control)?;
                 let upstream_req = Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
                 info!(
                     "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
@@ -130,7 +133,7 @@ impl<'a> RequestSpec<'a> {
                 match reverse_client.request(upstream_req).await {
                     Ok(mut resp) => {
                         if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
-                            normalize302(original_scheme_host_port, resp.headers_mut())?;
+                            normalize302(original_scheme_host_port, resp.headers_mut(), config)?;
                             //修改302的location
                         }
                         Ok(resp.map(|body| {
@@ -152,8 +155,9 @@ impl<'a> RequestSpec<'a> {
                 request,
                 client_socket_addr,
                 static_dir,
+                config,
             } => {
-                check_serving_control(client_socket_addr)?;
+                check_serving_control(client_socket_addr, &config.serving_control)?;
 
                 if AXUM_PATHS.contains(&request.uri().path()) {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
@@ -179,7 +183,7 @@ impl<'a> RequestSpec<'a> {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
                 }
 
-                static_serve::serve_http_request(request, client_socket_addr, path, static_dir)
+                static_serve::serve_http_request(request, client_socket_addr, path, static_dir, config)
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
             }
@@ -256,15 +260,15 @@ impl<'a> RequestSpec<'a> {
     }
 }
 
-fn check_serving_control(client_socket_addr: SocketAddr) -> Result<(), io::Error> {
+fn check_serving_control(client_socket_addr: SocketAddr, serving_control: &ServingControl) -> Result<(), io::Error> {
     // 检查是否允许提供静态文件服务
-    if crate::CONFIG.serving_control.prohibit_serving {
+    if serving_control.prohibit_serving {
         info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
         return Err(io::Error::new(ErrorKind::PermissionDenied, "Static serving is prohibited"));
     }
     // 检查是否有网段限制及客户端IP是否在允许的网段内
     let client_ip = client_socket_addr.ip().to_canonical();
-    let allowed_networks = &crate::CONFIG.serving_control.allowed_networks;
+    let allowed_networks = &serving_control.allowed_networks;
 
     if !allowed_networks.is_empty() {
         let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
@@ -277,7 +281,7 @@ fn check_serving_control(client_socket_addr: SocketAddr) -> Result<(), io::Error
 }
 
 fn normalize302(
-    original_scheme_host_port: &SchemeHostPort, resp_headers: &mut http::HeaderMap,
+    original_scheme_host_port: &SchemeHostPort, resp_headers: &mut http::HeaderMap, config: &Config,
 ) -> Result<(), io::Error> {
     let redirect_url = resp_headers
         .get_mut(LOCATION)
@@ -293,7 +297,7 @@ fn normalize302(
     if let Some(replacement) = lookup_replacement(
         original_scheme_host_port,
         redirect_url.to_string(),
-        &crate::CONFIG.location_specs.redirect_bachpaths,
+        &config.location_specs.redirect_bachpaths,
     ) {
         let origin = resp_headers.insert(
             LOCATION,

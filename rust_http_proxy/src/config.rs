@@ -16,9 +16,9 @@ use crate::{DynError, IDLE_TIMEOUT};
 #[command(author, version=None, about, long_about = None)]
 pub struct Param {
     #[arg(long, value_name = "LOG_DIR", default_value = "/tmp")]
-    log_dir: String,
+    pub log_dir: String,
     #[arg(long, value_name = "LOG_FILE", default_value = "proxy.log")]
-    log_file: String,
+    pub log_file: String,
     #[arg(
         short,
         long,
@@ -40,7 +40,7 @@ pub struct Param {
     可以多次指定来实现多用户"
     )]
     users: Vec<String>,
-    #[arg(short, long, value_name = "WEB_CONTENT_PATH")]
+    #[arg(short, long, value_name = "WEB_CONTENT_PATH", help = "静态文件托管的根目录")]
     web_content_path: Option<String>,
     #[arg(
         short,
@@ -223,8 +223,7 @@ impl TryFrom<Param> for Config {
     }
 }
 
-pub(crate) fn load_config() -> Result<Config, DynError> {
-    let param = Param::parse();
+pub(crate) fn load_config(param: Param) -> Result<Config, DynError> {
     if let Err(log_init_error) = init_log(&param.log_dir, &param.log_file, "info") {
         return Err(format!("init log error:{log_init_error}").into());
     }

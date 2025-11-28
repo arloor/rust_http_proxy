@@ -10,7 +10,7 @@ use prometheus_client::registry::Registry;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
+pub static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     let mut registry = Registry::default();
     let http_req_counter = Family::<LabelImpl<ReqLabels>, Counter>::default();
     registry.register("req_from_out", "Number of HTTP requests received", http_req_counter.clone());
@@ -124,30 +124,30 @@ pub(crate) static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     }
 });
 
-pub(crate) struct Metrics {
-    pub(crate) registry: Registry,
-    pub(crate) http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
-    pub(crate) proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
-    pub(crate) reverse_proxy_req: Family<LabelImpl<ReverseProxyReqLabel>, Counter>,
-    pub(crate) tunnel_bypass_setup_duration: Family<LabelImpl<TunnelHandshakeLabel>, Histogram>,
+pub struct Metrics {
+    pub registry: Registry,
+    pub http_req_counter: Family<LabelImpl<ReqLabels>, Counter>,
+    pub proxy_traffic: Family<LabelImpl<AccessLabel>, Counter>,
+    pub reverse_proxy_req: Family<LabelImpl<ReverseProxyReqLabel>, Counter>,
+    pub tunnel_bypass_setup_duration: Family<LabelImpl<TunnelHandshakeLabel>, Histogram>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) net_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
+    pub net_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
     #[cfg(all(target_os = "linux", feature = "bpf"))]
-    pub(crate) cgroup_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
+    pub cgroup_bytes: Family<LabelImpl<crate::proxy::NetDirectionLabel>, Counter>,
     #[cfg(target_os = "linux")]
-    pub(crate) cgroup_cpu_total_ns: Counter,
+    pub cgroup_cpu_total_ns: Counter,
     #[cfg(target_os = "linux")]
-    pub(crate) cgroup_cpu_user_ns: Counter,
+    pub cgroup_cpu_user_ns: Counter,
     #[cfg(target_os = "linux")]
-    pub(crate) cgroup_cpu_system_ns: Counter,
+    pub cgroup_cpu_system_ns: Counter,
     #[cfg(target_os = "linux")]
-    pub(crate) cgroup_memory_current_bytes: Gauge,
+    pub cgroup_memory_current_bytes: Gauge,
     #[cfg(target_os = "linux")]
-    pub(crate) cgroup_memory_peak_bytes: Gauge,
+    pub cgroup_memory_peak_bytes: Gauge,
     #[cfg(target_os = "linux")]
-    pub(crate) cgroup_memory_rss_bytes: Gauge,
+    pub cgroup_memory_rss_bytes: Gauge,
     #[cfg(target_os = "linux")]
-    pub(crate) cgroup_memory_cache_bytes: Gauge,
+    pub cgroup_memory_cache_bytes: Gauge,
 }
 
 #[cfg(target_os = "linux")]
