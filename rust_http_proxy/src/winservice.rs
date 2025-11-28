@@ -27,7 +27,7 @@ use std::{
 use clap::Parser;
 use log::error;
 use rust_http_proxy::{config::Param, create_futures, DynError};
-use tokio::sync::{mpsc::Sender, oneshot};
+use tokio::sync::{broadcast::Sender, oneshot};
 use windows_service::{
     define_windows_service,
     service::{ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType},
@@ -76,7 +76,7 @@ fn set_service_status(
 
 fn handle_create_service_result(
     status_handle: ServiceStatusHandle,
-    create_service_result: Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Vec<Sender<()>>), DynError>,
+    create_service_result: Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Sender<()>), DynError>,
     stop_receiver: oneshot::Receiver<()>,
 ) -> Result<(), windows_service::Error> {
     match create_service_result {
@@ -92,13 +92,14 @@ fn handle_create_service_result(
                 // Wait for stop signal
                 let _ = stop_receiver.await;
                 // Send shutdown signal to all server tasks
-                for tx in shutdown_tx {
-                    let _ = tx.send(()).await;
-                }
+                let _ = shutdown_tx.send(());
             });
             // Run it right now.
             let results = runtime.block_on(service_future);
-            let exited_by_ctrl = results.iter().all(|res| res.is_ok());
+            let exited_by_ctrl = results.iter().all(|res| {
+                log::error!("HTTP Proxy server exited with: {res:?}");
+                res.is_ok()
+            });
 
             // Report stopped state
             set_service_status(

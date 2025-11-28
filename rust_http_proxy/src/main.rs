@@ -12,7 +12,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> Result<(), DynError> {
-    let (service_future, shutdown_tx_list) = create_futures(Param::parse())?;
+    let (service_future, shutdown_tx) = create_futures(Param::parse())?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -20,9 +20,7 @@ fn main() -> Result<(), DynError> {
 
     runtime.spawn(async move {
         if (axum_bootstrap::wait_signal().await).is_ok() {
-            for ele in shutdown_tx_list {
-                let _ = ele.send(()).await;
-            }
+            let _ = shutdown_tx.send(());
         }
     });
     // Run it right now.

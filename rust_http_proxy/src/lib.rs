@@ -20,6 +20,7 @@ mod proxy;
 mod static_serve;
 
 pub use metrics::METRICS;
+use tokio::sync::broadcast::{self, Receiver};
 
 use crate::axum_handler::{build_router, AppState};
 use crate::config::{Config, Param};
@@ -32,7 +33,7 @@ use futures_util::future::join_all;
 use log::{info, warn};
 use proxy::ProxyHandler;
 use std::error::Error as stdError;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::broadcast::Sender;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -63,12 +64,12 @@ impl ReqInterceptor for ProxyInterceptor {
 }
 
 fn create_future(
-    port: u16, proxy_handler: Arc<ProxyHandler>, config: Arc<Config>,
-) -> (impl Future<Output = Result<(), std::io::Error>>, Sender<()>) {
+    port: u16, proxy_handler: Arc<ProxyHandler>, config: Arc<Config>, shutdown_rx: Receiver<()>,
+) -> impl Future<Output = Result<(), std::io::Error>> {
     let basic_auth = config.basic_auth.clone();
 
     let router = build_router(AppState { basic_auth });
-    let (server, shutdown_tx) = axum_bootstrap::new_server(port, router);
+    let server = axum_bootstrap::new_server(port, router, shutdown_rx);
 
     let server = server
         .with_timeout(IDLE_TIMEOUT)
@@ -81,13 +82,13 @@ fn create_future(
             false => None,
         })
         .with_interceptor(ProxyInterceptor(proxy_handler));
-    (server.run(), shutdown_tx)
+    server.run()
 }
 
 #[allow(clippy::type_complexity)]
 pub fn create_futures(
     param: Param,
-) -> Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Vec<Sender<()>>), DynError> {
+) -> Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Sender<()>), DynError> {
     let config = Arc::new(load_config(param)?);
     let ports = config.port.clone();
     let proxy_handler = Arc::new(ProxyHandler::new(config.clone())?);
@@ -95,19 +96,20 @@ pub fn create_futures(
     crate::ebpf::init_once();
     #[cfg(target_os = "linux")]
     crate::linux_monitor::init_once();
-    let mut shutdown_tx_list = vec![];
+    let (shutdown_tx, _) = broadcast::channel(1);
+
     let main_futures = ports
         .into_iter()
         .map(|port| {
-            let (main_future, shutdown_tx) = create_future(port, proxy_handler.clone(), config.clone());
-            shutdown_tx_list.push(shutdown_tx);
+            let main_future = create_future(port, proxy_handler.clone(), config.clone(), shutdown_tx.subscribe());
+            let shutdown_tx_clone = shutdown_tx.clone();
             async move {
                 let res = main_future.await;
                 info!("HTTP Proxy server on port {port} exited with: {res:?}");
                 if let Err(ref err) = res {
                     if err.kind() == std::io::ErrorKind::AddrInUse {
                         log::error!("Port {port} is already in use. Exiting.");
-                        std::process::exit(1);
+                        let _ = shutdown_tx_clone.clone().send(());
                     }
                 }
                 res
@@ -115,5 +117,5 @@ pub fn create_futures(
         })
         .map(Box::pin)
         .collect::<Vec<_>>();
-    Ok((join_all(main_futures), shutdown_tx_list))
+    Ok((join_all(main_futures), shutdown_tx))
 }
