@@ -1,7 +1,7 @@
 //! Main entry point for rust_http_proxy CLI
 
 use clap::Parser as _;
-use rust_http_proxy::{config::Param, run_service, DynError};
+use rust_http_proxy::{config::Param, run, DynError};
 
 // 使用jemalloc作为全局内存分配器
 #[cfg(feature = "jemalloc")]
@@ -13,5 +13,5 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    run_service(Param::parse()).await
+    run(Param::parse()).await
 }

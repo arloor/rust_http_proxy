@@ -86,7 +86,24 @@ fn create_future(
 
 /// Run the proxy service asynchronously.
 /// This is the main entry point for running the proxy.
-pub async fn run_service(param: Param) -> Result<(), DynError> {
+pub async fn run(param: Param) -> Result<(), DynError> {
+    let (server_futures, shutdown_tx_list) = create_futures(param)?;
+    // Spawn a task to handle signals and send shutdown signal
+    tokio::spawn(async move {
+        if (axum_bootstrap::wait_signal().await).is_ok() {
+            for ele in shutdown_tx_list {
+                let _ = ele.send(()).await;
+            }
+        }
+    });
+    server_futures.await;
+    Ok(())
+}
+
+#[allow(clippy::type_complexity)]
+pub fn create_futures(
+    param: Param,
+) -> Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Vec<Sender<()>>), DynError> {
     let config = Arc::new(load_config(param)?);
     let ports = config.port.clone();
     let proxy_handler = Arc::new(ProxyHandler::new(config.clone())?);
@@ -94,12 +111,11 @@ pub async fn run_service(param: Param) -> Result<(), DynError> {
     crate::ebpf::init_once();
     #[cfg(target_os = "linux")]
     crate::linux_monitor::init_once();
-
     let mut shutdown_tx_list = vec![];
     let main_futures = ports
-        .iter()
+        .into_iter()
         .map(|port| {
-            let (main_future, shutdown_tx) = create_future(*port, proxy_handler.clone(), config.clone());
+            let (main_future, shutdown_tx) = create_future(port, proxy_handler.clone(), config.clone());
             shutdown_tx_list.push(shutdown_tx);
             async move {
                 let res = main_future.await;
@@ -115,68 +131,5 @@ pub async fn run_service(param: Param) -> Result<(), DynError> {
         })
         .map(Box::pin)
         .collect::<Vec<_>>();
-
-    // Spawn a task to handle signals and send shutdown signal
-    tokio::spawn(async move {
-        if (axum_bootstrap::wait_signal().await).is_ok() {
-            for ele in shutdown_tx_list {
-                let _ = ele.send(()).await;
-            }
-        }
-    });
-    join_all(main_futures.into_iter()).await;
-    Ok(())
-}
-
-/// Create the proxy service for Windows Service.
-/// Returns the tokio runtime and a shutdown sender.
-#[cfg(target_os = "windows")]
-pub fn create_service(param: Param) -> Result<(tokio::runtime::Runtime, tokio::sync::oneshot::Sender<()>), DynError> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| -> DynError { format!("Failed to create tokio runtime: {e}").into() })?;
-
-    let config = Arc::new(load_config(param)?);
-    let ports = config.port.clone();
-    let proxy_handler = Arc::new(ProxyHandler::new(config.clone())?);
-
-    // Create a oneshot channel for shutdown
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    // Spawn the main service task
-    runtime.spawn(async move {
-        let mut shutdown_tx_list = vec![];
-        let main_futures = ports
-            .iter()
-            .map(|port| {
-                let (main_future, shutdown_tx) = create_future(*port, proxy_handler.clone(), config.clone());
-                shutdown_tx_list.push(shutdown_tx);
-                async move {
-                    let res = main_future.await;
-                    info!("HTTP Proxy server on port {port} exited with: {res:?}");
-                    if let Err(ref err) = res {
-                        if err.kind() == std::io::ErrorKind::AddrInUse {
-                            log::error!("Port {port} is already in use.");
-                        }
-                    }
-                    res
-                }
-            })
-            .map(Box::pin)
-            .collect::<Vec<_>>();
-
-        // Wait for shutdown signal
-        tokio::spawn(async move {
-            let _ = shutdown_rx.await;
-            info!("Received shutdown signal, stopping servers...");
-            for ele in shutdown_tx_list {
-                let _ = ele.send(()).await;
-            }
-        });
-
-        join_all(main_futures.into_iter()).await;
-    });
-
-    Ok((runtime, shutdown_tx))
+    Ok((join_all(main_futures), shutdown_tx_list))
 }

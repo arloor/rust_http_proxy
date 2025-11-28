@@ -19,14 +19,15 @@
 
 use std::{
     ffi::OsString,
+    future::Future,
     sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
 
 use clap::Parser;
 use log::{error, info};
-use rust_http_proxy::{config::Param, create_service, DynError};
-use tokio::sync::oneshot;
+use rust_http_proxy::{config::Param, create_futures, DynError};
+use tokio::sync::{mpsc::Sender, oneshot};
 use windows_service::{
     define_windows_service,
     service::{ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType},
@@ -67,29 +68,29 @@ fn set_service_status(
 
 fn handle_create_service_result(
     status_handle: ServiceStatusHandle,
-    create_service_result: Result<(tokio::runtime::Runtime, oneshot::Sender<()>), DynError>,
+    create_service_result: Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Vec<Sender<()>>), DynError>,
     stop_receiver: oneshot::Receiver<()>,
 ) -> Result<(), windows_service::Error> {
     match create_service_result {
-        Ok((runtime, shutdown_tx)) => {
-            // Successfully created runtime
+        Ok((service_future, shutdown_tx)) => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to create tokio runtime");
             // Report running state
             set_service_status(&status_handle, ServiceState::Running, ServiceExitCode::Win32(0), Duration::default())?;
 
-            // Run it right now.
-            let exited_by_ctrl = runtime.block_on(async move {
-                tokio::pin!(stop_receiver);
-
-                loop {
-                    tokio::select! {
-                        _ = &mut stop_receiver => {
-                            info!("Received stop signal, shutting down...");
-                            let _ = shutdown_tx.send(());
-                            break true;
-                        }
-                    }
+            runtime.spawn(async move {
+                // Wait for stop signal
+                let _ = stop_receiver.await;
+                // Send shutdown signal to all server tasks
+                for tx in shutdown_tx {
+                    let _ = tx.send(()).await;
                 }
             });
+            // Run it right now.
+            let results = runtime.block_on(service_future);
+            let exited_by_ctrl = results.iter().all(|res| res.is_ok());
 
             // Report stopped state
             set_service_status(
@@ -177,9 +178,7 @@ fn service_main(arguments: Vec<OsString>) -> Result<(), windows_service::Error> 
         }
     };
 
-    // Create the service
-    let result = create_service(param);
-    handle_create_service_result(status_handle, result, stop_receiver)
+    handle_create_service_result(status_handle, create_futures(param), stop_receiver)
 }
 
 fn service_entry(arguments: Vec<OsString>) {
