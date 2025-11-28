@@ -106,11 +106,8 @@ pub fn create_futures(
             async move {
                 let res = main_future.await;
                 info!("HTTP Proxy server on port {port} exited with: {res:?}");
-                if let Err(ref err) = res {
-                    if err.kind() == std::io::ErrorKind::AddrInUse {
-                        log::error!("Port {port} is already in use. Exiting.");
-                        let _ = shutdown_tx_clone.clone().send(());
-                    }
+                if res.is_err() { // If any server exits with error, send shutdown signal to others
+                    let _ = shutdown_tx_clone.clone().send(());
                 }
                 res
             }

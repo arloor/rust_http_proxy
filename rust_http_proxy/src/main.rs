@@ -24,6 +24,12 @@ fn main() -> Result<(), DynError> {
         }
     });
     // Run it right now.
-    let _ = runtime.block_on(service_future);
+    let results = runtime.block_on(service_future);
+    let _ = results.iter().all(|res| {
+        if let Err(err) = res {
+            log::error!("HTTP Proxy server exited with error: {err:?}");
+        }
+        res.is_ok()
+    });
     Ok(())
 }

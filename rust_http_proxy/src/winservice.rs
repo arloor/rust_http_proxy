@@ -97,7 +97,9 @@ fn handle_create_service_result(
             // Run it right now.
             let results = runtime.block_on(service_future);
             let exited_by_ctrl = results.iter().all(|res| {
-                log::error!("HTTP Proxy server exited with: {res:?}");
+                if let Err(err) = res {
+                    log::error!("HTTP Proxy server exited with error: {err:?}");
+                }
                 res.is_ok()
             });
 
