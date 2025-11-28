@@ -1,7 +1,7 @@
 //! Main entry point for rust_http_proxy CLI
 
 use clap::Parser as _;
-use rust_http_proxy::{config::Param, run, DynError};
+use rust_http_proxy::{config::Param, create_futures, DynError};
 
 // 使用jemalloc作为全局内存分配器
 #[cfg(feature = "jemalloc")]
@@ -11,7 +11,21 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[tokio::main]
-async fn main() -> Result<(), DynError> {
-    run(Param::parse()).await
+fn main() -> Result<(), DynError> {
+    let (service_future, shutdown_tx_list) = create_futures(Param::parse())?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+
+    runtime.spawn(async move {
+        if (axum_bootstrap::wait_signal().await).is_ok() {
+            for ele in shutdown_tx_list {
+                let _ = ele.send(()).await;
+            }
+        }
+    });
+    // Run it right now.
+    let _ = runtime.block_on(service_future);
+    Ok(())
 }

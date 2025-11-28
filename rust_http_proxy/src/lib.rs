@@ -84,22 +84,6 @@ fn create_future(
     (server.run(), shutdown_tx)
 }
 
-/// Run the proxy service asynchronously.
-/// This is the main entry point for running the proxy.
-pub async fn run(param: Param) -> Result<(), DynError> {
-    let (server_futures, shutdown_tx_list) = create_futures(param)?;
-    // Spawn a task to handle signals and send shutdown signal
-    tokio::spawn(async move {
-        if (axum_bootstrap::wait_signal().await).is_ok() {
-            for ele in shutdown_tx_list {
-                let _ = ele.send(()).await;
-            }
-        }
-    });
-    server_futures.await;
-    Ok(())
-}
-
 #[allow(clippy::type_complexity)]
 pub fn create_futures(
     param: Param,
