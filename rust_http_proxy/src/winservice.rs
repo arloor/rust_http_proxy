@@ -135,9 +135,8 @@ fn service_main(arguments: Vec<OsString>) -> Result<(), windows_service::Error> 
     set_service_status(&status_handle, ServiceState::StartPending, ServiceExitCode::Win32(0), Duration::from_secs(30))?;
 
     // Parse command line arguments
-    // Windows Service passes arguments through the arguments vector
     let param = if arguments.len() <= 1 {
-        // No arguments passed, use default
+        // use std::env::args_os()
         match Param::try_parse() {
             Ok(p) => p,
             Err(err) => {
