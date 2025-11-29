@@ -12,11 +12,14 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> Result<(), DynError> {
-    let (service_future, shutdown_tx) = create_futures(Param::parse())?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to create tokio runtime");
+
+    // 使用 _guard 进入 runtime 上下文，这样 create_futures 内部的 tokio::spawn 才能正常工作
+    let _guard = runtime.enter();
+    let (service_future, shutdown_tx) = create_futures(Param::parse())?;
 
     runtime.spawn(async move {
         if (axum_bootstrap::wait_signal().await).is_ok() {
