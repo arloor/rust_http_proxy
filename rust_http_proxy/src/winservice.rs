@@ -1,3 +1,7 @@
+#![deny(warnings)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
+
 //! Windows Service binary for rust_http_proxy
 //!
 //! This binary allows rust_http_proxy to run as a Windows Service.
@@ -19,15 +23,14 @@
 
 use std::{
     ffi::OsString,
-    future::Future,
     sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
 
 use clap::Parser;
 use log::error;
-use rust_http_proxy::{config::Param, create_futures, DynError};
-use tokio::sync::{broadcast::Sender, oneshot};
+use rust_http_proxy::{config::Param, create_futures};
+use tokio::sync::oneshot;
 use windows_service::{
     define_windows_service,
     service::{ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType},
@@ -48,43 +51,19 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[inline]
-fn set_service_status(
-    handle: &ServiceStatusHandle, current_state: ServiceState, exit_code: ServiceExitCode, wait_hint: Duration,
+fn run_service(
+    status_handle: ServiceStatusHandle, param: Param, stop_receiver: oneshot::Receiver<()>,
 ) -> Result<(), windows_service::Error> {
-    static SERVICE_STATE_CHECKPOINT: AtomicU32 = AtomicU32::new(0);
+    #[allow(clippy::expect_used)]
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+    let _guard = runtime.enter();
 
-    let next_status = ServiceStatus {
-        service_type: ServiceType::OWN_PROCESS,
-        current_state,
-        controls_accepted: if current_state == ServiceState::StartPending {
-            ServiceControlAccept::empty()
-        } else {
-            ServiceControlAccept::STOP
-        },
-        exit_code,
-        checkpoint: if matches!(current_state, ServiceState::Running | ServiceState::Stopped) {
-            SERVICE_STATE_CHECKPOINT.fetch_add(1, Ordering::AcqRel)
-        } else {
-            0
-        },
-        wait_hint,
-        process_id: None,
-    };
-    handle.set_service_status(next_status)
-}
-
-fn handle_create_service_result(
-    status_handle: ServiceStatusHandle,
-    create_service_result: Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Sender<()>), DynError>,
-    stop_receiver: oneshot::Receiver<()>,
-) -> Result<(), windows_service::Error> {
+    let create_service_result = create_futures(param);
     match create_service_result {
         Ok((service_future, shutdown_tx)) => {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("failed to create tokio runtime");
             // Report running state
             set_service_status(&status_handle, ServiceState::Running, ServiceExitCode::Win32(0), Duration::default())?;
 
@@ -189,7 +168,33 @@ fn service_main(arguments: Vec<OsString>) -> Result<(), windows_service::Error> 
         }
     };
 
-    handle_create_service_result(status_handle, create_futures(param), stop_receiver)
+    run_service(status_handle, param, stop_receiver)
+}
+
+#[inline]
+fn set_service_status(
+    handle: &ServiceStatusHandle, current_state: ServiceState, exit_code: ServiceExitCode, wait_hint: Duration,
+) -> Result<(), windows_service::Error> {
+    static SERVICE_STATE_CHECKPOINT: AtomicU32 = AtomicU32::new(0);
+
+    let next_status = ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state,
+        controls_accepted: if current_state == ServiceState::StartPending {
+            ServiceControlAccept::empty()
+        } else {
+            ServiceControlAccept::STOP
+        },
+        exit_code,
+        checkpoint: if matches!(current_state, ServiceState::Running | ServiceState::Stopped) {
+            SERVICE_STATE_CHECKPOINT.fetch_add(1, Ordering::AcqRel)
+        } else {
+            0
+        },
+        wait_hint,
+        process_id: None,
+    };
+    handle.set_service_status(next_status)
 }
 
 fn service_entry(arguments: Vec<OsString>) {

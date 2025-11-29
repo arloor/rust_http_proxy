@@ -1,3 +1,6 @@
+#![deny(warnings)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 //! Main entry point for rust_http_proxy CLI
 
 use clap::Parser as _;
@@ -12,6 +15,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> Result<(), DynError> {
+    #[allow(clippy::expect_used)]
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
