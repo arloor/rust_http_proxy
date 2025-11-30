@@ -23,7 +23,11 @@ fn main() -> Result<(), DynError> {
 
     // 使用 _guard 进入 runtime 上下文，这样 create_futures 内部的 tokio::spawn 才能正常工作
     let _guard = runtime.enter();
-    let (service_future, shutdown_tx) = create_futures(Param::parse())?;
+    let param = Param::parse();
+    if let Err(log_init_error) = log_x::init_log(&param.log_dir, &param.log_file, "info") {
+        return Err(format!("init log error:{log_init_error}").into());
+    }
+    let (service_future, shutdown_tx) = create_futures(param)?;
 
     runtime.spawn(async move {
         if (axum_bootstrap::wait_signal().await).is_ok() {

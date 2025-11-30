@@ -110,7 +110,7 @@ fn run_service(
     Ok(())
 }
 
-fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::Error> {
+fn service_main(arguments: Vec<OsString>) -> Result<(), windows_service::Error> {
     // Create a oneshot channel for receiving Stop event
     let (stop_sender, stop_receiver) = oneshot::channel();
 
@@ -135,19 +135,49 @@ fn service_main(_arguments: Vec<OsString>) -> Result<(), windows_service::Error>
     set_service_status(&status_handle, ServiceState::StartPending, ServiceExitCode::Win32(0), Duration::from_secs(30))?;
 
     // Parse command line arguments
-    let param = match Param::try_parse() {
-        Ok(p) => p,
-        Err(err) => {
-            error!("Failed to parse command line arguments: {}", err);
-            set_service_status(
-                &status_handle,
-                ServiceState::Stopped,
-                ServiceExitCode::ServiceSpecific(SERVICE_EXIT_CODE_ARGUMENT_ERROR),
-                Duration::default(),
-            )?;
-            return Err(windows_service::Error::LaunchArgumentsNotSupported);
+    let param = if arguments.len() <= 1 {
+        // use std::env::args_os()
+        match Param::try_parse() {
+            Ok(p) => p,
+            Err(err) => {
+                error!("Failed to parse command line arguments: {}", err);
+                set_service_status(
+                    &status_handle,
+                    ServiceState::Stopped,
+                    ServiceExitCode::ServiceSpecific(SERVICE_EXIT_CODE_ARGUMENT_ERROR),
+                    Duration::default(),
+                )?;
+                return Err(windows_service::Error::LaunchArgumentsNotSupported);
+            }
+        }
+    } else {
+        // Parse from provided arguments
+        match Param::try_parse_from(&arguments) {
+            Ok(p) => p,
+            Err(err) => {
+                error!("Failed to parse command line arguments: {}", err);
+                set_service_status(
+                    &status_handle,
+                    ServiceState::Stopped,
+                    ServiceExitCode::ServiceSpecific(SERVICE_EXIT_CODE_ARGUMENT_ERROR),
+                    Duration::default(),
+                )?;
+                return Err(windows_service::Error::LaunchArgumentsNotSupported);
+            }
         }
     };
+    if let Err(log_init_error) = log_x::init_log(&param.log_dir, &param.log_file, "info") {
+        error!("Failed to initialize log: {}", log_init_error);
+        set_service_status(
+            &status_handle,
+            ServiceState::Stopped,
+            ServiceExitCode::ServiceSpecific(SERVICE_EXIT_CODE_ARGUMENT_ERROR),
+            Duration::default(),
+        )?;
+        return Err(windows_service::Error::LaunchArgumentsNotSupported);
+    }
+    log::info!("Service starting with arguments: {:?}", arguments);
+    log::info!("Service starting with std::env::args_os(): {:?}", std::env::args_os());
 
     run_service(status_handle, param, stop_receiver)
 }
