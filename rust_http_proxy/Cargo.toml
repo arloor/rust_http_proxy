@@ -84,7 +84,7 @@ axum-extra = "0.12"
 windows-service = { version = "0.8", optional = true }
 
 [features]
-default = ["ring","winservice"]
+default = ["ring"]
 jemalloc = ["jemallocator"]
 mimalloc = ["dep:mimalloc"]
 bpf = ["socket_filter", "cgroup_traffic"]
