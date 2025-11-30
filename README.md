@@ -380,7 +380,7 @@ sc.exe config rust_http_proxy start= auto
 或使用 PowerShell cmdlet：
 
 ```powershell
-New-Service -Name "rust_http_proxy" -BinaryPathName "path\to\rust_http_proxy_service.exe -p 7777 -u username:password" -StartupType Automatic
+New-Service -Name "rust_http_proxy" -BinaryPathName "path\to\rust_http_proxy_service.exe -p 7777 -u username:password" -StartupType Automatic -Description "A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving"
 Start-Service -Name "rust_http_proxy"
 ```
 
