@@ -107,7 +107,7 @@ pub fn create_futures(
                 let res = main_future.await;
                 info!("HTTP Proxy server on port {port} exited with: {res:?}");
                 if res.is_err() { // If any server exits with error, send shutdown signal to others
-                    let _ = shutdown_tx_clone.clone().send(());
+                    let _ = shutdown_tx_clone.send(());
                 }
                 res
             }
