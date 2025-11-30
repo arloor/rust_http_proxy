@@ -359,20 +359,45 @@ podman build . -f Dockerfile.test -t test --net host
 podman run --rm -it --privileged --net host --pid host test
 ```
 
+## 以 windows 服务运行
 
-## windows 服务
+### 编译 windows 服务版二进制文件
 
 ```powershell
-cd .\rust_http_proxy\
-cargo install    --path . --bin rust_http_proxy_service --features winservice
-cd ..
+cargo build --bin rust_http_proxy_service --features winservice --release
+```
 
-##开启服务
-sc.exe create rust_http_proxy binPath= "C:\Users\arloor\.cargo\bin\rust_http_proxy_service.exe -p 7777 -k C:\Users\arloor\rust_http_proxy\privkey.pem -c C:\Users\arloor\rust_http_proxy\cert.pem -o -u username:password"
+### 创建、启动 windows 服务
+
+使用 `sc.exe`：
+
+```powershell
+sc.exe create rust_http_proxy binPath= "path\to\rust_http_proxy_service.exe -p 7777  -u username:password"
 sc.exe start rust_http_proxy
 sc.exe config rust_http_proxy start= auto
+```
 
-## 停止和删除服务
+或使用 PowerShell cmdlet：
+
+```powershell
+New-Service -Name "rust_http_proxy" -BinaryPathName "path\to\rust_http_proxy_service.exe -p 7777 -u username:password" -StartupType Automatic
+Start-Service -Name "rust_http_proxy"
+```
+
+### 停止、删除 windows 服务
+
+使用 `sc.exe`：
+
+```powershell
 sc.exe stop rust_http_proxy
 sc.exe delete rust_http_proxy
+```
+
+或使用 PowerShell cmdlet：
+
+```powershell
+Stop-Service -Name "rust_http_proxy"
+(Get-WmiObject -Class Win32_Service -Filter "Name='rust_http_proxy'").Delete()
+
+# Remove-Service -Name "rust_http_proxy"  # 需要 PowerShell 6.0+
 ```
