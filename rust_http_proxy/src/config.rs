@@ -57,15 +57,12 @@ pub struct Param {
         当作为正向代理使用时建议开启，否则有被嗅探的风险。"
     )]
     never_ask_for_auth: bool,
-    #[arg(long, help = "禁止所有静态文件托管/反向代理，避免被嗅探")]
-    prohibit_serving: bool,
     #[arg(
         long,
         value_name = "CIDR",
         help = "允许访问静态文件托管的网段白名单，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8\n\
         可以多次指定来允许多个网段\n\
-        如设置了prohibit_serving，则此参数无效\n\
-        如未设置任何网段，且未设置prohibit_serving，则允许所有IP访问静态文件"
+        如未设置任何网段，则允许所有IP访问静态文件"
     )]
     allow_serving_network: Vec<String>,
     #[arg(short, long, help = "if enable, proxy server will listen on https")]
@@ -118,7 +115,6 @@ impl std::fmt::Display for ForwardBypassConfig {
 }
 
 pub(crate) struct ServingControl {
-    pub(crate) prohibit_serving: bool,
     pub(crate) allowed_networks: Vec<IpNetwork>,
 }
 
@@ -183,15 +179,8 @@ impl TryFrom<Param> for Config {
             param.enable_github_proxy,
         )?;
 
-        // 处理静态文件托管控制
-        // 1. 如果设置了prohibit_serving，则禁止所有静态文件托管
-        // 2. 如果会主动询问用户鉴权，且没有设置never_ask_for_auth，也禁止所有静态文件托管
-        // 3. 否则根据allow_serving_network参数确定允许的网段
-        let prohibit_serving = param.prohibit_serving;
         let mut allowed_networks = Vec::new();
-
-        // 只有在不全局禁止的情况下才解析允许的网段
-        if !prohibit_serving && !param.allow_serving_network.is_empty() {
+        if !param.allow_serving_network.is_empty() {
             for network_str in &param.allow_serving_network {
                 match IpNetwork::from_str(network_str) {
                     Ok(network) => {
@@ -210,10 +199,7 @@ impl TryFrom<Param> for Config {
             basic_auth,
             referer_keywords_to_self: param.referer_keywords_to_self,
             never_ask_for_auth: param.never_ask_for_auth,
-            serving_control: ServingControl {
-                prohibit_serving,
-                allowed_networks,
-            },
+            serving_control: ServingControl { allowed_networks },
             over_tls: param.over_tls,
             port: param.port,
             location_specs,
@@ -241,18 +227,13 @@ pub(crate) fn load_config(param: Param) -> Result<Config, DynError> {
 }
 
 fn log_config(config: &Config) {
-    if config.serving_control.prohibit_serving {
-        warn!("do not serve web content to avoid being detected!");
+    if !config.serving_control.allowed_networks.is_empty() {
+        info!("Only allowing static content access from networks: {:?}", config.serving_control.allowed_networks);
     } else {
-        info!("Static file serving enabled");
-        if !config.serving_control.allowed_networks.is_empty() {
-            info!("Only allowing static content access from networks: {:?}", config.serving_control.allowed_networks);
-        } else {
-            info!("Allowing static content access from all networks");
-        }
-        if !config.referer_keywords_to_self.is_empty() {
-            info!("Referer header to images must contain {:?}", config.referer_keywords_to_self);
-        }
+        info!("Allowing static content access from all networks");
+    }
+    if !config.referer_keywords_to_self.is_empty() {
+        info!("Referer header to images must contain {:?}", config.referer_keywords_to_self);
     }
     info!("basic auth is {:?}", config.basic_auth);
     if !config.location_specs.locations.is_empty() {

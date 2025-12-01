@@ -261,11 +261,6 @@ impl<'a> RequestSpec<'a> {
 }
 
 fn check_serving_control(client_socket_addr: SocketAddr, serving_control: &ServingControl) -> Result<(), io::Error> {
-    // 检查是否允许提供静态文件服务
-    if serving_control.prohibit_serving {
-        info!("Dropping request from {client_socket_addr} due to global prohibit_serving setting");
-        return Err(io::Error::new(ErrorKind::PermissionDenied, "Static serving is prohibited"));
-    }
     // 检查是否有网段限制及客户端IP是否在允许的网段内
     let client_ip = client_socket_addr.ip().to_canonical();
     let allowed_networks = &serving_control.allowed_networks;

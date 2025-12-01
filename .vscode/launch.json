@@ -52,7 +52,6 @@
                 ".",
                 "-o",
                 "--never-ask-for-auth",
-                // "--prohibit-serving",
                 // "--allow-serving-network=192.168.5.0/24",
                 // "--allow-serving-network=127.0.0.1/32",
                 "-r=arloor",
