@@ -237,7 +237,7 @@ fn log_config(config: &Config) {
     }
     info!("basic auth is {:?}", config.basic_auth);
     if !config.location_specs.locations.is_empty() {
-        info!("reverse proxy config: ");
+        info!("location configs: ");
     }
     config.location_specs.locations.iter().for_each(|reverse_proxy_config| {
         for ele in reverse_proxy_config.1 {
