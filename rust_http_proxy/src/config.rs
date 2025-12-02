@@ -116,6 +116,24 @@ impl std::fmt::Display for ForwardBypassConfig {
 
 pub(crate) struct AllowCIRRS(pub(crate) Vec<IpNetwork>);
 
+impl AllowCIRRS {
+    pub(crate) fn check_serving_control(&self, client_socket_addr: std::net::SocketAddr) -> Result<(), std::io::Error> {
+        use std::io::{Error, ErrorKind};
+        // 检查是否有网段限制及客户端IP是否在允许的网段内
+        let client_ip = client_socket_addr.ip().to_canonical();
+        let allow_cidrs = &self.0;
+
+        if !allow_cidrs.is_empty() {
+            let ip_allowed = allow_cidrs.iter().any(|network| network.contains(client_ip));
+            if !ip_allowed {
+                log::info!("Dropping request from {client_ip} as it's not in allowed networks");
+                return Err(Error::new(ErrorKind::PermissionDenied, "IP not in allowed networks"));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl TryFrom<Param> for Config {
     type Error = DynError;
     fn try_from(mut param: Param) -> Result<Self, Self::Error> {
