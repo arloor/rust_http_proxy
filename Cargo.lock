@@ -221,9 +221,9 @@ dependencies = [
 
 [[package]]
 name = "axum-bootstrap"
-version = "0.1.16"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd1fd4db64f0b65292e31dc59076a7f219c6927cf9dc7dfb668c62c7c65f8c1d"
+checksum = "84d583ca76d6b36742ca069fabc7575d154e1d4ed117e282de91efc8d5b5d773"
 dependencies = [
  "anyhow",
  "axum",
