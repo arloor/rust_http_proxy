@@ -20,7 +20,7 @@ use std::{
 };
 
 use crate::axum_handler::AXUM_PATHS;
-use crate::config::{Config, Param, ServingControl};
+use crate::config::{AllowCIRRS, Config, Param};
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
@@ -110,7 +110,7 @@ impl<'a> RequestSpec<'a> {
                 reverse_client,
                 config,
             } => {
-                check_serving_control(client_socket_addr, &config.serving_control)?;
+                check_serving_control(client_socket_addr, &config.allow_cidrs)?;
                 let upstream_req = Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
                 info!(
                     "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
@@ -157,7 +157,7 @@ impl<'a> RequestSpec<'a> {
                 static_dir,
                 config,
             } => {
-                check_serving_control(client_socket_addr, &config.serving_control)?;
+                check_serving_control(client_socket_addr, &config.allow_cidrs)?;
 
                 if AXUM_PATHS.contains(&request.uri().path()) {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
@@ -260,13 +260,13 @@ impl<'a> RequestSpec<'a> {
     }
 }
 
-fn check_serving_control(client_socket_addr: SocketAddr, serving_control: &ServingControl) -> Result<(), io::Error> {
+fn check_serving_control(client_socket_addr: SocketAddr, allow_cidrs: &AllowCIRRS) -> Result<(), io::Error> {
     // 检查是否有网段限制及客户端IP是否在允许的网段内
     let client_ip = client_socket_addr.ip().to_canonical();
-    let allowed_networks = &serving_control.allowed_networks;
+    let allow_cidrs = &allow_cidrs.0;
 
-    if !allowed_networks.is_empty() {
-        let ip_allowed = allowed_networks.iter().any(|network| network.contains(client_ip));
+    if !allow_cidrs.is_empty() {
+        let ip_allowed = allow_cidrs.iter().any(|network| network.contains(client_ip));
         if !ip_allowed {
             info!("Dropping request from {client_ip} as it's not in allowed networks");
             return Err(io::Error::new(ErrorKind::PermissionDenied, "IP not in allowed networks"));

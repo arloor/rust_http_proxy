@@ -93,7 +93,7 @@ pub(crate) struct Config {
     pub(crate) basic_auth: HashMap<String, String>,
     pub(crate) referer_keywords_to_self: Vec<String>,
     pub(crate) never_ask_for_auth: bool,
-    pub(crate) serving_control: ServingControl,
+    pub(crate) allow_cidrs: AllowCIRRS,
     pub(crate) over_tls: bool,
     pub(crate) port: Vec<u16>,
     pub(crate) location_specs: LocationSpecs,
@@ -114,9 +114,7 @@ impl std::fmt::Display for ForwardBypassConfig {
     }
 }
 
-pub(crate) struct ServingControl {
-    pub(crate) allowed_networks: Vec<IpNetwork>,
-}
+pub(crate) struct AllowCIRRS(pub(crate) Vec<IpNetwork>);
 
 impl TryFrom<Param> for Config {
     type Error = DynError;
@@ -199,7 +197,7 @@ impl TryFrom<Param> for Config {
             basic_auth,
             referer_keywords_to_self: param.referer_keywords_to_self,
             never_ask_for_auth: param.never_ask_for_auth,
-            serving_control: ServingControl { allowed_networks },
+            allow_cidrs: AllowCIRRS(allowed_networks),
             over_tls: param.over_tls,
             port: param.port,
             location_specs,
@@ -227,8 +225,8 @@ pub(crate) fn load_config(param: Param) -> Result<Config, DynError> {
 }
 
 fn log_config(config: &Config) {
-    if !config.serving_control.allowed_networks.is_empty() {
-        info!("Only allowing static content access from networks: {:?}", config.serving_control.allowed_networks);
+    if !config.allow_cidrs.0.is_empty() {
+        info!("Only allowing static content access from networks: {:?}", config.allow_cidrs.0);
     }
     if !config.referer_keywords_to_self.is_empty() {
         info!("Referer header to images must contain {:?}", config.referer_keywords_to_self);
