@@ -229,8 +229,6 @@ pub(crate) fn load_config(param: Param) -> Result<Config, DynError> {
 fn log_config(config: &Config) {
     if !config.serving_control.allowed_networks.is_empty() {
         info!("Only allowing static content access from networks: {:?}", config.serving_control.allowed_networks);
-    } else {
-        info!("Allowing static content access from all networks");
     }
     if !config.referer_keywords_to_self.is_empty() {
         info!("Referer header to images must contain {:?}", config.referer_keywords_to_self);
