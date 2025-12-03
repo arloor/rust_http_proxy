@@ -179,11 +179,9 @@ impl<'a> RequestSpec<'a> {
                     .unwrap_or(Cow::from(raw_path));
                 #[allow(clippy::expect_used)]
                 let path = path.strip_prefix(location).expect("should start with location");
-                if AXUM_PATHS.contains(&path) {
-                    return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-                }
+                let path = "/".to_string() + path;
 
-                static_serve::serve_http_request(request, client_socket_addr, path, static_dir, config)
+                static_serve::serve_http_request(request, client_socket_addr, &path, static_dir, config)
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
             }
@@ -445,6 +443,12 @@ pub(crate) fn parse_location_specs(
         for location_config in ele.1 {
             if !location_config.location().starts_with('/') {
                 return Err("location should start with '/'".into());
+            }
+            // 对于 Serving 配置，验证 location以 / 结束
+            if let LocationConfig::Serving { location, .. } = location_config {
+                if !location.ends_with('/') {
+                    return Err(format!("serving location should end with '/': {}", location).into());
+                }
             }
 
             // 对于反向代理配置，验证 upstream
