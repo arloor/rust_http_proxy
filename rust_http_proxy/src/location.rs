@@ -1,7 +1,7 @@
 use http::header::LOCATION;
-use http::{header, HeaderName, HeaderValue, Request, Response, Uri};
-use http_body_util::combinators::BoxBody;
+use http::{HeaderName, HeaderValue, Request, Response, Uri, header};
 use http_body_util::BodyExt as _;
+use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::body::Incoming;
 use hyper_util::client::legacy::{self, connect::HttpConnector};
@@ -24,7 +24,7 @@ use crate::config::{Config, Param};
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
-use crate::{static_serve, METRICS};
+use crate::{METRICS, static_serve};
 
 pub(crate) struct RedirectBackpaths {
     pub(crate) redirect_url: String,
@@ -216,9 +216,9 @@ impl<'a> RequestSpec<'a> {
             Some(header_map) => header_map,
             None => {
                 return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        "new_req.headers_mut() is None, which means error occurs in new request build. Check URL, method, version...",
-                    ));
+                    ErrorKind::InvalidData,
+                    "new_req.headers_mut() is None, which means error occurs in new request build. Check URL, method, version...",
+                ));
             }
         };
         for ele in req.headers() {
@@ -360,11 +360,7 @@ pub(crate) struct LocationSpecs {
 
 fn truncate_string(s: &str, n: usize) -> &str {
     let len = s.len();
-    if n >= len {
-        ""
-    } else {
-        &s[..len - n]
-    }
+    if n >= len { "" } else { &s[..len - n] }
 }
 
 pub(crate) fn parse_location_specs(
@@ -452,11 +448,7 @@ pub(crate) fn parse_location_specs(
             }
 
             // 对于反向代理配置，验证 upstream
-            if let LocationConfig::ReverseProxy {
-                location,
-                ref mut upstream,
-            } = location_config
-            {
+            if let LocationConfig::ReverseProxy { location, upstream } = location_config {
                 match upstream.url_base.parse::<Uri>() {
                     Ok(upstream_url_base) => {
                         if upstream_url_base.scheme().is_none() {

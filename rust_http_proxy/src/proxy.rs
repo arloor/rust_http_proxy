@@ -7,22 +7,22 @@ use std::{
 };
 
 use crate::{
+    METRICS,
     address::host_addr,
     axum_handler::{self, AppProxyError},
     config::{Config, ForwardBypassConfig},
     forward_proxy_client::ForwardProxyClient,
     ip_x::local_ip,
-    location::{LocationConfig, RequestSpec, Upstream, DEFAULT_HOST},
-    METRICS,
+    location::{DEFAULT_HOST, LocationConfig, RequestSpec, Upstream},
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use axum::extract::Request;
 use axum_bootstrap::InterceptResult;
-use http::{header::HOST, Uri};
-use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use http::{Uri, header::HOST};
+use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
-use hyper::{body::Bytes, header::HeaderValue, http, upgrade::Upgraded, Method, Response, Version};
+use hyper::{Method, Response, Version, body::Bytes, header::HeaderValue, http, upgrade::Upgraded};
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
@@ -74,7 +74,7 @@ impl<'a> ServiceType<'a> {
         match self {
             ServiceType::NonMatch => Ok(InterceptResultAdapter::Continue(req)),
             ServiceType::ReverseProxy {
-                ref original_scheme_host_port,
+                original_scheme_host_port,
                 location,
                 upstream,
             } => {
@@ -247,20 +247,20 @@ impl ProxyHandler {
                     return Ok(ServiceType::ForwardProxy);
                 }
 
-            let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
-                req,
-                match self.config.over_tls {
-                    true => "https",
-                    false => "http",
-                },
-            )?;
+                let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
+                    req,
+                    match self.config.over_tls {
+                        true => "https",
+                        false => "http",
+                    },
+                )?;
 
-            // 尝试找到匹配的 Location 配置
-            let location_config_of_host = self.config.location_specs.locations.get(&req_domain.0).or(self
-                .config
-                .location_specs
-                .locations
-                .get(DEFAULT_HOST));
+                // 尝试找到匹配的 Location 配置
+                let location_config_of_host = self.config.location_specs.locations.get(&req_domain.0).or(self
+                    .config
+                    .location_specs
+                    .locations
+                    .get(DEFAULT_HOST));
 
                 if let Some(locations) = location_config_of_host {
                     if let Some(location_config) = locations

@@ -3,7 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
-use http::{uri::Authority, Uri};
+use http::{Uri, uri::Authority};
 
 /// SOCKS5 address type
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -18,7 +18,7 @@ impl Address {
     #[allow(dead_code)]
     pub fn host(&self) -> String {
         match self {
-            Address::SocketAddress(ref addr) => addr.ip().to_string(),
+            Address::SocketAddress(addr) => addr.ip().to_string(),
             Address::DomainNameAddress(host, _) => host.to_owned(),
         }
     }
