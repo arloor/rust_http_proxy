@@ -57,6 +57,7 @@ impl NetMonitor {
         let mut r = vec![];
         r.extend_from_slice(x.0);
         r.extend_from_slice(x.1);
+        drop(buffer);
 
         let mut scales = vec![];
         let mut series_up = vec![];
@@ -66,22 +67,32 @@ impl NetMonitor {
             series_up.push(x.egress);
             series_down.push(x.ingress);
         }
+
+        // 计算总和，谁的总和大就显示标记
+        let sum_up: u64 = series_up.iter().sum();
+        let sum_down: u64 = series_down.iter().sum();
+        let (show_up, show_down) = if sum_up >= sum_down {
+            (true, false)
+        } else {
+            (false, true)
+        };
+
         Snapshot {
             scales,
             series_vec: vec![
                 Series {
                     name: "上行网速".to_string(),
                     data: series_up,
-                    show_avg_line: true,
-                    show_max_point: true,
+                    show_avg_line: show_up,
+                    show_max_point: show_up,
                     color: Some("#ef0000".to_string()),
                     serires_type: None,
                 },
                 Series {
                     name: "下行网速".to_string(),
                     data: series_down,
-                    show_avg_line: true,
-                    show_max_point: false,
+                    show_avg_line: show_down,
+                    show_max_point: show_down,
                     color: Some("#5c7bd9".to_string()),
                     serires_type: None,
                 },
