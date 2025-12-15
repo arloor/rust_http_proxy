@@ -80,7 +80,7 @@ impl NetMonitor {
                 Series {
                     name: "下行网速".to_string(),
                     data: series_down,
-                    show_avg_line: false,
+                    show_avg_line: true,
                     show_max_point: false,
                     color: Some("#5c7bd9".to_string()),
                     serires_type: None,
