@@ -105,29 +105,29 @@ impl NetMonitor {
         tokio::spawn(async move {
             let mut last_egress: u64 = 0;
             let mut last_ingress: u64 = 0;
+            let mut ticker = tokio::time::interval(Duration::from_secs(INTERVAL_SECONDS));
             loop {
-                {
-                    #[cfg(feature = "bpf")]
-                    let new = (crate::ebpf::get_egress(), crate::ebpf::get_ingress());
-                    #[cfg(not(feature = "bpf"))]
-                    let new = get_egress_ingress();
-                    if last_egress != 0 || last_ingress != 0 {
-                        let system_time = SystemTime::now();
-                        let datetime: DateTime<Local> = system_time.into();
-                        let mut buffer = buffer_clone.write().await;
-                        buffer.push_back(TimeValue::new(
-                            datetime.format("%H:%M:%S").to_string(),
-                            (new.0 - last_egress) * 8 / INTERVAL_SECONDS,
-                            (new.1 - last_ingress) * 8 / INTERVAL_SECONDS,
-                        ));
-                        if buffer.len() > SIZE {
-                            buffer.pop_front();
-                        }
+                ticker.tick().await;
+
+                #[cfg(feature = "bpf")]
+                let new = (crate::ebpf::get_egress(), crate::ebpf::get_ingress());
+                #[cfg(not(feature = "bpf"))]
+                let new = get_egress_ingress();
+                if last_egress != 0 || last_ingress != 0 {
+                    let system_time = SystemTime::now();
+                    let datetime: DateTime<Local> = system_time.into();
+                    let mut buffer = buffer_clone.write().await;
+                    buffer.push_back(TimeValue::new(
+                        datetime.format("%H:%M:%S").to_string(),
+                        (new.0 - last_egress) * 8 / INTERVAL_SECONDS,
+                        (new.1 - last_ingress) * 8 / INTERVAL_SECONDS,
+                    ));
+                    if buffer.len() > SIZE {
+                        buffer.pop_front();
                     }
-                    last_egress = new.0;
-                    last_ingress = new.1;
                 }
-                tokio::time::sleep(Duration::from_secs(INTERVAL_SECONDS)).await;
+                last_egress = new.0;
+                last_ingress = new.1;
             }
         });
     }
