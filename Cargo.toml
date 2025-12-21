@@ -1,5 +1,11 @@
 [workspace]
-members = ["rust_http_proxy", "log_x", "io_x", "prom_label"]
+members = [
+    "rust_http_proxy",
+    "log_x",
+    "io_x",
+    "prom_label",
+    "telegram-bot-send",
+]
 resolver = "2"
 
 [workspace.package]
