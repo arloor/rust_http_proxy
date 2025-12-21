@@ -1,3 +1,5 @@
+use std::io;
+
 use log::warn;
 use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
@@ -41,7 +43,7 @@ pub struct TelegramBot {
 }
 
 impl TelegramBot {
-    pub async fn send_message(&self, chat_id: String, message: String) -> Result<(), DynError> {
+    pub async fn send_message(&self, chat_id: String, message: String) -> Result<(), io::Error> {
         let url = format!("https://api.telegram.org/{}/sendMessage", &self.bot_token);
         let tele_msg = TelegramMessage::new(chat_id.clone(), message);
         let msg = serde_json::to_string(&tele_msg)?;
@@ -51,12 +53,16 @@ impl TelegramBot {
             .header("content-type", "application/json; charset=utf-8")
             .body(msg.clone())
             .send()
-            .await?;
-        let text = resp.text().await?;
+            .await
+            .map_err(io::Error::other)?;
+        let text = resp.text().await.map_err(io::Error::other)?;
         let send_result: TGSendResult = serde_json::from_str(&text)?;
         if !send_result.ok {
             warn!("send message error: {text}, req is: {msg}, url is {url}");
-            return Err(format!("send message error: {}", send_result.description.unwrap_or_default()).into());
+            return Err(io::Error::other(format!(
+                "send message error: {}",
+                send_result.description.unwrap_or_default()
+            )));
         }
         Ok(())
     }
