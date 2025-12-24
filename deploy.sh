@@ -4,7 +4,7 @@ podman login quay.io
 podman push quay.io/arloor/rust_http_proxy:bpf
 
 #! /bin/bash
-hosts="wee.arloor.dev hk.arloor.dev us.arloor.dev hi.arloor.dev ttl.arloor.com xq.arloor.com ti.arloor.com"
+hosts="hk.arloor.dev us.arloor.dev bwg.arloor.dev ttl.arloor.com xq.arloor.com ti.arloor.com"
 for i in ${hosts}; do
     ssh -o StrictHostKeyChecking=no root@${i} <<'EOF'
         . pass
