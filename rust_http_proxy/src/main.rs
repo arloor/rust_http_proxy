@@ -4,7 +4,7 @@
 //! Main entry point for rust_http_proxy CLI
 
 use clap::Parser as _;
-use rust_http_proxy::{config::Param, create_futures, DynError};
+use rust_http_proxy::{DynError, config::Param, create_futures};
 
 // 使用jemalloc作为全局内存分配器
 #[cfg(feature = "jemalloc")]
@@ -29,11 +29,7 @@ fn main() -> Result<(), DynError> {
     }
     let (service_future, shutdown_tx) = create_futures(param)?;
 
-    runtime.spawn(async move {
-        if (axum_bootstrap::wait_signal().await).is_ok() {
-            let _ = shutdown_tx.send(());
-        }
-    });
+    axum_bootstrap::subscribe_shutdown_sender(shutdown_tx);
     // Run it right now.
     let results = runtime.block_on(service_future);
     let _ = results.iter().all(|res| {
