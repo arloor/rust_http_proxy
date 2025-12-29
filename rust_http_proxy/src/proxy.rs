@@ -237,16 +237,12 @@ impl ProxyHandler {
 
     /// 确定服务类型
     fn determine_service_type(&'_ self, req: &Request<Incoming>) -> Result<ServiceType<'_>, io::Error> {
-        match req.method() {
-            &Method::CONNECT => Ok(ServiceType::ForwardProxy),
+        match (req.method(), req.version(), req.uri().host()) {
+            // CONNECT 方法则判定为正向代理
+            (&Method::CONNECT, _, _) => Ok(ServiceType::ForwardProxy),
+            // HTTP1 且 url中有host则判定为正向代理
+            (_, Version::HTTP_10 | Version::HTTP_11, Some(_)) => Ok(ServiceType::ForwardProxy),
             _ => {
-                // HTTP1 且 url中有host则判定为simple proxy
-                if (req.version() == Version::HTTP_10 || req.version() == Version::HTTP_11)
-                    && req.uri().host().is_some()
-                {
-                    return Ok(ServiceType::ForwardProxy);
-                }
-
                 let (original_scheme_host_port, req_domain) = extract_scheme_host_port(
                     req,
                     match self.config.over_tls {
@@ -262,27 +258,21 @@ impl ProxyHandler {
                     .locations
                     .get(DEFAULT_HOST));
 
-                if let Some(locations) = location_config_of_host {
-                    if let Some(location_config) = locations
+                match location_config_of_host.and_then(|locations| {
+                    locations
                         .iter()
                         .find(|&ele| req.uri().path().starts_with(ele.location()))
-                    {
-                        match location_config {
-                            LocationConfig::ReverseProxy { location, upstream } => {
-                                return Ok(ServiceType::ReverseProxy {
-                                    original_scheme_host_port,
-                                    location,
-                                    upstream,
-                                });
-                            }
-                            LocationConfig::Serving { static_dir, location } => {
-                                return Ok(ServiceType::LocationStaticServing { location, static_dir });
-                            }
-                        }
+                }) {
+                    Some(LocationConfig::ReverseProxy { location, upstream }) => Ok(ServiceType::ReverseProxy {
+                        original_scheme_host_port,
+                        location,
+                        upstream,
+                    }),
+                    Some(LocationConfig::Serving { static_dir, location }) => {
+                        Ok(ServiceType::LocationStaticServing { location, static_dir })
                     }
+                    None => Ok(ServiceType::NonMatch),
                 }
-                // 没有匹配的 Location 配置，返回 NonMatch
-                Ok(ServiceType::NonMatch)
             }
         }
 
