@@ -1887,6 +1887,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "http",
+ "http-body",
  "http-body-util",
  "httpdate",
  "hyper",

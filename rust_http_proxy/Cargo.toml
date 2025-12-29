@@ -19,6 +19,7 @@ required-features = ["winservice"]
 [dependencies]
 hyper = { version = "1", features = ["full"] }
 tokio.workspace = true
+http-body = "1.0"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 rustls-pemfile = "2"

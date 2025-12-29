@@ -21,6 +21,8 @@ use std::{
 use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
 use crate::ip_x::SocketAddrFormat;
+use crate::proxy::AccessLabel;
+use crate::proxy::CounterBody;
 use crate::proxy::ReverseProxyClient;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
@@ -129,6 +131,11 @@ impl<'a> RequestSpec<'a> {
                         upstream: upstream.url_base.clone(),
                     }))
                     .inc();
+                let upstream_authority = upstream_req
+                    .uri()
+                    .authority()
+                    .map(|a| a.to_string())
+                    .unwrap_or_default();
                 METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
                 match reverse_client.request(upstream_req).await {
                     Ok(mut resp) => {
@@ -136,12 +143,25 @@ impl<'a> RequestSpec<'a> {
                             normalize302(original_scheme_host_port, resp.headers_mut(), config)?;
                             //修改302的location
                         }
+
+                        // 创建流量统计标签（反向代理响应 body）
+                        let traffic_label = AccessLabel {
+                            client: "reverse_proxy".to_owned(),
+                            target: upstream_authority,
+                            username: "reverse_proxy".to_owned(),
+                            relay_over_tls: None,
+                        };
+
                         Ok(resp.map(|body| {
-                            body.map_err(|e| {
-                                let e = e;
-                                io::Error::new(ErrorKind::InvalidData, e)
-                            })
-                            .boxed()
+                            // 使用 CounterBody 包装 body 来统计响应流量
+                            let counter_body =
+                                CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label));
+                            counter_body
+                                .map_err(|e| {
+                                    let e = e;
+                                    io::Error::new(ErrorKind::InvalidData, e)
+                                })
+                                .boxed()
                         }))
                     }
                     Err(e) => {
