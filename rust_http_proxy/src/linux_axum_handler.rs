@@ -195,19 +195,15 @@ fn parse_process_info(process_field: &str) -> String {
     "".to_string()
 }
 
-pub async fn net_html(
-    State(_): State<Arc<AppState>>, axum_extra::extract::Host(host): axum_extra::extract::Host,
-) -> Result<impl IntoResponse, AppProxyError> {
+pub async fn net_html(State(_): State<Arc<AppState>>) -> Result<impl IntoResponse, AppProxyError> {
     Ok(HtmlTemplate(NetTemplate {
-        hostname: host.to_string(),
+        hostname: "".to_string(),
     }))
 }
 
-pub async fn netx_html(
-    State(_): State<Arc<AppState>>, axum_extra::extract::Host(host): axum_extra::extract::Host,
-) -> Result<impl IntoResponse, AppProxyError> {
+pub async fn netx_html(State(_): State<Arc<AppState>>) -> Result<impl IntoResponse, AppProxyError> {
     Ok(HtmlTemplate(NetXTemplate {
-        hostname: host.to_string(),
+        hostname: "".to_string(),
     }))
 }
 
