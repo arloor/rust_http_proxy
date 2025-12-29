@@ -2,7 +2,9 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
+    pin::Pin,
     sync::LazyLock,
+    task::Poll,
     time::Duration,
 };
 
@@ -28,11 +30,13 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use prometheus_client::encoding::EncodeLabelSet;
+use prometheus_client::metrics::{counter::Counter, family::Family};
 use rand::Rng;
 use std::sync::Arc;
 use tokio::{net::TcpStream, pin};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::{client::TlsStream, rustls::pki_types};
+use tower::Service;
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 pub struct ProxyHandler {
@@ -738,6 +742,112 @@ fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
+// CounterConnector: 装饰器，用于包装 Connector 并添加流量统计
+#[derive(Clone)]
+pub struct CounterConnector<C, R, F>
+where
+    R: prom_label::Label,
+    F: Fn(&Uri) -> R,
+{
+    inner: C,
+    traffic_counter: Family<R, Counter>,
+    label_fn: F,
+}
+
+impl<C, R, F> CounterConnector<C, R, F>
+where
+    R: prom_label::Label,
+    F: Fn(&Uri) -> R,
+{
+    pub fn new(inner: C, traffic_counter: Family<R, Counter>, label_fn: F) -> Self {
+        Self {
+            inner,
+            traffic_counter,
+            label_fn,
+        }
+    }
+}
+
+impl<C, R, F> Service<Uri> for CounterConnector<C, R, F>
+where
+    C: Service<Uri>,
+    C::Response: hyper::rt::Read + hyper::rt::Write + Send + Unpin + 'static,
+    C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    C::Future: Send + 'static,
+    R: prom_label::Label + Clone + Send + Sync + 'static,
+    F: Fn(&Uri) -> R + Clone + Send + 'static,
+{
+    type Response = CounterHyperIO<C::Response, R>;
+    type Error = C::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, uri: Uri) -> Self::Future {
+        let fut = self.inner.call(uri.clone());
+        let traffic_counter = self.traffic_counter.clone();
+        let label = (self.label_fn)(&uri);
+
+        Box::pin(async move {
+            let io = fut.await?;
+            Ok(CounterHyperIO::new(io, traffic_counter, label))
+        })
+    }
+}
+
+// 示例：创建带流量统计的 label
+#[allow(dead_code)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
+pub struct ReverseProxyTrafficLabel {
+    pub target: String,
+}
+
+impl prom_label::Label for ReverseProxyTrafficLabel {}
+
+/// 创建带流量统计的 hyper client (可选功能，示例)
+///
+/// 使用示例：
+/// ```ignore
+/// let client = build_hyper_legacy_client_with_counter(
+///     METRICS.proxy_traffic.clone(),
+///     |uri: &Uri| ReverseProxyTrafficLabel {
+///         target: uri.authority().map(|a| a.to_string()).unwrap_or_default(),
+///     }
+/// );
+/// ```
+#[allow(dead_code)]
+fn build_hyper_legacy_client_with_counter<R, F>(
+    traffic_counter: Family<R, Counter>, label_fn: F,
+) -> legacy::Client<CounterConnector<hyper_rustls::HttpsConnector<HttpConnector>, R, F>, Incoming>
+where
+    R: prom_label::Label + Clone + Send + Sync + 'static,
+    F: Fn(&Uri) -> R + Clone + Send + 'static,
+{
+    let pool_idle_timeout = Duration::from_secs(90);
+    // 创建一个 HttpConnector
+    let mut http_connector = HttpConnector::new();
+    http_connector.enforce_http(false);
+    http_connector.set_keepalive(Some(pool_idle_timeout));
+
+    let https_connector = HttpsConnectorBuilder::new()
+        .with_platform_verifier()
+        .https_or_http()
+        .enable_all_versions()
+        .wrap_connector(http_connector);
+
+    // 使用 CounterConnector 包装 https_connector
+    let counter_connector = CounterConnector::new(https_connector, traffic_counter, label_fn);
+
+    // 创建一个 HttpsConnector，使用 rustls 作为后端
+    legacy::Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(pool_idle_timeout)
+        .pool_max_idle_per_host(5)
+        .pool_timer(hyper_util::rt::TokioTimer::new())
+        .build(counter_connector)
+}
+
 fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
     let pool_idle_timeout = Duration::from_secs(90);
     // 创建一个 HttpConnector
@@ -946,6 +1056,105 @@ pub fn full_body<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, io::Error> {
     Full::new(chunk.into()).map_err(|never| match never {}).boxed()
 }
 
+// CounterHyperIO: 为 hyper 的 IO 类型添加流量统计功能
+pin_project_lite::pin_project! {
+    /// enhance inner hyper IO with prometheus counter
+    pub struct CounterHyperIO<T, R> {
+        #[pin]
+        inner: T,
+        traffic_counter: Family<R, Counter>,
+        label: R,
+    }
+}
+
+impl<T, R> CounterHyperIO<T, R> {
+    pub fn new(inner: T, traffic_counter: Family<R, Counter>, label: R) -> Self {
+        Self {
+            inner,
+            traffic_counter,
+            label,
+        }
+    }
+}
+
+impl<T, R> hyper::rt::Read for CounterHyperIO<T, R>
+where
+    T: hyper::rt::Read,
+    R: prom_label::Label,
+{
+    fn poll_read(
+        self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: hyper::rt::ReadBufCursor<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        let this = self.project();
+
+        // 注意：由于 hyper::rt::ReadBufCursor 的 API 设计，
+        // 我们无法在不修改 trait 的情况下准确统计读取的字节数。
+        // 这里只转发调用，主要统计将在 Write 端进行。
+        // 如果需要准确统计双向流量，可能需要在更高层进行包装。
+
+        this.inner.poll_read(cx, buf)
+    }
+}
+
+impl<T, R> hyper::rt::Write for CounterHyperIO<T, R>
+where
+    T: hyper::rt::Write,
+    R: prom_label::Label,
+{
+    fn poll_write(
+        self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let this = self.project();
+        match this.inner.poll_write(cx, buf) {
+            Poll::Ready(result) => {
+                if let Ok(size) = result {
+                    this.traffic_counter.get_or_create(this.label).inc_by(size as u64);
+                }
+                Poll::Ready(result)
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        self.project().inner.poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        self.project().inner.poll_shutdown(cx)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>, cx: &mut std::task::Context<'_>, bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let this = self.project();
+        match this.inner.poll_write_vectored(cx, bufs) {
+            Poll::Ready(result) => {
+                if let Ok(size) = result {
+                    this.traffic_counter.get_or_create(this.label).inc_by(size as u64);
+                }
+                Poll::Ready(result)
+            }
+            other => other,
+        }
+    }
+}
+
+// 实现 Connection trait，使 CounterHyperIO 可以用于 hyper client
+impl<T, R> hyper_util::client::legacy::connect::Connection for CounterHyperIO<T, R>
+where
+    T: hyper_util::client::legacy::connect::Connection,
+    R: prom_label::Label,
+{
+    fn connected(&self) -> hyper_util::client::legacy::connect::Connected {
+        self.inner.connected()
+    }
+}
+
 // 用于 forward_bypass 的流枚举，支持 TCP 和 TLS
 pin_project_lite::pin_project! {
     #[project = EitherTlsStreamProj]
@@ -995,6 +1204,51 @@ impl tokio::io::AsyncWrite for EitherTlsStream {
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
+    #[test]
+    fn test_reverse_proxy_traffic_label() {
+        let label1 = ReverseProxyTrafficLabel {
+            target: "example.com:443".to_string(),
+        };
+        let label2 = ReverseProxyTrafficLabel {
+            target: "example.com:443".to_string(),
+        };
+        assert_eq!(label1, label2);
+
+        // Test that labels can be used as hash keys
+        use std::collections::HashMap;
+        let mut map = HashMap::new();
+        map.insert(label1.clone(), 100);
+        assert_eq!(map.get(&label2), Some(&100));
+    }
+
+    #[test]
+    fn test_counter_hyper_io_creation() {
+        use hyper_util::rt::TokioIo;
+        use prometheus_client::metrics::{counter::Counter, family::Family};
+        use tokio::net::TcpStream;
+
+        // 创建一个简单的 label
+        #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+        struct TestLabel {
+            name: String,
+        }
+        impl prom_label::Label for TestLabel {}
+
+        let traffic_counter: Family<TestLabel, Counter> = Family::default();
+        let label = TestLabel {
+            name: "test".to_string(),
+        };
+
+        // 注意：我们不能直接创建 TcpStream 用于测试，
+        // 但可以验证类型系统是正确的
+        // 这里只是一个编译时检查
+        let _check_types = |stream: TokioIo<TcpStream>| {
+            let _counter_io = CounterHyperIO::new(stream, traffic_counter.clone(), label.clone());
+        };
+    }
+
     #[test]
     fn test_aa() {
         let host = "www.arloor.com";
