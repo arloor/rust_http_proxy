@@ -4,7 +4,6 @@ use http_body_util::BodyExt as _;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::body::Incoming;
-use hyper_util::client::legacy::{self, connect::HttpConnector};
 use log::info;
 use log::warn;
 use percent_encoding::percent_decode_str;
@@ -22,6 +21,7 @@ use std::{
 use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
 use crate::ip_x::SocketAddrFormat;
+use crate::proxy::ReverseProxyClient;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
 use crate::{METRICS, static_serve};
@@ -93,7 +93,7 @@ pub(crate) enum RequestSpec<'a> {
         original_scheme_host_port: &'a SchemeHostPort,
         location: &'a String,
         upstream: &'a Upstream,
-        reverse_client: &'a legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+        reverse_client: &'a ReverseProxyClient,
         config: &'a Config,
     },
 }

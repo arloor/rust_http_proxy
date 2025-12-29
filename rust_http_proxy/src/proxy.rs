@@ -39,11 +39,6 @@ use tokio_rustls::{client::TlsStream, rustls::pki_types};
 use tower::Service;
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
-pub struct ProxyHandler {
-    config: Arc<Config>,
-    forwad_proxy_client: ForwardProxyClient<Incoming>,
-    reverse_proxy_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
-}
 
 #[allow(dead_code)]
 pub(crate) enum InterceptResultAdapter {
@@ -215,18 +210,46 @@ impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
     }
 }
 
+pub type ReverseProxyClient = legacy::Client<
+    CounterConnector<
+        hyper_rustls::HttpsConnector<HttpConnector>,
+        prom_label::LabelImpl<AccessLabel>,
+        fn(&Uri) -> prom_label::LabelImpl<AccessLabel>,
+    >,
+    Incoming,
+>;
+
+pub struct ProxyHandler {
+    config: Arc<Config>,
+    forward_proxy_client: ForwardProxyClient<Incoming>,
+    reverse_proxy_client: ReverseProxyClient,
+}
+
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
+
+fn reverse_proxy_label_fn(uri: &Uri) -> prom_label::LabelImpl<AccessLabel> {
+    prom_label::LabelImpl::new(AccessLabel {
+        client: "reverse_proxy".to_owned(),
+        target: uri.authority().map(|a| a.to_string()).unwrap_or_default(),
+        username: "reverse_proxy".to_owned(),
+        relay_over_tls: None,
+    })
+}
+
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
     pub fn new(config: Arc<Config>) -> Result<Self, crate::DynError> {
-        let reverse_client = build_hyper_legacy_client();
+        let reverse_client = build_hyper_legacy_client_with_counter(
+            METRICS.proxy_traffic.clone(),
+            reverse_proxy_label_fn as fn(&Uri) -> prom_label::LabelImpl<AccessLabel>,
+        );
         let http1_client = ForwardProxyClient::<Incoming>::new();
 
         Ok(ProxyHandler {
             config,
             reverse_proxy_client: reverse_client,
-            forwad_proxy_client: http1_client,
+            forward_proxy_client: http1_client,
         })
     }
     pub async fn handle(
@@ -298,7 +321,7 @@ impl ProxyHandler {
         };
         mod_http1_proxy_req(&mut req)?;
         match self
-            .forwad_proxy_client
+            .forward_proxy_client
             .send_request(req, &access_label, |stream: EitherTlsStream, access_label: AccessLabel| {
                 CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
@@ -348,7 +371,7 @@ impl ProxyHandler {
         warn!("bypass {:?} {} {}", req.version(), req.method(), req.uri());
 
         match self
-            .forwad_proxy_client
+            .forward_proxy_client
             .send_request(req, &access_label, |stream: EitherTlsStream, access_label: AccessLabel| {
                 CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
@@ -848,6 +871,7 @@ where
         .build(counter_connector)
 }
 
+#[allow(dead_code)]
 fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
     let pool_idle_timeout = Duration::from_secs(90);
     // 创建一个 HttpConnector
