@@ -91,6 +91,22 @@ pub static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         "Cache memory usage by cgroup in bytes",
         cgroup_memory_cache_bytes.clone(),
     );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_inactive_file_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_inactive_file_bytes",
+        "Inactive file memory by cgroup in bytes",
+        cgroup_memory_inactive_file_bytes.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_working_set_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_working_set_bytes",
+        "Working set memory by cgroup in bytes (same as k8s dashboard)",
+        cgroup_memory_working_set_bytes.clone(),
+    );
 
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 2);
     register_metric_cleaner(reverse_proxy_req.clone(), "reverse_proxy_req".to_owned(), 24);
@@ -121,6 +137,10 @@ pub static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         cgroup_memory_rss_bytes,
         #[cfg(target_os = "linux")]
         cgroup_memory_cache_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_inactive_file_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_working_set_bytes,
     }
 });
 
@@ -148,6 +168,10 @@ pub struct Metrics {
     pub cgroup_memory_rss_bytes: Gauge,
     #[cfg(target_os = "linux")]
     pub cgroup_memory_cache_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_inactive_file_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_working_set_bytes: Gauge,
 }
 
 #[cfg(target_os = "linux")]
@@ -177,6 +201,12 @@ pub(crate) fn update_cgroup_metrics() {
                 .set(stats.memory_peak_bytes.unwrap_or(0) as i64);
             METRICS.cgroup_memory_rss_bytes.set(stats.memory_rss_bytes as i64);
             METRICS.cgroup_memory_cache_bytes.set(stats.memory_cache_bytes as i64);
+            METRICS
+                .cgroup_memory_inactive_file_bytes
+                .set(stats.memory_inactive_file_bytes as i64);
+            METRICS
+                .cgroup_memory_working_set_bytes
+                .set(stats.memory_working_set_bytes as i64);
         }
         Err(e) => {
             warn!("Failed to collect cgroup stats: {}", e);

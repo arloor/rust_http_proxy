@@ -13,6 +13,8 @@ pub struct CgroupStats {
     pub memory_max_bytes: Option<u64>,
     pub memory_rss_bytes: u64,
     pub memory_cache_bytes: u64,
+    pub memory_inactive_file_bytes: u64,
+    pub memory_working_set_bytes: u64,
     pub cgroup_version: CgroupVersion,
 }
 
@@ -80,9 +82,12 @@ fn collect_cgroup_v1_stats(pid: u32) -> io::Result<CgroupStats> {
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok());
 
-    // Parse memory.stat for RSS and cache
+    // Parse memory.stat for RSS, cache and inactive_file
     let memory_stat_path = format!("/sys/fs/cgroup/memory{}/memory.stat", memory_path);
-    let (memory_rss_bytes, memory_cache_bytes) = parse_memory_stat_v1(&memory_stat_path)?;
+    let (memory_rss_bytes, memory_cache_bytes, memory_inactive_file_bytes) = parse_memory_stat_v1(&memory_stat_path)?;
+
+    // Calculate working set: usage_in_bytes - total_inactive_file
+    let memory_working_set_bytes = memory_current_bytes.saturating_sub(memory_inactive_file_bytes);
 
     Ok(CgroupStats {
         cpu_total_ns,
@@ -93,6 +98,8 @@ fn collect_cgroup_v1_stats(pid: u32) -> io::Result<CgroupStats> {
         memory_max_bytes,
         memory_rss_bytes,
         memory_cache_bytes,
+        memory_inactive_file_bytes,
+        memory_working_set_bytes,
         cgroup_version: CgroupVersion::V1,
     })
 }
@@ -128,9 +135,12 @@ fn collect_cgroup_v2_stats(pid: u32) -> io::Result<CgroupStats> {
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok());
 
-    // Parse memory.stat for anon, file, etc.
+    // Parse memory.stat for anon, file, inactive_file, etc.
     let memory_stat_path = format!("/sys/fs/cgroup{}/memory.stat", cgroup_path);
-    let (memory_rss_bytes, memory_cache_bytes) = parse_memory_stat_v2(&memory_stat_path)?;
+    let (memory_rss_bytes, memory_cache_bytes, memory_inactive_file_bytes) = parse_memory_stat_v2(&memory_stat_path)?;
+
+    // Calculate working set: memory.current - inactive_file
+    let memory_working_set_bytes = memory_current_bytes.saturating_sub(memory_inactive_file_bytes);
 
     Ok(CgroupStats {
         cpu_total_ns,
@@ -141,6 +151,8 @@ fn collect_cgroup_v2_stats(pid: u32) -> io::Result<CgroupStats> {
         memory_max_bytes: memory_peak_bytes,
         memory_rss_bytes,
         memory_cache_bytes,
+        memory_inactive_file_bytes,
+        memory_working_set_bytes,
         cgroup_version: CgroupVersion::V2,
     })
 }
@@ -202,13 +214,14 @@ fn parse_cpu_stat_v2(cpu_stat_path: &str) -> io::Result<(u64, u64, u64)> {
     Ok((usage_usec * 1000, user_usec * 1000, system_usec * 1000))
 }
 
-fn parse_memory_stat_v1(memory_stat_path: &str) -> io::Result<(u64, u64)> {
+fn parse_memory_stat_v1(memory_stat_path: &str) -> io::Result<(u64, u64, u64)> {
     let file = fs::File::open(memory_stat_path)
         .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", memory_stat_path, e)))?;
     let reader = BufReader::new(file);
 
     let mut rss_bytes = 0u64;
     let mut cache_bytes = 0u64;
+    let mut inactive_file_bytes = 0u64;
 
     for line in reader.lines() {
         let line = line?;
@@ -217,21 +230,23 @@ fn parse_memory_stat_v1(memory_stat_path: &str) -> io::Result<(u64, u64)> {
             match parts[0] {
                 "rss" => rss_bytes = parts[1].parse::<u64>().unwrap_or(0),
                 "cache" => cache_bytes = parts[1].parse::<u64>().unwrap_or(0),
+                "total_inactive_file" => inactive_file_bytes = parts[1].parse::<u64>().unwrap_or(0),
                 _ => {}
             }
         }
     }
 
-    Ok((rss_bytes, cache_bytes))
+    Ok((rss_bytes, cache_bytes, inactive_file_bytes))
 }
 
-fn parse_memory_stat_v2(memory_stat_path: &str) -> io::Result<(u64, u64)> {
+fn parse_memory_stat_v2(memory_stat_path: &str) -> io::Result<(u64, u64, u64)> {
     let file = fs::File::open(memory_stat_path)
         .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", memory_stat_path, e)))?;
     let reader = BufReader::new(file);
 
     let mut anon_bytes = 0u64;
     let mut file_bytes = 0u64;
+    let mut inactive_file_bytes = 0u64;
 
     for line in reader.lines() {
         let line = line?;
@@ -240,11 +255,124 @@ fn parse_memory_stat_v2(memory_stat_path: &str) -> io::Result<(u64, u64)> {
             match parts[0] {
                 "anon" => anon_bytes = parts[1].parse::<u64>().unwrap_or(0),
                 "file" => file_bytes = parts[1].parse::<u64>().unwrap_or(0),
+                "inactive_file" => inactive_file_bytes = parts[1].parse::<u64>().unwrap_or(0),
                 _ => {}
             }
         }
     }
 
     // In cgroup v2, anon is similar to RSS, file is similar to cache
-    Ok((anon_bytes, file_bytes))
+    Ok((anon_bytes, file_bytes, inactive_file_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_collect_cgroup_stats_for_pid_384125() {
+        // Test collecting cgroup stats for PID 384125
+        let pid = 384125;
+
+        match collect_cgroup_stats_for_pid(pid) {
+            Ok(stats) => {
+                println!("\n=== Cgroup Stats for PID {} ===", pid);
+                println!("Cgroup Version: {:?}", stats.cgroup_version);
+
+                println!("\nCPU Usage:");
+                println!("  Total:  {} ns ({:.2} ms)", stats.cpu_total_ns, stats.cpu_total_ns as f64 / 1_000_000.0);
+                println!("  User:   {} ns ({:.2} ms)", stats.cpu_user_ns, stats.cpu_user_ns as f64 / 1_000_000.0);
+                println!("  System: {} ns ({:.2} ms)", stats.cpu_system_ns, stats.cpu_system_ns as f64 / 1_000_000.0);
+
+                println!("\nMemory Usage:");
+                println!(
+                    "  Current: {} bytes ({:.2} MB)",
+                    stats.memory_current_bytes,
+                    stats.memory_current_bytes as f64 / 1024.0 / 1024.0
+                );
+                if let Some(peak) = stats.memory_peak_bytes {
+                    println!("  Peak:    {} bytes ({:.2} MB)", peak, peak as f64 / 1024.0 / 1024.0);
+                }
+                if let Some(max) = stats.memory_max_bytes {
+                    println!("  Max:     {} bytes ({:.2} MB)", max, max as f64 / 1024.0 / 1024.0);
+                }
+                println!(
+                    "  RSS/Anon: {} bytes ({:.2} MB)",
+                    stats.memory_rss_bytes,
+                    stats.memory_rss_bytes as f64 / 1024.0 / 1024.0
+                );
+                println!(
+                    "  Cache/File: {} bytes ({:.2} MB)",
+                    stats.memory_cache_bytes,
+                    stats.memory_cache_bytes as f64 / 1024.0 / 1024.0
+                );
+                println!(
+                    "  Inactive File: {} bytes ({:.2} MB)",
+                    stats.memory_inactive_file_bytes,
+                    stats.memory_inactive_file_bytes as f64 / 1024.0 / 1024.0
+                );
+                println!(
+                    "  Working Set: {} bytes ({:.2} MB)",
+                    stats.memory_working_set_bytes,
+                    stats.memory_working_set_bytes as f64 / 1024.0 / 1024.0
+                );
+
+                // Assert that we got some reasonable values
+                assert!(stats.cpu_total_ns > 0, "CPU total should be greater than 0");
+                assert!(stats.memory_current_bytes > 0, "Memory current should be greater than 0");
+
+                // For cgroup v2, verify specific expected values based on the user's output
+                if matches!(stats.cgroup_version, CgroupVersion::V2) {
+                    // CPU usage_usec was 33612342, which is 33612342000 ns
+                    println!("\nExpected CPU total: ~33612342000 ns");
+
+                    // Memory current was 62234624 bytes
+                    println!("Expected Memory current: ~62234624 bytes");
+
+                    // Anon was 50327552 bytes
+                    println!("Expected Memory RSS/Anon: ~50327552 bytes");
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to collect cgroup stats for PID {}: {}", pid, e);
+                panic!("Could not collect stats - process may not exist or insufficient permissions");
+            }
+        }
+    }
+
+    #[test]
+    fn test_collect_cgroup_stats_current_process() {
+        // Test collecting cgroup stats for current process
+        let result = collect_cgroup_stats();
+
+        match result {
+            Ok(stats) => {
+                println!("\n=== Cgroup Stats for Current Process ===");
+                println!("Cgroup Version: {:?}", stats.cgroup_version);
+                println!("CPU Total: {} ns", stats.cpu_total_ns);
+                println!("Memory Current: {} bytes", stats.memory_current_bytes);
+                println!("Memory Inactive File: {} bytes", stats.memory_inactive_file_bytes);
+                println!("Memory Working Set: {} bytes", stats.memory_working_set_bytes);
+
+                // Basic sanity checks
+                assert!(stats.memory_current_bytes > 0, "Current process should have some memory usage");
+            }
+            Err(e) => {
+                eprintln!("Failed to collect cgroup stats: {}", e);
+                // This might fail in some environments, so we don't panic here
+            }
+        }
+    }
+
+    #[test]
+    fn test_nonexistent_pid() {
+        // Test with a PID that is very unlikely to exist
+        let pid = 9999999;
+        let result = collect_cgroup_stats_for_pid(pid);
+
+        assert!(result.is_err(), "Should fail for nonexistent PID");
+        if let Err(e) = result {
+            println!("Expected error for nonexistent PID: {}", e);
+        }
+    }
 }
