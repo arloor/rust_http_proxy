@@ -12,7 +12,6 @@ use crate::{
     axum_handler::{self, AppProxyError},
     config::{Config, ForwardBypassConfig},
     forward_proxy_client::ForwardProxyClient,
-    hyper_x::CounterConnector,
     ip_x::local_ip,
     location::{DEFAULT_HOST, LocationConfig, RequestSpec, Upstream},
 };
@@ -30,7 +29,6 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use prometheus_client::encoding::EncodeLabelSet;
-use prometheus_client::metrics::{counter::Counter, family::Family};
 use rand::Rng;
 use std::sync::Arc;
 use tokio::{net::TcpStream, pin};
@@ -208,16 +206,6 @@ impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
         }
     }
 }
-
-#[allow(unused)]
-pub type ReverseProxyClient = legacy::Client<
-    CounterConnector<
-        hyper_rustls::HttpsConnector<HttpConnector>,
-        prom_label::LabelImpl<AccessLabel>,
-        fn(&Uri) -> prom_label::LabelImpl<AccessLabel>,
-    >,
-    Incoming,
->;
 
 pub struct ProxyHandler {
     config: Arc<Config>,
@@ -763,38 +751,6 @@ fn is_schema_secure(uri: &Uri) -> bool {
     uri.scheme_str()
         .map(|scheme_str| matches!(scheme_str, "wss" | "https"))
         .unwrap_or_default()
-}
-
-/// 创建带流量统计的 hyper client (可选功能，示例)
-#[allow(dead_code)]
-fn build_hyper_legacy_client_with_counter<R, F>(
-    traffic_counter: Family<R, Counter>, label_fn: F,
-) -> legacy::Client<CounterConnector<hyper_rustls::HttpsConnector<HttpConnector>, R, F>, Incoming>
-where
-    R: prom_label::Label + Clone + Send + Sync + 'static,
-    F: Fn(&Uri) -> R + Clone + Send + 'static,
-{
-    let pool_idle_timeout = Duration::from_secs(90);
-    // 创建一个 HttpConnector
-    let mut http_connector = HttpConnector::new();
-    http_connector.enforce_http(false);
-    http_connector.set_keepalive(Some(pool_idle_timeout));
-
-    let https_connector = HttpsConnectorBuilder::new()
-        .with_platform_verifier()
-        .https_or_http()
-        .enable_all_versions()
-        .wrap_connector(http_connector);
-
-    // 使用 CounterConnector 包装 https_connector
-    let counter_connector = CounterConnector::new(https_connector, traffic_counter, label_fn);
-
-    // 创建一个 HttpsConnector，使用 rustls 作为后端
-    legacy::Client::builder(TokioExecutor::new())
-        .pool_idle_timeout(pool_idle_timeout)
-        .pool_max_idle_per_host(5)
-        .pool_timer(hyper_util::rt::TokioTimer::new())
-        .build(counter_connector)
 }
 
 #[allow(dead_code)]
