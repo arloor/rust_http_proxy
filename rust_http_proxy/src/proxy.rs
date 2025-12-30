@@ -821,26 +821,7 @@ where
     }
 }
 
-// 示例：创建带流量统计的 label
-#[allow(dead_code)]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
-pub struct ReverseProxyTrafficLabel {
-    pub target: String,
-}
-
-impl prom_label::Label for ReverseProxyTrafficLabel {}
-
 /// 创建带流量统计的 hyper client (可选功能，示例)
-///
-/// 使用示例：
-/// ```ignore
-/// let client = build_hyper_legacy_client_with_counter(
-///     METRICS.proxy_traffic.clone(),
-///     |uri: &Uri| ReverseProxyTrafficLabel {
-///         target: uri.authority().map(|a| a.to_string()).unwrap_or_default(),
-///     }
-/// );
-/// ```
 #[allow(dead_code)]
 fn build_hyper_legacy_client_with_counter<R, F>(
     traffic_counter: Family<R, Counter>, label_fn: F,
@@ -1131,23 +1112,6 @@ impl tokio::io::AsyncWrite for EitherTlsStream {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    #[test]
-    fn test_reverse_proxy_traffic_label() {
-        let label1 = ReverseProxyTrafficLabel {
-            target: "example.com:443".to_string(),
-        };
-        let label2 = ReverseProxyTrafficLabel {
-            target: "example.com:443".to_string(),
-        };
-        assert_eq!(label1, label2);
-
-        // Test that labels can be used as hash keys
-        use std::collections::HashMap;
-        let mut map = HashMap::new();
-        map.insert(label1.clone(), 100);
-        assert_eq!(map.get(&label2), Some(&100));
-    }
 
     #[test]
     fn test_counter_hyper_io_creation() {

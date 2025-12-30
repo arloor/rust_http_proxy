@@ -146,7 +146,7 @@ impl<'a> RequestSpec<'a> {
 
                         // 创建流量统计标签（反向代理响应 body）
                         let traffic_label = AccessLabel {
-                            client: "reverse_proxy".to_owned(),
+                            client: client_socket_addr.ip().to_canonical().to_string(),
                             target: upstream_authority,
                             username: "reverse_proxy".to_owned(),
                             relay_over_tls: None,
