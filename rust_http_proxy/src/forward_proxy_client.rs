@@ -9,11 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use http::{header, HeaderMap, HeaderValue, Version};
+use http::{HeaderMap, HeaderValue, Version, header};
 use hyper::{
+    Request, Response,
     body::{self, Body},
     client::conn::http1,
-    Request, Response,
 };
 use hyper_util::rt::TokioIo;
 use io_x::{CounterIO, TimeoutIO};
@@ -23,7 +23,7 @@ use prom_label::LabelImpl;
 use tokio::{net::TcpStream, sync::Mutex};
 use tokio_rustls::rustls::pki_types;
 
-use crate::proxy::{build_tls_connector, AccessLabel, EitherTlsStream};
+use crate::proxy::{AccessLabel, EitherTlsStream, build_tls_connector};
 
 const CONNECTION_EXPIRE_DURATION: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 30 } else { 10 });
 

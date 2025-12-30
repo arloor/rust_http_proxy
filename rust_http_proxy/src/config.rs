@@ -1,5 +1,5 @@
-use base64::engine::general_purpose;
 use base64::Engine;
+use base64::engine::general_purpose;
 use clap::Parser;
 use http::Uri;
 use ipnetwork::IpNetwork;
@@ -7,7 +7,7 @@ use log::{info, warn};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::location::{parse_location_specs, LocationSpecs};
+use crate::location::{LocationSpecs, parse_location_specs};
 use crate::{DynError, IDLE_TIMEOUT};
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.

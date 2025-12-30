@@ -1,11 +1,11 @@
 use crate::metrics::METRICS;
 use askama::Template;
+use axum::Router;
 use axum::extract::{ConnectInfo, MatchedPath, State};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 
-use http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use log::{debug, warn};
 use prometheus_client::encoding::text::encode;
 use std::collections::HashMap;

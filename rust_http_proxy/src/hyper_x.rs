@@ -1,7 +1,4 @@
-use std::{
-    pin::Pin,
-    task::Poll,
-};
+use std::{pin::Pin, task::Poll};
 
 use http_body::Body as HttpBodyTrait;
 use hyper::body::Bytes;

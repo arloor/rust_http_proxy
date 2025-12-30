@@ -23,7 +23,7 @@ mod static_serve;
 pub use metrics::METRICS;
 use tokio::sync::broadcast::{self, Receiver};
 
-use crate::axum_handler::{build_router, AppState};
+use crate::axum_handler::{AppState, build_router};
 use crate::config::{Config, Param};
 
 use axum_bootstrap::{InterceptResult, ReqInterceptor, TlsParam};
@@ -107,7 +107,8 @@ pub fn create_futures(
             async move {
                 let res = main_future.await;
                 info!("HTTP Proxy server on port {port} exited with: {res:?}");
-                if res.is_err() { // If any server exits with error, send shutdown signal to others
+                if res.is_err() {
+                    // If any server exits with error, send shutdown signal to others
                     let _ = shutdown_tx_clone.send(());
                 }
                 res

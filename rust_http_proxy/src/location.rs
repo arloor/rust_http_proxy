@@ -20,9 +20,9 @@ use std::{
 
 use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
+use crate::hyper_x::CounterBody;
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::AccessLabel;
-use crate::hyper_x::CounterBody;
 use crate::proxy::ReverseProxyClient;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
