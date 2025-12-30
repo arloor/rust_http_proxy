@@ -2,7 +2,9 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
+    pin::Pin,
     sync::LazyLock,
+    task::Poll,
     time::Duration,
 };
 
@@ -12,6 +14,7 @@ use crate::{
     axum_handler::{self, AppProxyError},
     config::{Config, ForwardBypassConfig},
     forward_proxy_client::ForwardProxyClient,
+    hyper_x::CounterHyperIO,
     ip_x::local_ip,
     location::{DEFAULT_HOST, LocationConfig, RequestSpec, Upstream},
 };
@@ -23,23 +26,21 @@ use http::{Uri, header::HOST};
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
 use hyper::{Method, Response, Version, body::Bytes, header::HeaderValue, http, upgrade::Upgraded};
+use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use prometheus_client::encoding::EncodeLabelSet;
+use prometheus_client::metrics::{counter::Counter, family::Family};
 use rand::Rng;
 use std::sync::Arc;
 use tokio::{net::TcpStream, pin};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::{client::TlsStream, rustls::pki_types};
+use tower::Service;
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
-pub struct ProxyHandler {
-    config: Arc<Config>,
-    forwad_proxy_client: ForwardProxyClient<Incoming>,
-    reverse_proxy_client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
-}
 
 #[allow(dead_code)]
 pub(crate) enum InterceptResultAdapter {
@@ -212,7 +213,36 @@ impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
 }
 
 #[allow(unused)]
+pub type ReverseProxyClient = legacy::Client<
+    CounterConnector<
+        hyper_rustls::HttpsConnector<HttpConnector>,
+        prom_label::LabelImpl<AccessLabel>,
+        fn(&Uri) -> prom_label::LabelImpl<AccessLabel>,
+    >,
+    Incoming,
+>;
+
+pub struct ProxyHandler {
+    config: Arc<Config>,
+    forward_proxy_client: ForwardProxyClient<Incoming>,
+    reverse_proxy_client: legacy::Client<
+        HttpsConnector<HttpConnector>,
+        http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+    >,
+}
+
+#[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
+#[allow(unused)]
+fn reverse_proxy_label_fn(uri: &Uri) -> prom_label::LabelImpl<AccessLabel> {
+    prom_label::LabelImpl::new(AccessLabel {
+        client: "reverse_proxy".to_owned(),
+        target: uri.authority().map(|a| a.to_string()).unwrap_or_default(),
+        username: "reverse_proxy".to_owned(),
+        relay_over_tls: None,
+    })
+}
+
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
     pub fn new(config: Arc<Config>) -> Result<Self, crate::DynError> {
@@ -222,7 +252,7 @@ impl ProxyHandler {
         Ok(ProxyHandler {
             config,
             reverse_proxy_client: reverse_client,
-            forwad_proxy_client: http1_client,
+            forward_proxy_client: http1_client,
         })
     }
     pub async fn handle(
@@ -294,7 +324,7 @@ impl ProxyHandler {
         };
         mod_http1_proxy_req(&mut req)?;
         match self
-            .forwad_proxy_client
+            .forward_proxy_client
             .send_request(req, &access_label, |stream: EitherTlsStream, access_label: AccessLabel| {
                 CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
@@ -344,7 +374,7 @@ impl ProxyHandler {
         warn!("bypass {:?} {} {}", req.version(), req.method(), req.uri());
 
         match self
-            .forwad_proxy_client
+            .forward_proxy_client
             .send_request(req, &access_label, |stream: EitherTlsStream, access_label: AccessLabel| {
                 CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
             })
@@ -738,7 +768,98 @@ fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
-fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
+// CounterConnector: 装饰器，用于包装 Connector 并添加流量统计
+#[derive(Clone)]
+pub struct CounterConnector<C, R, F>
+where
+    R: prom_label::Label,
+    F: Fn(&Uri) -> R,
+{
+    inner: C,
+    traffic_counter: Family<R, Counter>,
+    label_fn: F,
+}
+
+impl<C, R, F> CounterConnector<C, R, F>
+where
+    R: prom_label::Label,
+    F: Fn(&Uri) -> R,
+{
+    pub fn new(inner: C, traffic_counter: Family<R, Counter>, label_fn: F) -> Self {
+        Self {
+            inner,
+            traffic_counter,
+            label_fn,
+        }
+    }
+}
+
+impl<C, R, F> Service<Uri> for CounterConnector<C, R, F>
+where
+    C: Service<Uri>,
+    C::Response: hyper::rt::Read + hyper::rt::Write + Send + Unpin + 'static,
+    C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    C::Future: Send + 'static,
+    R: prom_label::Label + Clone + Send + Sync + 'static,
+    F: Fn(&Uri) -> R + Clone + Send + 'static,
+{
+    type Response = CounterHyperIO<C::Response, R>;
+    type Error = C::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, uri: Uri) -> Self::Future {
+        let fut = self.inner.call(uri.clone());
+        let traffic_counter = self.traffic_counter.clone();
+        let label = (self.label_fn)(&uri);
+
+        Box::pin(async move {
+            let io = fut.await?;
+            Ok(CounterHyperIO::new(io, traffic_counter, label))
+        })
+    }
+}
+
+/// 创建带流量统计的 hyper client (可选功能，示例)
+#[allow(dead_code)]
+fn build_hyper_legacy_client_with_counter<R, F>(
+    traffic_counter: Family<R, Counter>, label_fn: F,
+) -> legacy::Client<CounterConnector<hyper_rustls::HttpsConnector<HttpConnector>, R, F>, Incoming>
+where
+    R: prom_label::Label + Clone + Send + Sync + 'static,
+    F: Fn(&Uri) -> R + Clone + Send + 'static,
+{
+    let pool_idle_timeout = Duration::from_secs(90);
+    // 创建一个 HttpConnector
+    let mut http_connector = HttpConnector::new();
+    http_connector.enforce_http(false);
+    http_connector.set_keepalive(Some(pool_idle_timeout));
+
+    let https_connector = HttpsConnectorBuilder::new()
+        .with_platform_verifier()
+        .https_or_http()
+        .enable_all_versions()
+        .wrap_connector(http_connector);
+
+    // 使用 CounterConnector 包装 https_connector
+    let counter_connector = CounterConnector::new(https_connector, traffic_counter, label_fn);
+
+    // 创建一个 HttpsConnector，使用 rustls 作为后端
+    legacy::Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(pool_idle_timeout)
+        .pool_max_idle_per_host(5)
+        .pool_timer(hyper_util::rt::TokioTimer::new())
+        .build(counter_connector)
+}
+
+#[allow(dead_code)]
+fn build_hyper_legacy_client() -> legacy::Client<
+    hyper_rustls::HttpsConnector<HttpConnector>,
+    http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+> {
     let pool_idle_timeout = Duration::from_secs(90);
     // 创建一个 HttpConnector
     let mut http_connector = HttpConnector::new();
@@ -751,12 +872,14 @@ fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<Ht
         .enable_all_versions()
         .wrap_connector(http_connector);
     // 创建一个 HttpsConnector，使用 rustls 作为后端
-    let client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> =
-        legacy::Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(pool_idle_timeout)
-            .pool_max_idle_per_host(5)
-            .pool_timer(hyper_util::rt::TokioTimer::new())
-            .build(https_connector);
+    let client: legacy::Client<
+        hyper_rustls::HttpsConnector<HttpConnector>,
+        http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+    > = legacy::Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(pool_idle_timeout)
+        .pool_max_idle_per_host(5)
+        .pool_timer(hyper_util::rt::TokioTimer::new())
+        .build(https_connector);
     client
 }
 
@@ -995,6 +1118,34 @@ impl tokio::io::AsyncWrite for EitherTlsStream {
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
+    #[test]
+    fn test_counter_hyper_io_creation() {
+        use hyper_util::rt::TokioIo;
+        use prometheus_client::metrics::{counter::Counter, family::Family};
+        use tokio::net::TcpStream;
+
+        // 创建一个简单的 label
+        #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+        struct TestLabel {
+            name: String,
+        }
+        impl prom_label::Label for TestLabel {}
+
+        let traffic_counter: Family<TestLabel, Counter> = Family::default();
+        let label = TestLabel {
+            name: "test".to_string(),
+        };
+
+        // 注意：我们不能直接创建 TcpStream 用于测试，
+        // 但可以验证类型系统是正确的
+        // 这里只是一个编译时检查
+        let _check_types = |stream: TokioIo<TcpStream>| {
+            let _counter_io = CounterHyperIO::new(stream, traffic_counter.clone(), label.clone());
+        };
+    }
+
     #[test]
     fn test_aa() {
         let host = "www.arloor.com";

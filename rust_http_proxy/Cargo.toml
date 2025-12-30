@@ -19,6 +19,7 @@ required-features = ["winservice"]
 [dependencies]
 hyper = { version = "1", features = ["full"] }
 tokio.workspace = true
+http-body = "1.0"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 rustls-pemfile = "2"
@@ -61,6 +62,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.132"
 # axum-bootstrap = { git = "https://github.com/arloor/axum-bootstrap", branch = "master",default-features = false  }
 axum-bootstrap = { version = "0.1", default-features = false }
+tower = "0.5"
 tower-http = { version = "0.6", features = [
     "cors",
     "timeout",

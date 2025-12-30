@@ -1,4 +1,4 @@
-use crate::{proxy, METRICS};
+use crate::{METRICS, proxy};
 
 pub(crate) fn init_once() {
     static INIT_ONCE: std::sync::Once = std::sync::Once::new();

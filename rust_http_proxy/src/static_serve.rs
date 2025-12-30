@@ -1,9 +1,9 @@
+use crate::METRICS;
 use crate::config::Config;
 use crate::ip_x::SocketAddrFormat;
+use crate::proxy::ReqLabels;
 use crate::proxy::empty_body;
 use crate::proxy::full_body;
-use crate::proxy::ReqLabels;
-use crate::METRICS;
 use async_compression::tokio::bufread::GzipEncoder;
 use futures_util::TryStreamExt;
 use http::response::Builder;
@@ -13,7 +13,7 @@ use http_body_util::{BodyExt, StreamBody};
 use httpdate::fmt_http_date;
 use hyper::body::{Body, Bytes, Frame};
 use hyper::header::{CONTENT_ENCODING, REFERER};
-use hyper::{http, Method, Request, Response, StatusCode};
+use hyper::{Method, Request, Response, StatusCode, http};
 use log::{info, warn};
 use mime_guess::from_path;
 use prom_label::LabelImpl;
@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::pin;
 use std::sync::LazyLock;
 use std::time::SystemTime;
-use tokio::fs::{metadata, File};
+use tokio::fs::{File, metadata};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio_util::io::ReaderStream;
 
@@ -394,9 +394,7 @@ fn serve_favico(req: &Request<impl Body>, need_body: bool) -> Result<Response<Bo
 }
 
 pub(crate) fn not_found() -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(empty_body())
+    Response::builder().status(StatusCode::NOT_FOUND).body(empty_body())
 }
 const FAV_ICO: &[u8] = include_bytes!("../html/favicon.ico");
 static BOOTUP_TIME: LazyLock<SystemTime> = LazyLock::new(SystemTime::now);
@@ -462,8 +460,8 @@ mod tests {
         );
     }
 
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
 
     pub(crate) fn compress_string(input: &str) -> io::Result<Vec<u8>> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());

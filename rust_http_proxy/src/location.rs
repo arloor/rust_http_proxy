@@ -4,7 +4,9 @@ use http_body_util::BodyExt as _;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::body::Incoming;
-use hyper_util::client::legacy::{self, connect::HttpConnector};
+use hyper_rustls::HttpsConnector;
+use hyper_util::client::legacy;
+use hyper_util::client::legacy::connect::HttpConnector;
 use log::info;
 use log::warn;
 use percent_encoding::percent_decode_str;
@@ -21,7 +23,9 @@ use std::{
 
 use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
+use crate::hyper_x::CounterBody;
 use crate::ip_x::SocketAddrFormat;
+use crate::proxy::AccessLabel;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
 use crate::{METRICS, static_serve};
@@ -93,7 +97,10 @@ pub(crate) enum RequestSpec<'a> {
         original_scheme_host_port: &'a SchemeHostPort,
         location: &'a String,
         upstream: &'a Upstream,
-        reverse_client: &'a legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>,
+        reverse_client: &'a legacy::Client<
+            HttpsConnector<HttpConnector>,
+            http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+        >,
         config: &'a Config,
     },
 }
@@ -111,7 +118,25 @@ impl<'a> RequestSpec<'a> {
                 config,
             } => {
                 config.allow_cidrs.check_serving_control(client_socket_addr)?;
+                // 创建流量统计标签
+                let traffic_label = AccessLabel {
+                    client: client_socket_addr.ip().to_canonical().to_string(),
+                    target: upstream.url_base.clone(),
+                    username: "reverse_proxy".to_owned(),
+                    relay_over_tls: None,
+                };
                 let upstream_req = Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
+                let upstream_req = upstream_req.map(|body| {
+                    // 使用 CounterBody 包装 body 来统计请求流量
+                    let counter_body =
+                        CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone()));
+                    counter_body
+                        .map_err(|e| {
+                            let e = e;
+                            io::Error::new(ErrorKind::InvalidData, e)
+                        })
+                        .boxed()
+                });
                 info!(
                     "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
                     SocketAddrFormat(&client_socket_addr).to_string(),
@@ -136,12 +161,17 @@ impl<'a> RequestSpec<'a> {
                             normalize302(original_scheme_host_port, resp.headers_mut(), config)?;
                             //修改302的location
                         }
+
                         Ok(resp.map(|body| {
-                            body.map_err(|e| {
-                                let e = e;
-                                io::Error::new(ErrorKind::InvalidData, e)
-                            })
-                            .boxed()
+                            // 使用 CounterBody 包装 body 来统计响应流量
+                            let counter_body =
+                                CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label));
+                            counter_body
+                                .map_err(|e| {
+                                    let e = e;
+                                    io::Error::new(ErrorKind::InvalidData, e)
+                                })
+                                .boxed()
                         }))
                     }
                     Err(e) => {
