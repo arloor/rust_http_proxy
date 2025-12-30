@@ -26,6 +26,7 @@ use http::{Uri, header::HOST};
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
 use hyper::{Method, Response, Version, body::Bytes, header::HeaderValue, http, upgrade::Upgraded};
+use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
@@ -211,6 +212,7 @@ impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
     }
 }
 
+#[allow(unused)]
 pub type ReverseProxyClient = legacy::Client<
     CounterConnector<
         hyper_rustls::HttpsConnector<HttpConnector>,
@@ -223,12 +225,15 @@ pub type ReverseProxyClient = legacy::Client<
 pub struct ProxyHandler {
     config: Arc<Config>,
     forward_proxy_client: ForwardProxyClient<Incoming>,
-    reverse_proxy_client: ReverseProxyClient,
+    reverse_proxy_client: legacy::Client<
+        HttpsConnector<HttpConnector>,
+        http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+    >,
 }
 
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
-
+#[allow(unused)]
 fn reverse_proxy_label_fn(uri: &Uri) -> prom_label::LabelImpl<AccessLabel> {
     prom_label::LabelImpl::new(AccessLabel {
         client: "reverse_proxy".to_owned(),
@@ -241,10 +246,7 @@ fn reverse_proxy_label_fn(uri: &Uri) -> prom_label::LabelImpl<AccessLabel> {
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
     pub fn new(config: Arc<Config>) -> Result<Self, crate::DynError> {
-        let reverse_client = build_hyper_legacy_client_with_counter(
-            METRICS.proxy_traffic.clone(),
-            reverse_proxy_label_fn as fn(&Uri) -> prom_label::LabelImpl<AccessLabel>,
-        );
+        let reverse_client = build_hyper_legacy_client();
         let http1_client = ForwardProxyClient::<Incoming>::new();
 
         Ok(ProxyHandler {
@@ -854,7 +856,10 @@ where
 }
 
 #[allow(dead_code)]
-fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> {
+fn build_hyper_legacy_client() -> legacy::Client<
+    hyper_rustls::HttpsConnector<HttpConnector>,
+    http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+> {
     let pool_idle_timeout = Duration::from_secs(90);
     // 创建一个 HttpConnector
     let mut http_connector = HttpConnector::new();
@@ -867,12 +872,14 @@ fn build_hyper_legacy_client() -> legacy::Client<hyper_rustls::HttpsConnector<Ht
         .enable_all_versions()
         .wrap_connector(http_connector);
     // 创建一个 HttpsConnector，使用 rustls 作为后端
-    let client: legacy::Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming> =
-        legacy::Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(pool_idle_timeout)
-            .pool_max_idle_per_host(5)
-            .pool_timer(hyper_util::rt::TokioTimer::new())
-            .build(https_connector);
+    let client: legacy::Client<
+        hyper_rustls::HttpsConnector<HttpConnector>,
+        http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+    > = legacy::Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(pool_idle_timeout)
+        .pool_max_idle_per_host(5)
+        .pool_timer(hyper_util::rt::TokioTimer::new())
+        .build(https_connector);
     client
 }
 
