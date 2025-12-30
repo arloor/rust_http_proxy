@@ -193,6 +193,14 @@ impl<'a> RequestSpec<'a> {
                     return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
                 }
 
+                // 创建流量统计标签
+                let traffic_label = AccessLabel {
+                    client: client_socket_addr.ip().to_canonical().to_string(),
+                    target: static_dir.clone(),
+                    username: "static_serving".to_owned(),
+                    relay_over_tls: None,
+                };
+
                 // IP检查通过，提供静态文件服务
                 info!(
                     "[serving] {:^35} ==> {} {:?} {:?} <== [static_dir: {}]",
@@ -210,10 +218,16 @@ impl<'a> RequestSpec<'a> {
                 #[allow(clippy::expect_used)]
                 let path = path.strip_prefix(location).expect("should start with location");
                 let path = "/".to_string() + path;
-
-                static_serve::serve_http_request(request, client_socket_addr, &path, static_dir, config)
+                let resp = static_serve::serve_http_request(request, client_socket_addr, &path, static_dir, config)
                     .await
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+
+                // 使用 CounterBody 包装响应 body 来统计响应流量
+                Ok(resp.map(|body| {
+                    let counter_body =
+                        CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label));
+                    counter_body.boxed()
+                }))
             }
         }
     }
