@@ -9,6 +9,7 @@ pub mod config;
 #[cfg(all(target_os = "linux", feature = "bpf"))]
 mod ebpf;
 mod forward_proxy_client;
+mod hyper_x;
 mod ip_x;
 #[cfg(target_os = "linux")]
 mod linux_axum_handler;
