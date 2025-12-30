@@ -2,9 +2,7 @@ use std::{
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
-    pin::Pin,
     sync::LazyLock,
-    task::Poll,
     time::Duration,
 };
 
@@ -14,7 +12,7 @@ use crate::{
     axum_handler::{self, AppProxyError},
     config::{Config, ForwardBypassConfig},
     forward_proxy_client::ForwardProxyClient,
-    hyper_x::CounterHyperIO,
+    hyper_x::CounterConnector,
     ip_x::local_ip,
     location::{DEFAULT_HOST, LocationConfig, RequestSpec, Upstream},
 };
@@ -38,7 +36,6 @@ use std::sync::Arc;
 use tokio::{net::TcpStream, pin};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::{client::TlsStream, rustls::pki_types};
-use tower::Service;
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 
@@ -768,61 +765,6 @@ fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
-// CounterConnector: 装饰器，用于包装 Connector 并添加流量统计
-#[derive(Clone)]
-pub struct CounterConnector<C, R, F>
-where
-    R: prom_label::Label,
-    F: Fn(&Uri) -> R,
-{
-    inner: C,
-    traffic_counter: Family<R, Counter>,
-    label_fn: F,
-}
-
-impl<C, R, F> CounterConnector<C, R, F>
-where
-    R: prom_label::Label,
-    F: Fn(&Uri) -> R,
-{
-    pub fn new(inner: C, traffic_counter: Family<R, Counter>, label_fn: F) -> Self {
-        Self {
-            inner,
-            traffic_counter,
-            label_fn,
-        }
-    }
-}
-
-impl<C, R, F> Service<Uri> for CounterConnector<C, R, F>
-where
-    C: Service<Uri>,
-    C::Response: hyper::rt::Read + hyper::rt::Write + Send + Unpin + 'static,
-    C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    C::Future: Send + 'static,
-    R: prom_label::Label + Clone + Send + Sync + 'static,
-    F: Fn(&Uri) -> R + Clone + Send + 'static,
-{
-    type Response = CounterHyperIO<C::Response, R>;
-    type Error = C::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
-    }
-
-    fn call(&mut self, uri: Uri) -> Self::Future {
-        let fut = self.inner.call(uri.clone());
-        let traffic_counter = self.traffic_counter.clone();
-        let label = (self.label_fn)(&uri);
-
-        Box::pin(async move {
-            let io = fut.await?;
-            Ok(CounterHyperIO::new(io, traffic_counter, label))
-        })
-    }
-}
-
 /// 创建带流量统计的 hyper client (可选功能，示例)
 #[allow(dead_code)]
 fn build_hyper_legacy_client_with_counter<R, F>(
@@ -1113,42 +1055,5 @@ impl tokio::io::AsyncWrite for EitherTlsStream {
             EitherTlsStreamProj::Tcp { stream } => stream.poll_shutdown(cx),
             EitherTlsStreamProj::Tls { stream } => stream.poll_shutdown(cx),
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_counter_hyper_io_creation() {
-        use hyper_util::rt::TokioIo;
-        use prometheus_client::metrics::{counter::Counter, family::Family};
-        use tokio::net::TcpStream;
-
-        // 创建一个简单的 label
-        #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-        struct TestLabel {
-            name: String,
-        }
-        impl prom_label::Label for TestLabel {}
-
-        let traffic_counter: Family<TestLabel, Counter> = Family::default();
-        let label = TestLabel {
-            name: "test".to_string(),
-        };
-
-        // 注意：我们不能直接创建 TcpStream 用于测试，
-        // 但可以验证类型系统是正确的
-        // 这里只是一个编译时检查
-        let _check_types = |stream: TokioIo<TcpStream>| {
-            let _counter_io = CounterHyperIO::new(stream, traffic_counter.clone(), label.clone());
-        };
-    }
-
-    #[test]
-    fn test_aa() {
-        let host = "www.arloor.com";
-        assert_eq!(host.split(':').next().unwrap_or("").to_string(), host);
     }
 }
