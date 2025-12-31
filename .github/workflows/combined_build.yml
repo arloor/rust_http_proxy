@@ -16,19 +16,19 @@ jobs:
         build-type: [non-bpf, bpf-dyn-link, bpf-static-link]
         include:
           - build-type: non-bpf
-            features: 
+            build_args: 
             extra_deps: 
             binary-name: rust_http_proxy
             docker-tag: latest
             env_setup: ""
           - build-type: bpf-dyn-link
-            features: bpf
+            build_args: --features bpf
             extra_deps:  zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf
             docker-tag: bpf
             env_setup: ""
           - build-type: bpf-static-link
-            features: bpf_static
+            build_args: --features bpf_static
             extra_deps:  zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf_static
             docker-tag: bpf_static
@@ -57,7 +57,7 @@ jobs:
             update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
             cc -v
             ${{ matrix.env_setup }}
-          args: -p rust_http_proxy --features ${{ matrix.features }}
+          args: -p rust_http_proxy ${{ matrix.build_args }}
           apt_mirror: mirrors.mit.edu
           debug: false
 
