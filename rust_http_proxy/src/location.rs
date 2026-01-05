@@ -412,7 +412,18 @@ pub(crate) fn parse_location_specs(
     enable_github_proxy: bool,
 ) -> Result<LocationSpecs, <Config as TryFrom<Param>>::Error> {
     let mut locations: HashMap<String, Vec<LocationConfig>> = match location_config_file {
-        Some(path) => toml::from_str(&std::fs::read_to_string(path)?)?,
+        Some(path) => {
+            let content = std::fs::read_to_string(path)?;
+            // 根据文件后缀决定使用哪种解析器，默认使用 YAML
+            if path.ends_with(".toml") {
+                info!("parsing location config as TOML format");
+                toml::from_str(&content)?
+            } else {
+                // 默认或 .yaml/.yml 后缀都使用 YAML 解析
+                info!("parsing location config as YAML format");
+                serde_yaml_bw::from_str(&content)?
+            }
+        }
         None => HashMap::new(),
     };
     info!("parsed location specs: \n{}", serde_yaml_bw::to_string(&locations)?);
