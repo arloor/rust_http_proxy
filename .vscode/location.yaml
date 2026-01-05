@@ -1,0 +1,18 @@
+127.0.0.1:
+- location: /
+  upstream:
+    url_base: https://www.baidu.com
+    version: H1
+default_host:
+- location: /v1/chat/completions
+  upstream:
+    url_base: https://models.inference.ai.azure.com/chat/completions
+    version: AUTO
+- location: /grafana
+  upstream:
+    url_base: http://192.168.5.16:3000/grafana
+    version: AUTO
+    headers:
+      Host: '#{host}'
+- location: /file/
+  static_dir: .

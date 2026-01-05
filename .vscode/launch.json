@@ -55,7 +55,7 @@
                 // "--allow-serving-network=192.168.5.0/24",
                 // "--allow-serving-network=127.0.0.1/32",
                 "-r=arloor",
-                "--location-config-file=.vscode/reverse_proxy.toml",
+                "--location-config-file=.vscode/location.yaml",
                 "--enable-github-proxy",
                 "--append-upstream-url=https://cdnjs.cloudflare.com"
             ],
