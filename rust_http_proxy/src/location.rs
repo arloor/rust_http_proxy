@@ -415,6 +415,7 @@ pub(crate) fn parse_location_specs(
         Some(path) => toml::from_str(&std::fs::read_to_string(path)?)?,
         None => HashMap::new(),
     };
+    info!("parsed location specs: \n{}", serde_yaml_bw::to_string(&locations)?);
 
     // 如果设置了 static_dir，则在 default_host 的根目录添加 Serving 类型的 LocationConfig
     if let Some(static_dir) = &default_static_dir {
