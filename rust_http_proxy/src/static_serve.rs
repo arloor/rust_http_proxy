@@ -71,12 +71,13 @@ pub async fn serve_http_request(
                 && !referer_keywords_to_self.iter().any(|refer| referer_header.contains(refer));
 
             info!(
-                "{:>29} {:<5} {:^7} {} {:?} {}",
+                "{:>29} {:<5} {:^7} {} {:?} [dir: {} ] {}",
                 "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),
                 client_socket_addr.port(),
                 req.method().as_str(),
                 path,
                 req.version(),
+                static_dir,
                 if is_outer_view_html
                 //来自外链的点击，记录Referer
                 {

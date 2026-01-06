@@ -201,16 +201,6 @@ impl<'a> RequestSpec<'a> {
                     relay_over_tls: None,
                 };
 
-                // IP检查通过，提供静态文件服务
-                info!(
-                    "[serving] {:^35} ==> {} {:?} {:?} <== [static_dir: {}]",
-                    crate::ip_x::SocketAddrFormat(&client_socket_addr).to_string(),
-                    request.method(),
-                    request.uri(),
-                    request.version(),
-                    static_dir,
-                );
-
                 let raw_path = request.uri().path();
                 let path = percent_decode_str(raw_path)
                     .decode_utf8()
