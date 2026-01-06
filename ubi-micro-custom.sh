@@ -7,7 +7,7 @@ ubi_version=${1:-10}
 base_image=registry.access.redhat.com/ubi${ubi_version}/ubi-micro
 # base_image=docker.io/rockylinux/rockylinux:9-ubi-micro
 out_tag=${ubi_version}
-out_image="docker.io/arloor/ubi-micro:${out_tag}"
+out_image="quay.io/arloor/app:ubi-micro${out_tag}"
 
 yum install -y container-tools
 microcontainer=$(buildah from ${base_image})
@@ -39,7 +39,7 @@ buildah umount $microcontainer
 buildah commit $microcontainer ${out_image}
 podman run --rm -it --network host ${out_image} ss;date
 
-podman login docker.io
+podman login quay.io
 podman push ${out_image}
 buildah rm -a
 buildah prune -a 2>/dev/null

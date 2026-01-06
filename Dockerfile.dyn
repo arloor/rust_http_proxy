@@ -1,4 +1,4 @@
-FROM docker.io/arloor/ubi-micro:10
+FROM quay.io/arloor/app:ubi-micro10
 RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone;
 ARG TARGET_PATH=/x86_64-unknown-linux-gnu
 COPY target${TARGET_PATH}/release/rust_http_proxy /
