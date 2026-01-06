@@ -126,7 +126,7 @@ curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --pro
 
 2. 可以使用`--location-config-file` 通过配置文件指定特定域名、特定 url 的静态资源目录。
 
-```toml
+```yaml
 YOUR_DOMAIN:
 - location: / # 默认为 /
   static_dir: /usr/share/nginx/html # 静态资源目录
