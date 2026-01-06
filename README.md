@@ -127,9 +127,9 @@ curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --pro
 2. 可以使用`--location-config-file` 通过配置文件指定特定域名、特定 url 的静态资源目录。
 
 ```toml
-[[YOUR_DOMAIN]]
-location = "/" # 默认为 /
-static_dir = "/usr/share/nginx/html" # 可选，表示托管静态资源的目录
+YOUR_DOMAIN:
+- location: / # 默认为 /
+  static_dir: /usr/share/nginx/html # 静态资源目录
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。
@@ -138,14 +138,15 @@ static_dir = "/usr/share/nginx/html" # 可选，表示托管静态资源的目�
 
 可以使用`--location-config-file` 通过配置文件指定特定域名、特定 url 的反向代理配置。
 
-```toml
-[[YOUR_DOMAIN]]
-location = "/" # 默认为 /
-
-[YOUR_DOMAIN.upstream]
-url_base = "https://www.baidu.com"
-version = "H1" # 可以填H1、H2、AUTO，默认为AUTO
-headers = { Host = "#{host}" } # 可选，覆盖发送给上游服务器的请求头
+```yaml
+YOUR_DOMAIN:
+  - location: / # 默认为 /
+    upstream:
+      url_base: "https://www.baidu.com" # 上游服务器的基础 URL
+      version: "H1" # 可以填H1、H2、AUTO，默认为AUTO
+      headers:
+        Host: "#{host}" # 可选，覆盖发送给上游服务器的请求头
+        Custom-Header: "custom_value" # 其他自定义请求头
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。
@@ -162,81 +163,44 @@ headers = { Host = "#{host}" } # 可选，覆盖发送给上游服务器的请�
 
 启动参数中增加 `--enable-github-proxy`，相当于以下配置：
 
-```toml
-[[default_host]]
-location = "/https://gist.githubusercontent.com"
-
-[default_host.upstream]
-url_base = "https://gist.githubusercontent.com"
-
-[[default_host]]
-location = "/https://gist.github.com"
-
-[default_host.upstream]
-url_base = "https://gist.github.com"
-
-[[default_host]]
-location = "/https://github.com"
-
-[default_host.upstream]
-url_base = "https://github.com"
-
-[[default_host]]
-location = "/https://objects.githubusercontent.com"
-
-[default_host.upstream]
-url_base = "https://objects.githubusercontent.com"
-
-[[default_host]]
-location = "/https://raw.githubusercontent.com"
-
-[default_host.upstream]
-url_base = "https://raw.githubusercontent.com"
-
-[[default_host]]
-location = "/https://release-assets.githubusercontent.com"
-[default_host.upstream]
-url_base = "https://release-assets.githubusercontent.com"
+```yaml
+default_host:
+  - location: /https://release-assets.githubusercontent.com
+    upstream:
+      url_base: https://release-assets.githubusercontent.com
+      version: AUTO
+  - location: /https://raw.githubusercontent.com
+    upstream:
+      url_base: https://raw.githubusercontent.com
+      version: AUTO
+  - location: /https://objects.githubusercontent.com
+    upstream:
+      url_base: https://objects.githubusercontent.com
+      version: AUTO
+  - location: /https://github.com
+    upstream:
+      url_base: https://github.com
+      version: AUTO
+  - location: /https://gist.githubusercontent.com
+    upstream:
+      url_base: https://gist.githubusercontent.com
+      version: AUTO
+  - location: /https://gist.github.com
+    upstream:
+      url_base: https://gist.github.com
+      version: AUTO
 ```
 
 #### 例子 2： 反向代理https://cdnjs.cloudflare.com
 
 启动参数中增加 `--append-upstream-url=https://cdnjs.cloudflare.com`，相当于以下配置：
 
-```toml
-[[default_host]]
-location = "/https://cdnjs.cloudflare.com"
-
-[default_host.upstream]
-url_base = "https://cdnjs.cloudflare.com"
-```
-
-#### 例子 3: 改写 Github Models 的 url 为 openai api 的 url 格式
-
-```toml
-[[default_host]]
-location = "/v1/chat/completions"
-
-[default_host.upstream]
-url_base = "https://models.inference.ai.azure.com/chat/completions"
-```
-
-#### 例子 4: Host 头覆盖 - 当上游服务器需要特定的 Host 头时
-
-```toml
-[["api.example.com"]]
-location = "/api/"
-
-["api.example.com".upstream]
-url_base = "http://internal-service:8080"
-headers = { Host = "api.internal.com:8080" }  # 覆盖Host头为api.internal.com
-
-[["cdn.example.com"]]
-location = "/assets/"
-
-["cdn.example.com".upstream]
-url_base = "https://storage.cloud.com"
-headers = { Host = "myapp.storage.com" }  # 覆盖Host头为myapp.storage.com
+```yaml
+default_host:
+  - location: /https://cdnjs.cloudflare.com
+    upstream:
+      url_base: https://cdnjs.cloudflare.com
+      version: AUTO
 ```
 
 ## 可观测
