@@ -3,6 +3,9 @@ podman build . -f Dockerfile.dyn -t quay.io/arloor/rust_http_proxy:bpf --network
 podman login quay.io
 podman push quay.io/arloor/rust_http_proxy:bpf
 
+kubectl rollout restart ds/proxy
+kubectl rollout status ds/proxy
+
 #! /bin/bash
 hosts="hk.arloor.dev us.arloor.dev bwg.arloor.dev ttl.arloor.com xq.arloor.com ti.arloor.com"
 for i in ${hosts}; do
