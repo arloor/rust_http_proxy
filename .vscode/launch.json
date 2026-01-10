@@ -57,7 +57,9 @@
                 "-r=arloor",
                 // "--location-config-file=.vscode/location.yaml",
                 // "--enable-github-proxy",
-                "--append-upstream-url=https://cdnjs.cloudflare.com"
+                "--append-upstream-url=https://cdnjs.cloudflare.com",
+                // "--append-upstream-url=https://ip.im/info",
+                // "--ipv6-first",
             ],
             "env": {
                 "HOSTNAME": "test"

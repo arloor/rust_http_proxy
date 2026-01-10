@@ -23,10 +23,10 @@ use std::{
 
 use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
+use crate::dns_resolver::CustomGaiDNSResolver;
 use crate::hyper_x::CounterBody;
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::AccessLabel;
-use crate::proxy::Ipv6FirstResolver;
 use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
 use crate::{METRICS, static_serve};
@@ -99,7 +99,7 @@ pub(crate) enum RequestSpec<'a> {
         location: &'a String,
         upstream: &'a Upstream,
         reverse_client: &'a legacy::Client<
-            HttpsConnector<HttpConnector<Ipv6FirstResolver>>,
+            HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
             http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
         >,
         config: &'a Config,

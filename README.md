@@ -119,7 +119,7 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes -keyout /usr/share/rust_http_p
 测试 TLS Proxy 可以使用 curl （7.52.0 以上版本）:
 
 ```bash
-curl  https://ip.im/info -U "username:password" -x https://localhost:7788  --proxy-insecure
+curl https://ip.im/info -U "username:password" -x https://localhost:7788  --proxy-insecure
 ```
 
 ### 静态文件托管配置
