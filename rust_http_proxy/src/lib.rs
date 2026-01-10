@@ -6,6 +6,7 @@ mod axum_handler;
 #[cfg(target_os = "linux")]
 mod cgroup_stats;
 pub mod config;
+mod dns_resolver;
 #[cfg(all(target_os = "linux", feature = "bpf"))]
 mod ebpf;
 mod forward_proxy_client;
