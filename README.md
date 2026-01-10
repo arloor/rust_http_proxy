@@ -100,8 +100,8 @@ Options:
           则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
       --forward-bypass-url <https://username:password@example.com:123>
           指定上游代理服务器
-      --ipv6-first
-          优先使用 IPv6 进行连接，请勿在不支持 IPv6 的网络中开启
+      --ipv6-first <IPV6_FIRST>
+          优先使用 IPv6 进行连接。true表示IPv6优先，false表示IPv4优先，不设置则保持DNS原始顺序 [possible values: true, false]
   -h, --help
           Print help
 ```
