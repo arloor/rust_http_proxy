@@ -24,18 +24,121 @@ use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
 use hyper::{Method, Response, Version, body::Bytes, header::HeaderValue, http, upgrade::Upgraded};
 use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::{self, connect::HttpConnector};
+use hyper_util::client::legacy::{
+    self,
+    connect::{
+        HttpConnector,
+        dns::{GaiFuture, GaiResolver, Name},
+    },
+};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use prometheus_client::encoding::EncodeLabelSet;
 use rand::Rng;
 use std::sync::Arc;
+use std::task::{self, Poll};
 use tokio::{net::TcpStream, pin};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::{client::TlsStream, rustls::pki_types};
+use tower_service::Service;
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
+
+/// 自定义 DNS Resolver，支持根据 ipv6_first 参数调整地址顺序
+#[derive(Clone)]
+pub(crate) struct Ipv6FirstResolver {
+    inner: GaiResolver,
+    ipv6_first: bool,
+}
+
+impl Ipv6FirstResolver {
+    fn new(ipv6_first: bool) -> Self {
+        Self {
+            inner: GaiResolver::new(),
+            ipv6_first,
+        }
+    }
+}
+
+/// 包装 GaiAddrs 以支持地址重排序
+pub(crate) struct ReorderedAddrs {
+    addrs: Vec<SocketAddr>,
+    index: usize,
+}
+
+impl Iterator for ReorderedAddrs {
+    type Item = SocketAddr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.addrs.len() {
+            let addr = self.addrs[self.index];
+            self.index += 1;
+            Some(addr)
+        } else {
+            None
+        }
+    }
+}
+
+impl std::fmt::Debug for ReorderedAddrs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReorderedAddrs")
+            .field("addrs", &self.addrs)
+            .field("index", &self.index)
+            .finish()
+    }
+}
+
+/// Future 包装器，用于重排序解析结果
+pub(crate) struct ReorderFuture {
+    inner: GaiFuture,
+    ipv6_first: bool,
+}
+
+impl std::future::Future for ReorderFuture {
+    type Output = Result<ReorderedAddrs, io::Error>;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        match std::pin::Pin::new(&mut self.inner).poll(cx) {
+            Poll::Ready(Ok(addrs)) => {
+                let mut all_addrs: Vec<SocketAddr> = addrs.collect();
+
+                if self.ipv6_first {
+                    // IPv6 优先：先放所有 IPv6 地址，再放 IPv4 地址
+                    all_addrs.sort_by_key(|addr| !addr.is_ipv6());
+                } else {
+                    // IPv4 优先：先放所有 IPv4 地址，再放 IPv6 地址
+                    all_addrs.sort_by_key(|addr| addr.is_ipv6());
+                }
+
+                Poll::Ready(Ok(ReorderedAddrs {
+                    addrs: all_addrs,
+                    index: 0,
+                }))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl Service<Name> for Ipv6FirstResolver {
+    type Response = ReorderedAddrs;
+    type Error = io::Error;
+    type Future = ReorderFuture;
+
+    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, name: Name) -> Self::Future {
+        ReorderFuture {
+            inner: self.inner.call(name),
+            ipv6_first: self.ipv6_first,
+        }
+    }
+}
 
 #[allow(dead_code)]
 pub(crate) enum InterceptResultAdapter {
@@ -211,7 +314,7 @@ pub struct ProxyHandler {
     config: Arc<Config>,
     forward_proxy_client: ForwardProxyClient<Incoming>,
     reverse_proxy_client: legacy::Client<
-        HttpsConnector<HttpConnector>,
+        HttpsConnector<HttpConnector<Ipv6FirstResolver>>,
         http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
     >,
 }
@@ -231,7 +334,7 @@ fn reverse_proxy_label_fn(uri: &Uri) -> prom_label::LabelImpl<AccessLabel> {
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
     pub fn new(config: Arc<Config>) -> Result<Self, crate::DynError> {
-        let reverse_client = build_hyper_legacy_client();
+        let reverse_client = build_hyper_legacy_client(config.ipv6_first);
         let http1_client = ForwardProxyClient::<Incoming>::new();
 
         Ok(ProxyHandler {
@@ -765,15 +868,20 @@ fn is_schema_secure(uri: &Uri) -> bool {
 }
 
 #[allow(dead_code)]
-fn build_hyper_legacy_client() -> legacy::Client<
-    hyper_rustls::HttpsConnector<HttpConnector>,
+fn build_hyper_legacy_client(
+    ipv6_first: bool,
+) -> legacy::Client<
+    hyper_rustls::HttpsConnector<HttpConnector<Ipv6FirstResolver>>,
     http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
 > {
     let pool_idle_timeout = Duration::from_secs(90);
-    // 创建一个 HttpConnector
-    let mut http_connector = HttpConnector::new();
+    // 创建自定义 DNS Resolver
+    let resolver = Ipv6FirstResolver::new(ipv6_first);
+    let mut http_connector = HttpConnector::new_with_resolver(resolver);
     http_connector.enforce_http(false);
     http_connector.set_keepalive(Some(pool_idle_timeout));
+    // 配置 Happy Eyeballs timeout 为 300ms
+    http_connector.set_happy_eyeballs_timeout(Some(Duration::from_millis(300)));
 
     let https_connector = HttpsConnectorBuilder::new()
         .with_platform_verifier()
@@ -782,7 +890,7 @@ fn build_hyper_legacy_client() -> legacy::Client<
         .wrap_connector(http_connector);
     // 创建一个 HttpsConnector，使用 rustls 作为后端
     let client: legacy::Client<
-        hyper_rustls::HttpsConnector<HttpConnector>,
+        hyper_rustls::HttpsConnector<HttpConnector<Ipv6FirstResolver>>,
         http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
     > = legacy::Client::builder(TokioExecutor::new())
         .pool_idle_timeout(pool_idle_timeout)

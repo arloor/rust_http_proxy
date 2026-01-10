@@ -1736,6 +1736,7 @@ dependencies = [
  "toml",
  "tower",
  "tower-http",
+ "tower-service",
  "tracing",
  "windows-service",
 ]
