@@ -85,7 +85,7 @@ pub struct Param {
         help = "指定上游代理服务器"
     )]
     forward_bypass_url: Option<Uri>,
-    #[arg(long, help = "优先使用 IPv6 进行连接（Happy Eyeballs 算法）")]
+    #[arg(long, help = "优先使用 IPv6 进行连接，请勿在不支持 IPv6 的网络中开启")]
     ipv6_first: bool,
 }
 

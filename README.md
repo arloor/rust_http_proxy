@@ -101,7 +101,7 @@ Options:
       --forward-bypass-url <https://username:password@example.com:123>
           指定上游代理服务器
       --ipv6-first
-          优先使用 IPv6 进行连接（Happy Eyeballs 算法）
+          优先使用 IPv6 进行连接，请勿在不支持 IPv6 的网络中开启
   -h, --help
           Print help
 ```
@@ -130,8 +130,8 @@ curl https://ip.im/info -U "username:password" -x https://localhost:7788  --prox
 
 ```yaml
 YOUR_DOMAIN:
-- location: / # 默认为 /
-  static_dir: /usr/share/nginx/html # 静态资源目录
+  - location: / # 默认为 /
+    static_dir: /usr/share/nginx/html # 静态资源目录
 ```
 
 > 如果 `YOUR_DOMAIN` 填 `default_host` 则对所有的域名生效。
