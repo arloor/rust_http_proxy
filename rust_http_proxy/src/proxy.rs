@@ -403,8 +403,8 @@ impl ProxyHandler {
                     relay_over_tls: Some(forward_bypass_config.is_https),
                 };
 
-                // 首先建立 TCP 连接
-                let tcp_stream = match TcpStream::connect(bypass_host.clone()).await {
+                // 首先建立 TCP 连接（IPv4优先）
+                let tcp_stream = match connect_with_ipv4_preference(&bypass_host).await {
                     Ok(stream) => {
                         // 记录从接收请求到完成bypass握手的耗时
                         let duration = start_time.elapsed();
@@ -576,8 +576,8 @@ impl ProxyHandler {
                             username,
                             relay_over_tls: None,
                         };
-                        // Connect to remote server
-                        match TcpStream::connect(addr.to_string()).await {
+                        // Connect to remote server (IPv4优先)
+                        match connect_with_ipv4_preference(&addr.to_string()).await {
                             Ok(target_stream) => {
                                 // 记录从接收请求到成功建立连接的耗时
                                 let duration = start_time.elapsed();
@@ -782,6 +782,60 @@ fn build_hyper_legacy_client() -> legacy::Client<
 }
 
 /// 创建 TLS 连接器
+/// IPv4优先的TCP连接
+/// 首先尝试解析所有地址，优先连接IPv4地址，如果失败再尝试IPv6
+pub(crate) async fn connect_with_ipv4_preference(addr: &str) -> io::Result<TcpStream> {
+    use tokio::net::lookup_host;
+
+    // 解析所有地址
+    let addrs: Vec<SocketAddr> = lookup_host(addr).await?.collect();
+
+    if addrs.is_empty() {
+        return Err(io::Error::new(ErrorKind::InvalidInput, "No addresses found"));
+    }
+
+    // 分离IPv4和IPv6地址
+    let mut ipv4_addrs = Vec::new();
+    let mut ipv6_addrs = Vec::new();
+
+    for addr in addrs {
+        match addr {
+            SocketAddr::V4(_) => ipv4_addrs.push(addr),
+            SocketAddr::V6(_) => ipv6_addrs.push(addr),
+        }
+    }
+
+    // 优先尝试IPv4地址
+    for addr in ipv4_addrs {
+        match TcpStream::connect(addr).await {
+            Ok(stream) => {
+                debug!("Connected to {} via IPv4: {}", addr, addr);
+                return Ok(stream);
+            }
+            Err(e) => {
+                debug!("Failed to connect to IPv4 address {}: {}", addr, e);
+                continue;
+            }
+        }
+    }
+
+    // 如果IPv4都失败了，尝试IPv6
+    for addr in ipv6_addrs {
+        match TcpStream::connect(addr).await {
+            Ok(stream) => {
+                debug!("Connected to {} via IPv6: {}", addr, addr);
+                return Ok(stream);
+            }
+            Err(e) => {
+                debug!("Failed to connect to IPv6 address {}: {}", addr, e);
+                continue;
+            }
+        }
+    }
+
+    Err(io::Error::new(ErrorKind::ConnectionRefused, "All connection attempts failed"))
+}
+
 /// Debug 模式：不验证证书（方便测试）
 /// Release 模式：使用平台证书验证器
 pub(crate) fn build_tls_connector() -> TlsConnector {

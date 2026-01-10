@@ -20,7 +20,7 @@ use io_x::{CounterIO, TimeoutIO};
 use log::{debug, error, info, trace, warn};
 use lru_time_cache::LruCache;
 use prom_label::LabelImpl;
-use tokio::{net::TcpStream, sync::Mutex};
+use tokio::sync::Mutex;
 use tokio_rustls::rustls::pki_types;
 
 use crate::proxy::{AccessLabel, EitherTlsStream, build_tls_connector};
@@ -178,7 +178,7 @@ where
         access_label: &AccessLabel,
         stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        let stream = TcpStream::connect(&access_label.target).await?;
+        let stream = crate::proxy::connect_with_ipv4_preference(&access_label.target).await?;
         let stream = if let Some(true) = access_label.relay_over_tls {
             // 建立 TLS 连接
             let connector = build_tls_connector();
