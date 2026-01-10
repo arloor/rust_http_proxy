@@ -49,7 +49,7 @@ where
     /// Make HTTP requests
     #[inline]
     pub async fn send_request(
-        &self, req: Request<B>, access_label: &AccessLabel,
+        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: bool,
         stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
@@ -62,7 +62,7 @@ where
         }
 
         // 2. If no. Make a new connection
-        let c = match HttpConnection::connect(access_label, stream_map_func).await {
+        let c = match HttpConnection::connect(access_label, ipv6_first, stream_map_func).await {
             Ok(c) => c,
             Err(err) => {
                 error!("failed to connect to host: {}, error: {}", &access_label.target, err);
@@ -175,10 +175,10 @@ where
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
     async fn connect(
-        access_label: &AccessLabel,
+        access_label: &AccessLabel, ipv6_first: bool,
         stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        let stream = crate::proxy::connect_with_preference(&access_label.target, false).await?;
+        let stream = crate::proxy::connect_with_preference(&access_label.target, ipv6_first).await?;
         let stream = if let Some(true) = access_label.relay_over_tls {
             // 建立 TLS 连接
             let connector = build_tls_connector();

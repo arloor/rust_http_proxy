@@ -310,9 +310,14 @@ impl ProxyHandler {
         mod_http1_proxy_req(&mut req)?;
         match self
             .forward_proxy_client
-            .send_request(req, &access_label, |stream: EitherTlsStream, access_label: AccessLabel| {
-                CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-            })
+            .send_request(
+                req,
+                &access_label,
+                self.config.ipv6_first,
+                |stream: EitherTlsStream, access_label: AccessLabel| {
+                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+                },
+            )
             .await
         {
             Ok(resp) => Ok(resp.map(|body| {
@@ -360,9 +365,14 @@ impl ProxyHandler {
 
         match self
             .forward_proxy_client
-            .send_request(req, &access_label, |stream: EitherTlsStream, access_label: AccessLabel| {
-                CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-            })
+            .send_request(
+                req,
+                &access_label,
+                forward_bypass_config.ipv6_first,
+                |stream: EitherTlsStream, access_label: AccessLabel| {
+                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+                },
+            )
             .await
         {
             Ok(resp) => Ok(resp.map(|body| {
@@ -403,8 +413,8 @@ impl ProxyHandler {
                     relay_over_tls: Some(forward_bypass_config.is_https),
                 };
 
-                // 首先建立 TCP 连接（IPv4优先）
-                let tcp_stream = match connect_with_preference(&bypass_host, false).await {
+                // 首先建立 TCP 连接
+                let tcp_stream = match connect_with_preference(&bypass_host, forward_bypass_config.ipv6_first).await {
                     Ok(stream) => {
                         // 记录从接收请求到完成bypass握手的耗时
                         let duration = start_time.elapsed();
@@ -567,6 +577,7 @@ impl ProxyHandler {
         // `on_upgrade` future.
         if let Some(addr) = host_addr(req.uri()) {
             let proxy_traffic = METRICS.proxy_traffic.clone();
+            let ipv6_first = self.config.ipv6_first;
             tokio::task::spawn(async move {
                 match hyper::upgrade::on(req).await {
                     Ok(src_upgraded) => {
@@ -576,8 +587,8 @@ impl ProxyHandler {
                             username,
                             relay_over_tls: None,
                         };
-                        // Connect to remote server (IPv4优先)
-                        match connect_with_preference(&addr.to_string(), false).await {
+                        // Connect to remote server
+                        match connect_with_preference(&addr.to_string(), ipv6_first).await {
                             Ok(target_stream) => {
                                 // 记录从接收请求到成功建立连接的耗时
                                 let duration = start_time.elapsed();

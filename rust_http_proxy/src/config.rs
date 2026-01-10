@@ -85,6 +85,8 @@ pub struct Param {
         help = "指定上游代理服务器"
     )]
     forward_bypass_url: Option<Uri>,
+    #[arg(long, help = "优先使用 IPv6 进行连接（Happy Eyeballs 算法）")]
+    ipv6_first: bool,
 }
 
 pub(crate) struct Config {
@@ -98,6 +100,7 @@ pub(crate) struct Config {
     pub(crate) port: Vec<u16>,
     pub(crate) location_specs: LocationSpecs,
     pub(crate) forward_bypass: Option<ForwardBypassConfig>,
+    pub(crate) ipv6_first: bool,
 }
 
 pub(crate) struct ForwardBypassConfig {
@@ -106,6 +109,7 @@ pub(crate) struct ForwardBypassConfig {
     pub(crate) is_https: bool,
     pub(crate) username: Option<String>,
     pub(crate) password: Option<String>,
+    pub(crate) ipv6_first: bool,
 }
 
 impl std::fmt::Display for ForwardBypassConfig {
@@ -176,6 +180,7 @@ impl TryFrom<Param> for Config {
                 is_https: uri.scheme_str() == Some("https"),
                 username,
                 password,
+                ipv6_first: param.ipv6_first,
             }
         });
         let mut basic_auth = HashMap::new();
@@ -220,6 +225,7 @@ impl TryFrom<Param> for Config {
             port: param.port,
             location_specs,
             forward_bypass,
+            ipv6_first: param.ipv6_first,
         })
     }
 }
