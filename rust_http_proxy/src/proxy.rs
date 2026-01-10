@@ -1003,6 +1003,7 @@ use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVe
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{DigitallySignedStruct, SignatureScheme};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct NoVerifier;
 
