@@ -11,34 +11,34 @@
             "cwd": "${workspaceFolder}",
             "terminal": "integrated",
             // https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md#rust-language-support
-            // "cargo": {
-            //     "args": [
-            //         "build",
-            //         "--bin=rust_http_proxy",
-            //         "--package=rust_http_proxy",
-            //         // "--features",
-            //         // "bpf",
-            //         // "--features",
-            //         // "jemalloc",
-            //         // "--no-default-features",
-            //         // "--features","aws_lc_rs",
-            //         // "--features","pnet",
-            //     ],
-            //     "env": {
-            //         "RUST_BACKTRACE": "1",
-            //     },
-            //     "problemMatcher": "$rustc", // Problem matcher(s) to apply to cargo output.
-            //     "filter": {
-            //         "kind": "bin",
-            //         "name": "rust_http_proxy"
-            //     }
-            // },
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=rust_http_proxy",
+                    "--package=rust_http_proxy",
+                    // "--features",
+                    // "bpf",
+                    // "--features",
+                    // "jemalloc",
+                    // "--no-default-features",
+                    // "--features","aws_lc_rs",
+                    // "--features","pnet",
+                ],
+                "env": {
+                    "RUST_BACKTRACE": "1",
+                },
+                "problemMatcher": "$rustc", // Problem matcher(s) to apply to cargo output.
+                "filter": {
+                    "kind": "bin",
+                    "name": "rust_http_proxy"
+                }
+            },
             "sourceLanguages": [
                 "rust"
             ],
             // https://code.visualstudio.com/docs/editor/variables-reference
-            "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
-            "preLaunchTask": "rust: cargo build",
+            // "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
+            // "preLaunchTask": "rust: cargo build",
             "args": [
                 "-p",
                 "7788",
@@ -50,7 +50,7 @@
                 "username:password",
                 // "-w",
                 // ".",
-                // "-o",
+                "-o",
                 "--never-ask-for-auth",
                 // "--allow-serving-network=192.168.5.0/24",
                 // "--allow-serving-network=127.0.0.1/32",
