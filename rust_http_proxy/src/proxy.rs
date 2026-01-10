@@ -781,10 +781,10 @@ fn build_hyper_legacy_client() -> legacy::Client<
     client
 }
 
-/// 创建 TLS 连接器
-/// IPv4优先的TCP连接
-/// 首先尝试解析所有地址，优先连接IPv4地址，如果失败再尝试IPv6
+/// IPv4优先的TCP连接，实现 Happy Eyeballs 算法（RFC 6555, RFC 8305）
+/// 首先尝试解析所有地址，IPv4 优先，但会并发尝试以提高连接速度
 pub(crate) async fn connect_with_ipv4_preference(addr: &str) -> io::Result<TcpStream> {
+    use std::time::Duration;
     use tokio::net::lookup_host;
 
     // 解析所有地址
@@ -795,45 +795,94 @@ pub(crate) async fn connect_with_ipv4_preference(addr: &str) -> io::Result<TcpSt
     }
 
     // 分离IPv4和IPv6地址
-    let mut ipv4_addrs = Vec::new();
-    let mut ipv6_addrs = Vec::new();
+    let mut v4_addrs = Vec::new();
+    let mut v6_addrs = Vec::new();
 
     for addr in addrs {
         match addr {
-            SocketAddr::V4(_) => ipv4_addrs.push(addr),
-            SocketAddr::V6(_) => ipv6_addrs.push(addr),
+            SocketAddr::V4(_) => v4_addrs.push(addr),
+            SocketAddr::V6(_) => v6_addrs.push(addr),
         }
     }
 
-    // 优先尝试IPv4地址
-    for addr in ipv4_addrs {
-        match TcpStream::connect(addr).await {
-            Ok(stream) => {
-                debug!("Connected to {} via IPv4: {}", addr, addr);
-                return Ok(stream);
-            }
-            Err(e) => {
-                debug!("Failed to connect to IPv4 address {}: {}", addr, e);
-                continue;
+    let has_v4 = !v4_addrs.is_empty();
+    let has_v6 = !v6_addrs.is_empty();
+
+    // Happy Eyeballs: RFC6555 gives an example that Chrome and Firefox uses 300ms
+    const FIXED_DELAY: Duration = Duration::from_millis(300);
+
+    let connect_v4 = async {
+        let mut result = None;
+
+        for resolved_addr in v4_addrs {
+            debug!("Trying to connect via IPv4: {}", resolved_addr);
+
+            match TcpStream::connect(resolved_addr).await {
+                Ok(stream) => {
+                    debug!("Connected via IPv4: {}", resolved_addr);
+                    result = Some(Ok(stream));
+                    break;
+                }
+                Err(err) => {
+                    debug!("Failed to connect to IPv4 address {}: {}", resolved_addr, err);
+                    result = Some(Err(err));
+                }
             }
         }
-    }
+        #[allow(clippy::expect_used)]
+        result.expect("impossible: v4_addrs is empty")
+    };
 
-    // 如果IPv4都失败了，尝试IPv6
-    for addr in ipv6_addrs {
-        match TcpStream::connect(addr).await {
-            Ok(stream) => {
-                debug!("Connected to {} via IPv6: {}", addr, addr);
-                return Ok(stream);
-            }
-            Err(e) => {
-                debug!("Failed to connect to IPv6 address {}: {}", addr, e);
-                continue;
+    let connect_v6 = async {
+        let mut result = None;
+
+        for resolved_addr in v6_addrs {
+            debug!("Trying to connect via IPv6: {}", resolved_addr);
+
+            match TcpStream::connect(resolved_addr).await {
+                Ok(stream) => {
+                    debug!("Connected via IPv6: {}", resolved_addr);
+                    result = Some(Ok(stream));
+                    break;
+                }
+                Err(err) => {
+                    debug!("Failed to connect to IPv6 address {}: {}", resolved_addr, err);
+                    result = Some(Err(err));
+                }
             }
         }
-    }
+        #[allow(clippy::expect_used)]
+        result.expect("impossible: v6_addrs is empty")
+    };
 
-    Err(io::Error::new(ErrorKind::ConnectionRefused, "All connection attempts failed"))
+    if has_v4 && !has_v6 {
+        connect_v4.await
+    } else if !has_v4 && has_v6 {
+        connect_v6.await
+    } else {
+        // IPv4 优先：先启动 IPv4，300ms 后并发启动 IPv6
+        use futures::future::{self, Either};
+
+        let v6_fut = async move {
+            tokio::time::sleep(FIXED_DELAY).await;
+            connect_v6.await
+        };
+        let v4_fut = connect_v4;
+
+        tokio::pin!(v4_fut);
+        tokio::pin!(v6_fut);
+
+        match future::select(v4_fut, v6_fut).await {
+            Either::Left((v4_res, v6_fut)) => match v4_res {
+                Ok(stream) => Ok(stream),
+                Err(_v4_err) => v6_fut.await,
+            },
+            Either::Right((v6_res, v4_fut)) => match v6_res {
+                Ok(stream) => Ok(stream),
+                Err(_v6_err) => v4_fut.await,
+            },
+        }
+    }
 }
 
 /// Debug 模式：不验证证书（方便测试）
