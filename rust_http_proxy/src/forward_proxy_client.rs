@@ -49,7 +49,7 @@ where
     /// Make HTTP requests
     #[inline]
     pub async fn send_request(
-        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: bool,
+        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
         stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
@@ -175,7 +175,7 @@ where
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
     async fn connect(
-        access_label: &AccessLabel, ipv6_first: bool,
+        access_label: &AccessLabel, ipv6_first: Option<bool>,
         stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = crate::proxy::connect_with_preference(&access_label.target, ipv6_first).await?;

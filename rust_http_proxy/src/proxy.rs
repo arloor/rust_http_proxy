@@ -768,7 +768,7 @@ fn is_schema_secure(uri: &Uri) -> bool {
 
 #[allow(dead_code)]
 fn build_hyper_legacy_client(
-    ipv6_first: bool,
+    ipv6_first: Option<bool>,
 ) -> legacy::Client<
     hyper_rustls::HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
     http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
@@ -801,7 +801,8 @@ fn build_hyper_legacy_client(
 
 /// 实现 Happy Eyeballs 算法的TCP连接（RFC 6555, RFC 8305）
 /// 首先尝试解析所有地址，根据 ipv6_first 参数决定优先级，但会并发尝试以提高连接速度
-pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: bool) -> io::Result<TcpStream> {
+/// ipv6_first: None 表示使用系统默认顺序，Some(true) 表示 IPv6 优先，Some(false) 表示 IPv4 优先
+pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: Option<bool>) -> io::Result<TcpStream> {
     use std::time::Duration;
     use tokio::net::lookup_host;
 
@@ -878,50 +879,76 @@ pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: bool) -> io:
     } else if !has_v4 && has_v6 {
         connect_v6.await
     } else {
-        // 根据 ipv4_first 参数决定优先级
+        // 根据 ipv6_first 参数决定优先级
         use futures::future::{self, Either};
 
-        if ipv6_first {
-            // IPv6 优先：先启动 IPv6，300ms 后并发启动 IPv4
-            let v4_fut = async move {
-                tokio::time::sleep(FIXED_DELAY).await;
-                connect_v4.await
-            };
-            let v6_fut = connect_v6;
+        match ipv6_first {
+            Some(true) => {
+                // IPv6 优先：先启动 IPv6，300ms 后并发启动 IPv4
+                let v4_fut = async move {
+                    tokio::time::sleep(FIXED_DELAY).await;
+                    connect_v4.await
+                };
+                let v6_fut = connect_v6;
 
-            tokio::pin!(v4_fut);
-            tokio::pin!(v6_fut);
+                tokio::pin!(v4_fut);
+                tokio::pin!(v6_fut);
 
-            match future::select(v4_fut, v6_fut).await {
-                Either::Left((v4_res, v6_fut)) => match v4_res {
-                    Ok(stream) => Ok(stream),
-                    Err(_v4_err) => v6_fut.await,
-                },
-                Either::Right((v6_res, v4_fut)) => match v6_res {
-                    Ok(stream) => Ok(stream),
-                    Err(_v6_err) => v4_fut.await,
-                },
+                match future::select(v4_fut, v6_fut).await {
+                    Either::Left((v4_res, v6_fut)) => match v4_res {
+                        Ok(stream) => Ok(stream),
+                        Err(_v4_err) => v6_fut.await,
+                    },
+                    Either::Right((v6_res, v4_fut)) => match v6_res {
+                        Ok(stream) => Ok(stream),
+                        Err(_v6_err) => v4_fut.await,
+                    },
+                }
             }
-        } else {
-            // IPv4 优先：先启动 IPv4，300ms 后并发启动 IPv6
-            let v6_fut = async move {
-                tokio::time::sleep(FIXED_DELAY).await;
-                connect_v6.await
-            };
-            let v4_fut = connect_v4;
+            Some(false) => {
+                // IPv4 优先：先启动 IPv4，300ms 后并发启动 IPv6
+                let v6_fut = async move {
+                    tokio::time::sleep(FIXED_DELAY).await;
+                    connect_v6.await
+                };
+                let v4_fut = connect_v4;
 
-            tokio::pin!(v4_fut);
-            tokio::pin!(v6_fut);
+                tokio::pin!(v4_fut);
+                tokio::pin!(v6_fut);
 
-            match future::select(v4_fut, v6_fut).await {
-                Either::Left((v4_res, v6_fut)) => match v4_res {
-                    Ok(stream) => Ok(stream),
-                    Err(_v4_err) => v6_fut.await,
-                },
-                Either::Right((v6_res, v4_fut)) => match v6_res {
-                    Ok(stream) => Ok(stream),
-                    Err(_v6_err) => v4_fut.await,
-                },
+                match future::select(v4_fut, v6_fut).await {
+                    Either::Left((v4_res, v6_fut)) => match v4_res {
+                        Ok(stream) => Ok(stream),
+                        Err(_v4_err) => v6_fut.await,
+                    },
+                    Either::Right((v6_res, v4_fut)) => match v6_res {
+                        Ok(stream) => Ok(stream),
+                        Err(_v6_err) => v4_fut.await,
+                    },
+                }
+            }
+            None => {
+                // 不指定优先级：保持 DNS 返回的顺序，同时并发尝试所有地址
+                // 这使用标准的 Happy Eyeballs 算法，按 DNS 返回顺序但并发尝试
+                let v4_fut = async move {
+                    tokio::time::sleep(FIXED_DELAY).await;
+                    connect_v4.await
+                };
+                let v6_fut = connect_v6;
+
+                tokio::pin!(v4_fut);
+                tokio::pin!(v6_fut);
+
+                match future::select(v4_fut, v6_fut).await {
+                    Either::Left((v4_res, v6_fut)) => match v4_res {
+                        Ok(stream) => Ok(stream),
+                        Err(_v4_err) => v6_fut.await,
+                    },
+                    Either::Right((v6_res, v4_fut)) => match v6_res {
+                        Ok(stream) => Ok(stream),
+                        Err(_v6_err) => v4_fut.await,
+                    },
+                }
             }
         }
     }

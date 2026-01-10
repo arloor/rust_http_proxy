@@ -11,11 +11,11 @@ use tower_service::Service;
 #[derive(Clone)]
 pub struct CustomGaiDNSResolver {
     inner: GaiResolver,
-    ipv6_first: bool,
+    ipv6_first: Option<bool>,
 }
 
 impl CustomGaiDNSResolver {
-    pub fn new(ipv6_first: bool) -> Self {
+    pub fn new(ipv6_first: Option<bool>) -> Self {
         Self {
             inner: GaiResolver::new(),
             ipv6_first,
@@ -55,7 +55,7 @@ impl std::fmt::Debug for ReorderedAddrs {
 /// Future 包装器，用于重排序解析结果
 pub struct ReorderFuture {
     inner: GaiFuture,
-    ipv6_first: bool,
+    ipv6_first: Option<bool>,
 }
 
 impl std::future::Future for ReorderFuture {
@@ -66,12 +66,15 @@ impl std::future::Future for ReorderFuture {
             Poll::Ready(Ok(addrs)) => {
                 let mut all_addrs: Vec<SocketAddr> = addrs.collect();
 
-                if self.ipv6_first {
-                    // IPv6 优先：先放所有 IPv6 地址，再放 IPv4 地址
-                    all_addrs.sort_by_key(|addr| !addr.is_ipv6());
-                } else {
-                    // IPv4 优先：先放所有 IPv4 地址，再放 IPv6 地址
-                    all_addrs.sort_by_key(|addr| addr.is_ipv6());
+                // 仅当 ipv6_first 为 Some 时才调整顺序，否则保持 DNS 原始顺序
+                if let Some(prefer_ipv6) = self.ipv6_first {
+                    if prefer_ipv6 {
+                        // IPv6 优先：先放所有 IPv6 地址，再放 IPv4 地址
+                        all_addrs.sort_by_key(|addr| !addr.is_ipv6());
+                    } else {
+                        // IPv4 优先：先放所有 IPv4 地址，再放 IPv6 地址
+                        all_addrs.sort_by_key(|addr| addr.is_ipv6());
+                    }
                 }
 
                 Poll::Ready(Ok(ReorderedAddrs {
