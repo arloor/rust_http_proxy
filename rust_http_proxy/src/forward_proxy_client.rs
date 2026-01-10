@@ -178,7 +178,7 @@ where
         access_label: &AccessLabel,
         stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        let stream = crate::proxy::connect_with_ipv4_preference(&access_label.target).await?;
+        let stream = crate::proxy::connect_with_preference(&access_label.target, false).await?;
         let stream = if let Some(true) = access_label.relay_over_tls {
             // 建立 TLS 连接
             let connector = build_tls_connector();

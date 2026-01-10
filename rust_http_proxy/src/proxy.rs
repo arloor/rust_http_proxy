@@ -404,7 +404,7 @@ impl ProxyHandler {
                 };
 
                 // 首先建立 TCP 连接（IPv4优先）
-                let tcp_stream = match connect_with_ipv4_preference(&bypass_host).await {
+                let tcp_stream = match connect_with_preference(&bypass_host, true).await {
                     Ok(stream) => {
                         // 记录从接收请求到完成bypass握手的耗时
                         let duration = start_time.elapsed();
@@ -577,7 +577,7 @@ impl ProxyHandler {
                             relay_over_tls: None,
                         };
                         // Connect to remote server (IPv4优先)
-                        match connect_with_ipv4_preference(&addr.to_string()).await {
+                        match connect_with_preference(&addr.to_string(), true).await {
                             Ok(target_stream) => {
                                 // 记录从接收请求到成功建立连接的耗时
                                 let duration = start_time.elapsed();
@@ -781,9 +781,9 @@ fn build_hyper_legacy_client() -> legacy::Client<
     client
 }
 
-/// IPv4优先的TCP连接，实现 Happy Eyeballs 算法（RFC 6555, RFC 8305）
-/// 首先尝试解析所有地址，IPv4 优先，但会并发尝试以提高连接速度
-pub(crate) async fn connect_with_ipv4_preference(addr: &str) -> io::Result<TcpStream> {
+/// 实现 Happy Eyeballs 算法的TCP连接（RFC 6555, RFC 8305）
+/// 首先尝试解析所有地址，根据 ipv6_first 参数决定优先级，但会并发尝试以提高连接速度
+pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: bool) -> io::Result<TcpStream> {
     use std::time::Duration;
     use tokio::net::lookup_host;
 
@@ -860,27 +860,51 @@ pub(crate) async fn connect_with_ipv4_preference(addr: &str) -> io::Result<TcpSt
     } else if !has_v4 && has_v6 {
         connect_v6.await
     } else {
-        // IPv4 优先：先启动 IPv4，300ms 后并发启动 IPv6
+        // 根据 ipv4_first 参数决定优先级
         use futures::future::{self, Either};
 
-        let v6_fut = async move {
-            tokio::time::sleep(FIXED_DELAY).await;
-            connect_v6.await
-        };
-        let v4_fut = connect_v4;
+        if ipv6_first {
+            // IPv6 优先：先启动 IPv6，300ms 后并发启动 IPv4
+            let v4_fut = async move {
+                tokio::time::sleep(FIXED_DELAY).await;
+                connect_v4.await
+            };
+            let v6_fut = connect_v6;
 
-        tokio::pin!(v4_fut);
-        tokio::pin!(v6_fut);
+            tokio::pin!(v4_fut);
+            tokio::pin!(v6_fut);
 
-        match future::select(v4_fut, v6_fut).await {
-            Either::Left((v4_res, v6_fut)) => match v4_res {
-                Ok(stream) => Ok(stream),
-                Err(_v4_err) => v6_fut.await,
-            },
-            Either::Right((v6_res, v4_fut)) => match v6_res {
-                Ok(stream) => Ok(stream),
-                Err(_v6_err) => v4_fut.await,
-            },
+            match future::select(v4_fut, v6_fut).await {
+                Either::Left((v4_res, v6_fut)) => match v4_res {
+                    Ok(stream) => Ok(stream),
+                    Err(_v4_err) => v6_fut.await,
+                },
+                Either::Right((v6_res, v4_fut)) => match v6_res {
+                    Ok(stream) => Ok(stream),
+                    Err(_v6_err) => v4_fut.await,
+                },
+            }
+        } else {
+            // IPv4 优先：先启动 IPv4，300ms 后并发启动 IPv6
+            let v6_fut = async move {
+                tokio::time::sleep(FIXED_DELAY).await;
+                connect_v6.await
+            };
+            let v4_fut = connect_v4;
+
+            tokio::pin!(v4_fut);
+            tokio::pin!(v6_fut);
+
+            match future::select(v4_fut, v6_fut).await {
+                Either::Left((v4_res, v6_fut)) => match v4_res {
+                    Ok(stream) => Ok(stream),
+                    Err(_v4_err) => v6_fut.await,
+                },
+                Either::Right((v6_res, v4_fut)) => match v6_res {
+                    Ok(stream) => Ok(stream),
+                    Err(_v6_err) => v4_fut.await,
+                },
+            }
         }
     }
 }
