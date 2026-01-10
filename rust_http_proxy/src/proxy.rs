@@ -782,11 +782,29 @@ fn build_hyper_legacy_client(
     // 配置 Happy Eyeballs timeout 为 300ms
     http_connector.set_happy_eyeballs_timeout(Some(Duration::from_millis(300)));
 
+    #[cfg(debug_assertions)]
+    let https_connector = {
+        warn!("⚠️  DEBUG MODE: TLS certificate verification is DISABLED");
+        use tokio_rustls::rustls::ClientConfig;
+        let tls_config = ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerifier))
+            .with_no_client_auth();
+
+        HttpsConnectorBuilder::new()
+            .with_tls_config(tls_config)
+            .https_or_http()
+            .enable_all_versions()
+            .wrap_connector(http_connector)
+    };
+
+    #[cfg(not(debug_assertions))]
     let https_connector = HttpsConnectorBuilder::new()
         .with_platform_verifier()
         .https_or_http()
         .enable_all_versions()
         .wrap_connector(http_connector);
+
     // 创建一个 HttpsConnector，使用 rustls 作为后端
     let client: legacy::Client<
         hyper_rustls::HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
@@ -959,51 +977,7 @@ pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: Option<bool>
 pub(crate) fn build_tls_connector() -> TlsConnector {
     #[cfg(debug_assertions)]
     {
-        use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-        use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-        use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
-
-        #[derive(Debug)]
-        struct NoVerifier;
-
-        impl ServerCertVerifier for NoVerifier {
-            fn verify_server_cert(
-                &self, _end_entity: &CertificateDer<'_>, _intermediates: &[CertificateDer<'_>],
-                _server_name: &ServerName<'_>, _ocsp_response: &[u8], _now: UnixTime,
-            ) -> Result<ServerCertVerified, tokio_rustls::rustls::Error> {
-                Ok(ServerCertVerified::assertion())
-            }
-
-            fn verify_tls12_signature(
-                &self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct,
-            ) -> Result<HandshakeSignatureValid, tokio_rustls::rustls::Error> {
-                Ok(HandshakeSignatureValid::assertion())
-            }
-
-            fn verify_tls13_signature(
-                &self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct,
-            ) -> Result<HandshakeSignatureValid, tokio_rustls::rustls::Error> {
-                Ok(HandshakeSignatureValid::assertion())
-            }
-
-            fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-                vec![
-                    SignatureScheme::RSA_PKCS1_SHA1,
-                    SignatureScheme::ECDSA_SHA1_Legacy,
-                    SignatureScheme::RSA_PKCS1_SHA256,
-                    SignatureScheme::ECDSA_NISTP256_SHA256,
-                    SignatureScheme::RSA_PKCS1_SHA384,
-                    SignatureScheme::ECDSA_NISTP384_SHA384,
-                    SignatureScheme::RSA_PKCS1_SHA512,
-                    SignatureScheme::ECDSA_NISTP521_SHA512,
-                    SignatureScheme::RSA_PSS_SHA256,
-                    SignatureScheme::RSA_PSS_SHA384,
-                    SignatureScheme::RSA_PSS_SHA512,
-                    SignatureScheme::ED25519,
-                    SignatureScheme::ED448,
-                ]
-            }
-        }
+        use tokio_rustls::rustls::ClientConfig;
 
         warn!("⚠️  DEBUG MODE: TLS certificate verification is DISABLED");
         let config = ClientConfig::builder()
@@ -1022,6 +996,80 @@ pub(crate) fn build_tls_connector() -> TlsConnector {
             .expect("Failed to create platform verifier")
             .with_no_client_auth();
         TlsConnector::from(Arc::new(config))
+    }
+}
+
+use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use tokio_rustls::rustls::{DigitallySignedStruct, SignatureScheme};
+
+#[derive(Debug)]
+struct NoVerifier;
+
+impl ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self, end_entity: &CertificateDer<'_>, intermediates: &[CertificateDer<'_>], server_name: &ServerName<'_>,
+        _ocsp_response: &[u8], _now: UnixTime,
+    ) -> Result<ServerCertVerified, tokio_rustls::rustls::Error> {
+        // 解析并打印证书信息
+        use x509_cert::Certificate;
+        use x509_cert::der::Decode;
+        if let Ok(cert) = Certificate::from_der(end_entity.as_ref()) {
+            let tbs = &cert.tbs_certificate;
+            info!("🔐 TLS Certificate Info:");
+            info!("  Server Name: {:?}", server_name);
+            info!("  Subject: {}", tbs.subject);
+            info!("  Issuer: {}", tbs.issuer);
+            info!("  Serial: {:?}", tbs.serial_number);
+            info!("  Valid from: {:?}", tbs.validity.not_before);
+            info!("  Valid until: {:?}", tbs.validity.not_after);
+
+            // 打印 Subject Alternative Names
+            if let Some(extensions) = &tbs.extensions {
+                for ext in extensions.iter() {
+                    if ext.extn_id.to_string() == "2.5.29.17" {
+                        // SAN OID
+                        debug!("  SAN extension found: {} bytes", ext.extn_value.len());
+                    }
+                }
+            }
+
+            info!("  Intermediate certs: {}", intermediates.len());
+        } else {
+            warn!("Failed to parse certificate for {:?}", server_name);
+        }
+
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, tokio_rustls::rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, tokio_rustls::rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::RSA_PKCS1_SHA1,
+            SignatureScheme::ECDSA_SHA1_Legacy,
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+            SignatureScheme::ECDSA_NISTP521_SHA512,
+            SignatureScheme::RSA_PSS_SHA256,
+            SignatureScheme::RSA_PSS_SHA384,
+            SignatureScheme::RSA_PSS_SHA512,
+            SignatureScheme::ED25519,
+            SignatureScheme::ED448,
+        ]
     }
 }
 
