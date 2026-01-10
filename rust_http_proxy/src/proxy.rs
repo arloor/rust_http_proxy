@@ -404,7 +404,7 @@ impl ProxyHandler {
                 };
 
                 // 首先建立 TCP 连接（IPv4优先）
-                let tcp_stream = match connect_with_preference(&bypass_host, true).await {
+                let tcp_stream = match connect_with_preference(&bypass_host, false).await {
                     Ok(stream) => {
                         // 记录从接收请求到完成bypass握手的耗时
                         let duration = start_time.elapsed();
@@ -577,7 +577,7 @@ impl ProxyHandler {
                             relay_over_tls: None,
                         };
                         // Connect to remote server (IPv4优先)
-                        match connect_with_preference(&addr.to_string(), true).await {
+                        match connect_with_preference(&addr.to_string(), false).await {
                             Ok(target_stream) => {
                                 // 记录从接收请求到成功建立连接的耗时
                                 let duration = start_time.elapsed();
