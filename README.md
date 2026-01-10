@@ -100,6 +100,8 @@ Options:
           则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
       --forward-bypass-url <https://username:password@example.com:123>
           指定上游代理服务器
+      --ipv6-first
+          优先使用 IPv6 进行连接（Happy Eyeballs 算法）
   -h, --help
           Print help
 ```
