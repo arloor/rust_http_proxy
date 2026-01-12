@@ -25,30 +25,20 @@ impl CustomGaiDNSResolver {
 
 /// 包装 GaiAddrs 以支持地址重排序
 pub struct ReorderedAddrs {
-    addrs: Vec<SocketAddr>,
-    index: usize,
+    iter: std::vec::IntoIter<SocketAddr>,
 }
 
 impl Iterator for ReorderedAddrs {
     type Item = SocketAddr;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.addrs.len() {
-            let addr = self.addrs[self.index];
-            self.index += 1;
-            Some(addr)
-        } else {
-            None
-        }
+        self.iter.next()
     }
 }
 
 impl std::fmt::Debug for ReorderedAddrs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ReorderedAddrs")
-            .field("addrs", &self.addrs)
-            .field("index", &self.index)
-            .finish()
+        f.debug_struct("ReorderedAddrs").finish()
     }
 }
 
@@ -78,8 +68,7 @@ impl std::future::Future for ReorderFuture {
                 }
 
                 Poll::Ready(Ok(ReorderedAddrs {
-                    addrs: all_addrs,
-                    index: 0,
+                    iter: all_addrs.into_iter(),
                 }))
             }
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
