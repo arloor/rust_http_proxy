@@ -1,7 +1,7 @@
 name: Combined Build and Release
 on:
   push:
-    branches: ["**"]
+    branches: ["release","release/*"]
   pull_request:
     branches: ["master"]
 permissions:
@@ -78,7 +78,7 @@ jobs:
 
       # Docker镜像构建和推送（仅适用于master分支）
       - name: Docker build and push
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
         run: |
           dockerfile="Dockerfile.dyn"
           podman build -f ${dockerfile} . -t docker.io/arloor/rust_http_proxy:${{ matrix.docker-tag }} -t quay.io/arloor/rust_http_proxy:${{ matrix.docker-tag }}
@@ -91,7 +91,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/'))
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
     steps:
       - uses: actions/checkout@v4
 
@@ -124,7 +124,7 @@ jobs:
 
       # 创建master分支release（包含三个二进制文件）
       - name: Create Master Release
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -153,4 +153,4 @@ jobs:
           fi
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
-          gh release create ${version} release_binaries/* -n "${version} 包含三个版本：标准版、动态链接BPF版和静态链接BPF版" --latest -t "${version}"
+          gh release create ${version} release_binaries/* -n "${version} 包含三个版本：标准版、动态链接BPF版和静态链接BPF版" -t "${version}"
