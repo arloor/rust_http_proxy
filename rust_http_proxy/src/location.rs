@@ -228,7 +228,7 @@ impl<'a> RequestSpec<'a> {
 
                 if is_websocket {
                     info!(
-                        "[reverse] {:^35} ==> WebSocket {} {:?} <== [{}{}]",
+                        "[reverse] {:^35} ==> wss {} {:?} <== [{}{}]",
                         SocketAddrFormat(&client_socket_addr).to_string(),
                         request.uri(),
                         request.version(),
