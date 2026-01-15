@@ -26,7 +26,7 @@ use std::{
 use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
 use crate::dns_resolver::CustomGaiDNSResolver;
-use crate::hyper_x::CounterBody;
+use crate::hyper_x::{CounterBody, CounterHyperIO};
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::AccessLabel;
 use crate::proxy::ReverseProxyReqLabel;
@@ -170,23 +170,19 @@ impl<'a> RequestSpec<'a> {
     }
 
     async fn tunnel_websocket(upstream: Upgraded, client: Upgraded, traffic_label: AccessLabel) -> io::Result<()> {
-        let mut upstream_io = TokioIo::new(upstream);
-        let mut client_io = TokioIo::new(client);
+        let mut upstream_io = TokioIo::new(CounterHyperIO::new(
+            upstream,
+            METRICS.proxy_traffic.clone(),
+            LabelImpl::new(traffic_label.clone()),
+        ));
+        let mut client_io = TokioIo::new(CounterHyperIO::new(
+            client,
+            METRICS.proxy_traffic.clone(),
+            LabelImpl::new(traffic_label.clone()),
+        ));
 
         // 双向数据转发
-        let (client_to_upstream, upstream_to_client) =
-            tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
-
-        info!(
-            "[reverse] WebSocket tunnel closed: client->upstream: {} bytes, upstream->client: {} bytes, label: {:?}",
-            client_to_upstream, upstream_to_client, traffic_label
-        );
-
-        // 更新流量统计
-        METRICS
-            .proxy_traffic
-            .get_or_create(&LabelImpl::new(traffic_label.clone()))
-            .inc_by(client_to_upstream + upstream_to_client);
+        let _ = tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
 
         Ok(())
     }
