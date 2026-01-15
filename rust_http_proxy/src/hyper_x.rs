@@ -78,7 +78,9 @@ pin_project_lite::pin_project! {
     }
 }
 
+/// 构造一个带有流量统计功能的 CountWriteHyperIO，仅统计write流量
 impl<T, R> CountWriteHyperIO<T, R> {
+    #[allow(unused)]
     pub fn new(inner: T, traffic_counter: Family<R, Counter>, label: R) -> Self {
         Self {
             inner,

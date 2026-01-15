@@ -9,6 +9,7 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioIo;
+use io_x::CounterIO;
 use log::info;
 use log::warn;
 use percent_encoding::percent_decode_str;
@@ -26,7 +27,7 @@ use std::{
 use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
 use crate::dns_resolver::CustomGaiDNSResolver;
-use crate::hyper_x::{CountWriteHyperIO, CounterBody};
+use crate::hyper_x::CounterBody;
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::AccessLabel;
 use crate::proxy::ReverseProxyReqLabel;
@@ -170,19 +171,15 @@ impl<'a> RequestSpec<'a> {
     }
 
     async fn tunnel_websocket(upstream: Upgraded, client: Upgraded, traffic_label: AccessLabel) -> io::Result<()> {
-        let mut upstream_io = TokioIo::new(CountWriteHyperIO::new(
-            upstream,
-            METRICS.proxy_traffic.clone(),
-            LabelImpl::new(traffic_label.clone()),
-        ));
-        let mut client_io = TokioIo::new(CountWriteHyperIO::new(
-            client,
-            METRICS.proxy_traffic.clone(),
-            LabelImpl::new(traffic_label.clone()),
-        ));
+        let mut upstream_io = TokioIo::new(upstream);
+        let client_io = TokioIo::new(client);
 
         // 双向数据转发
-        let _ = tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
+        let _ = tokio::io::copy_bidirectional(
+            &mut CounterIO::new(client_io, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone())),
+            &mut upstream_io,
+        )
+        .await?;
 
         Ok(())
     }
