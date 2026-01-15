@@ -16,6 +16,7 @@ pub fn init_log(log_dir: &str, log_file: &str, level: &str) -> Result<LoggerHand
         .to_str()
         .ok_or(io::Error::new(io::ErrorKind::InvalidInput, "error parse absolute path of log dir"))?;
     let logger = Logger::try_with_env_or_str(format!("{level},rustls=error"))?;
+    let symlink_path = log_dir_path.join(log_file);
     let log = logger
         .log_to_file(FileSpec::default().directory(log_dir).basename(log_file).suffix(""))
         .duplicate_to_stdout(Duplicate::All)
@@ -26,9 +27,9 @@ pub fn init_log(log_dir: &str, log_file: &str, level: &str) -> Result<LoggerHand
         )
         .append()
         .format(my_format)
-        .create_symlink(format!("{log_dir}/{log_file}"))
+        .create_symlink(symlink_path.clone())
         .start();
-    let symlink_path = log_dir_path.join(log_file);
+
     let symlink_path = symlink_path
         .to_str()
         .ok_or(io::Error::new(io::ErrorKind::InvalidData, "cannot parse"))?;
@@ -40,8 +41,8 @@ fn my_format(w: &mut dyn std::io::Write, now: &mut DeferredNow, record: &Record)
     write!(
         w,
         "{} [{}] [{}:{}] {}",
-        // now.format("%Y-%m-%d %H:%M:%S%.6f"),
-        now.format("%Y-%m-%d %H:%M:%S"),
+        now.format("%Y-%m-%d %H:%M:%S%.6f"),
+        // now.format("%Y-%m-%d %H:%M:%S"),
         record.level(),
         record.file().unwrap_or("<unnamed>"),
         record.line().unwrap_or(0),
