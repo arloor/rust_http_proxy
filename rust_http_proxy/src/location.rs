@@ -4,9 +4,11 @@ use http_body_util::BodyExt as _;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::body::Incoming;
+use hyper::upgrade::Upgraded;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::rt::TokioIo;
 use log::info;
 use log::warn;
 use percent_encoding::percent_decode_str;
@@ -107,12 +109,94 @@ pub(crate) enum RequestSpec<'a> {
 }
 
 impl<'a> RequestSpec<'a> {
+    async fn handle_websocket_upgrade(
+        upstream_req: Request<Incoming>, client_upgrade_fut: hyper::upgrade::OnUpgrade, traffic_label: AccessLabel,
+        reverse_client: &legacy::Client<
+            HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
+            http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+        >,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        // 客户端的升级 future 已经在调用前准备好了
+
+        // 将 Incoming body 转换为 BoxBody
+        let upstream_req = upstream_req.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
+
+        // 发送升级请求到上游
+        let mut upstream_resp = reverse_client
+            .request(upstream_req)
+            .await
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+
+        // 检查上游是否返回 101 Switching Protocols
+        if upstream_resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+            warn!("WebSocket upgrade failed, upstream returned: {}", upstream_resp.status());
+            return Ok(upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed()));
+        }
+
+        info!("[reverse] WebSocket upgrade successful, status: {}", upstream_resp.status());
+
+        // 准备上游的升级
+        let upstream_upgrade_fut = hyper::upgrade::on(&mut upstream_resp);
+
+        // 构造 101 响应给客户端，复制上游的响应头
+        let mut client_response_builder = Response::builder().status(http::StatusCode::SWITCHING_PROTOCOLS);
+
+        // 复制所有响应头
+        if let Some(headers) = client_response_builder.headers_mut() {
+            for (key, value) in upstream_resp.headers() {
+                headers.insert(key.clone(), value.clone());
+            }
+        }
+
+        let client_response = client_response_builder
+            .body(http_body_util::Empty::<Bytes>::new().map_err(|e| match e {}).boxed())
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+
+        // 启动异步任务进行双向数据转发
+        tokio::spawn(async move {
+            match (upstream_upgrade_fut.await, client_upgrade_fut.await) {
+                (Ok(upstream_upgraded), Ok(client_upgraded)) => {
+                    if let Err(e) = Self::tunnel_websocket(upstream_upgraded, client_upgraded, traffic_label).await {
+                        warn!("WebSocket tunnel error: {e:?}");
+                    }
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    warn!("WebSocket upgrade error: {e:?}");
+                }
+            }
+        });
+
+        Ok(client_response)
+    }
+
+    async fn tunnel_websocket(upstream: Upgraded, client: Upgraded, traffic_label: AccessLabel) -> io::Result<()> {
+        let mut upstream_io = TokioIo::new(upstream);
+        let mut client_io = TokioIo::new(client);
+
+        // 双向数据转发
+        let (client_to_upstream, upstream_to_client) =
+            tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
+
+        info!(
+            "[reverse] WebSocket tunnel closed: client->upstream: {} bytes, upstream->client: {} bytes, label: {:?}",
+            client_to_upstream, upstream_to_client, traffic_label
+        );
+
+        // 更新流量统计
+        METRICS
+            .proxy_traffic
+            .get_or_create(&LabelImpl::new(traffic_label.clone()))
+            .inc_by(client_to_upstream + upstream_to_client);
+
+        Ok(())
+    }
+
     pub(crate) async fn handle(self) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         match self {
             RequestSpec::ForReverseProxy {
                 location,
                 upstream,
-                request,
+                mut request,
                 client_socket_addr,
                 original_scheme_host_port,
                 reverse_client,
@@ -126,6 +210,48 @@ impl<'a> RequestSpec<'a> {
                     username: "reverse_proxy".to_owned(),
                     relay_over_tls: None,
                 };
+
+                // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
+                let is_websocket = request
+                    .headers()
+                    .get(header::UPGRADE)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|v| v.eq_ignore_ascii_case("websocket"))
+                    .unwrap_or(false);
+
+                // 记录指标
+                METRICS
+                    .reverse_proxy_req
+                    .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
+                        client: client_socket_addr.ip().to_canonical().to_string(),
+                        origin: original_scheme_host_port.to_string() + location.as_str(),
+                        upstream: upstream.url_base.clone(),
+                    }))
+                    .inc();
+                METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
+
+                if is_websocket {
+                    info!(
+                        "[reverse] {:^35} ==> WebSocket {} {:?} <== [{}{}]",
+                        SocketAddrFormat(&client_socket_addr).to_string(),
+                        request.uri(),
+                        request.version(),
+                        original_scheme_host_port,
+                        location,
+                    );
+                    // 在消费 request 之前，先获取客户端的 upgrade future
+                    let client_upgrade_fut = hyper::upgrade::on(&mut *request);
+                    let upstream_req =
+                        Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
+                    return Self::handle_websocket_upgrade(
+                        upstream_req,
+                        client_upgrade_fut,
+                        traffic_label,
+                        reverse_client,
+                    )
+                    .await;
+                }
+
                 let upstream_req = Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
                 let upstream_req = upstream_req.map(|body| {
                     // 使用 CounterBody 包装 body 来统计请求流量
@@ -147,15 +273,7 @@ impl<'a> RequestSpec<'a> {
                     original_scheme_host_port,
                     location,
                 );
-                METRICS
-                    .reverse_proxy_req
-                    .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
-                        client: client_socket_addr.ip().to_canonical().to_string(),
-                        origin: original_scheme_host_port.to_string() + location.as_str(),
-                        upstream: upstream.url_base.clone(),
-                    }))
-                    .inc();
-                METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
+
                 match reverse_client.request(upstream_req).await {
                     Ok(mut resp) => {
                         if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
@@ -233,9 +351,15 @@ impl<'a> RequestSpec<'a> {
         };
         let upstream_url = upstream.url_base.clone() + &path_and_query[location.len()..]; // upstream.url_base + 原始url去除location的部分
 
+        // 先解析 URI 以提取 authority，然后再移动 upstream_url
+        let upstream_uri = upstream_url
+            .parse::<Uri>()
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        // let upstream_authority = upstream_uri.authority().cloned();
+
         let mut builder = Request::builder()
             .method(method)
-            .uri(upstream_url)
+            .uri(upstream_uri)
             .version(match upstream.version {
                 Version::H1 => http::Version::HTTP_11,
                 Version::H2 => http::Version::HTTP_2,
@@ -263,6 +387,13 @@ impl<'a> RequestSpec<'a> {
                 info!("skip host header: {:?}", ele.1);
             }
         }
+
+        // // 为上游请求添加正确的 Host 头部
+        // if let Some(authority) = upstream_authority {
+        //     if let Ok(host_value) = HeaderValue::from_str(authority.as_str()) {
+        //         header_map.insert(header::HOST, host_value);
+        //     }
+        // }
 
         if let Some(ref headers) = upstream.headers {
             for (key, value) in headers {
