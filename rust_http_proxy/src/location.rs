@@ -26,7 +26,7 @@ use std::{
 use crate::axum_handler::AXUM_PATHS;
 use crate::config::{Config, Param};
 use crate::dns_resolver::CustomGaiDNSResolver;
-use crate::hyper_x::{CounterBody, CounterHyperIO};
+use crate::hyper_x::{CountWriteHyperIO, CounterBody};
 use crate::ip_x::SocketAddrFormat;
 use crate::proxy::AccessLabel;
 use crate::proxy::ReverseProxyReqLabel;
@@ -170,12 +170,12 @@ impl<'a> RequestSpec<'a> {
     }
 
     async fn tunnel_websocket(upstream: Upgraded, client: Upgraded, traffic_label: AccessLabel) -> io::Result<()> {
-        let mut upstream_io = TokioIo::new(CounterHyperIO::new(
+        let mut upstream_io = TokioIo::new(CountWriteHyperIO::new(
             upstream,
             METRICS.proxy_traffic.clone(),
             LabelImpl::new(traffic_label.clone()),
         ));
-        let mut client_io = TokioIo::new(CounterHyperIO::new(
+        let mut client_io = TokioIo::new(CountWriteHyperIO::new(
             client,
             METRICS.proxy_traffic.clone(),
             LabelImpl::new(traffic_label.clone()),

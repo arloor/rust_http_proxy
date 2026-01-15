@@ -70,7 +70,7 @@ where
 // CounterHyperIO: 为 hyper 的 IO 类型添加流量统计功能
 pin_project_lite::pin_project! {
     /// enhance inner hyper IO with prometheus counter
-    pub struct CounterHyperIO<T, R> {
+    pub struct CountWriteHyperIO<T, R> {
         #[pin]
         inner: T,
         traffic_counter: Family<R, Counter>,
@@ -78,7 +78,7 @@ pin_project_lite::pin_project! {
     }
 }
 
-impl<T, R> CounterHyperIO<T, R> {
+impl<T, R> CountWriteHyperIO<T, R> {
     pub fn new(inner: T, traffic_counter: Family<R, Counter>, label: R) -> Self {
         Self {
             inner,
@@ -88,7 +88,7 @@ impl<T, R> CounterHyperIO<T, R> {
     }
 }
 
-impl<T, R> hyper::rt::Read for CounterHyperIO<T, R>
+impl<T, R> hyper::rt::Read for CountWriteHyperIO<T, R>
 where
     T: hyper::rt::Read,
     R: prom_label::Label,
@@ -107,7 +107,7 @@ where
     }
 }
 
-impl<T, R> hyper::rt::Write for CounterHyperIO<T, R>
+impl<T, R> hyper::rt::Write for CountWriteHyperIO<T, R>
 where
     T: hyper::rt::Write,
     R: prom_label::Label,
