@@ -9,7 +9,7 @@
 1. 使用 tls 来对正向代理流量进行加密（`--over-tls`）。
 2. 类 Nginx 的静态资源托管。支持 gzip 压缩。支持 Accept-Ranges 以支持断点续传（备注：暂不支持多 range，例如 `Range: bytes=0-100,100-` ）
 3. 支持链式代理（通过--forward-bypass-url 指定上游代理服务器）
-4. 支持反向代理。
+4. 支持反向代理（支持反向代理websocket）。
 5. 基于 Prometheus 的可观测，可以监控代理的流量、外链访问等。
 6. 采集网卡上行流量，展示在 `/net` 路径下（读取 `/proc/net/dev` 或基于 `ebpf socket filter` ）
 7. 支持多端口，多用户。
