@@ -357,8 +357,8 @@ impl ProxyHandler {
             Version::HTTP_09 => "HTTP/0.9",
             Version::HTTP_10 => "HTTP/1.0",
             Version::HTTP_11 => "HTTP/1.1",
-            Version::HTTP_2 => "HTTP/2.0",
-            Version::HTTP_3 => "HTTP/3.0",
+            Version::HTTP_2 => "HTTP/2",
+            Version::HTTP_3 => "HTTP/3",
             _ => "HTTP/1.1", // fallback to HTTP/1.1
         };
         request_bytes.extend_from_slice(
@@ -408,8 +408,8 @@ impl ProxyHandler {
         loop {
             let mut header_line = String::new();
             reader.read_line(&mut header_line).await?;
-            // Check if we've reached the end of headers (empty line)
-            if header_line.trim().is_empty() {
+            // Check if we've reached the end of headers (CRLF or LF)
+            if header_line == "\r\n" || header_line == "\n" {
                 break;
             }
             response_headers.push(header_line);
