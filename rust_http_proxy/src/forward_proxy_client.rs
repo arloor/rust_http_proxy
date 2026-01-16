@@ -109,6 +109,10 @@ where
                     debug!("HTTP connection for host: {access_label} is closed",);
                     continue;
                 }
+                if !c.is_ready() {
+                    debug!("HTTP connection for host: {access_label} is not ready",);
+                    continue;
+                }
                 return Some(c);
             }
         } else {
@@ -264,6 +268,12 @@ where
     pub fn is_closed(&self) -> bool {
         match self {
             HttpConnection::Http1(r) => r.is_closed(),
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        match self {
+            HttpConnection::Http1(r) => r.is_ready(),
         }
     }
 }
