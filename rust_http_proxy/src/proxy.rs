@@ -296,6 +296,15 @@ impl ProxyHandler {
         // 默认为正向代理
     }
 
+    /// 检测是否是 WebSocket 升级请求
+    fn is_websocket_upgrade(req: &Request<Incoming>) -> bool {
+        req.headers()
+            .get(http::header::UPGRADE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false)
+    }
+
     /// 处理 WebSocket 升级请求（正向代理场景）
     async fn handle_websocket_upgrade_forward(
         &self, mut req: Request<Incoming>, traffic_label: AccessLabel,
@@ -311,12 +320,20 @@ impl ProxyHandler {
 
         // 构建 HTTP 请求行和头部
         let mut request_bytes = Vec::new();
+        let version_str = match req.version() {
+            Version::HTTP_09 => "HTTP/0.9",
+            Version::HTTP_10 => "HTTP/1.0",
+            Version::HTTP_11 => "HTTP/1.1",
+            Version::HTTP_2 => "HTTP/2.0",
+            Version::HTTP_3 => "HTTP/3.0",
+            _ => "HTTP/1.1", // fallback to HTTP/1.1
+        };
         request_bytes.extend_from_slice(
             format!(
-                "{} {} {:?}\r\n",
+                "{} {} {}\r\n",
                 req.method(),
                 req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/"),
-                req.version()
+                version_str
             )
             .as_bytes(),
         );
@@ -342,7 +359,10 @@ impl ProxyHandler {
         reader.read_line(&mut response_line).await?;
 
         // 检查响应状态码
-        let status_code = response_line.split_whitespace().nth(1).unwrap_or("");
+        let status_code = response_line
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| io::Error::other(format!("Invalid HTTP response line: {}", response_line)))?;
         if status_code != "101" {
             warn!("[forward] WebSocket upgrade failed, upstream returned: {}", response_line);
             return Err(io::Error::other(format!("WebSocket upgrade failed: {}", response_line)));
@@ -355,7 +375,8 @@ impl ProxyHandler {
         loop {
             let mut header_line = String::new();
             reader.read_line(&mut header_line).await?;
-            if header_line == "\r\n" || header_line == "\n" {
+            // Check if we've reached the end of headers (empty line)
+            if header_line.trim().is_empty() {
                 break;
             }
             response_headers.push(header_line);
@@ -369,9 +390,10 @@ impl ProxyHandler {
 
         // 添加上游返回的所有响应头
         for header_line in response_headers {
-            if let Some((name, value)) = header_line.trim_end().split_once(':') {
-                let name = name.trim();
-                let value = value.trim();
+            // Split on first colon only to handle values with colons
+            if let Some(colon_pos) = header_line.find(':') {
+                let name = header_line[..colon_pos].trim();
+                let value = header_line[colon_pos + 1..].trim();
                 if let Ok(header_value) = HeaderValue::from_str(value) {
                     response_builder = response_builder.header(name, header_value);
                 }
@@ -406,7 +428,7 @@ impl ProxyHandler {
         let mut client_io = TokioIo::new(client);
 
         // 双向数据转发
-        let _ = tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
+        tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
 
         Ok(())
     }
@@ -426,12 +448,7 @@ impl ProxyHandler {
         };
 
         // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
-        let is_websocket = req
-            .headers()
-            .get(http::header::UPGRADE)
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.eq_ignore_ascii_case("websocket"))
-            .unwrap_or(false);
+        let is_websocket = Self::is_websocket_upgrade(&req);
 
         mod_http1_proxy_req(&mut req)?;
         if is_websocket {
@@ -481,12 +498,7 @@ impl ProxyHandler {
         };
 
         // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
-        let is_websocket = req
-            .headers()
-            .get(http::header::UPGRADE)
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.eq_ignore_ascii_case("websocket"))
-            .unwrap_or(false);
+        let is_websocket = Self::is_websocket_upgrade(&req);
 
         // 如果配置了 username 和 password，添加 Proxy-Authorization 头
         if let (Some(username), Some(password)) = (&forward_bypass_config.username, &forward_bypass_config.password) {
