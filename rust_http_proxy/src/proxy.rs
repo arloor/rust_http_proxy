@@ -337,12 +337,22 @@ impl ProxyHandler {
         info!("[forward] WebSocket upgrade request sent to upstream");
 
         // 读取上游响应
+        // 将 upstream_io 包装在 BufReader 中，以便按行高效读取 HTTP 状态行和头部。
+        // 在完成 HTTP 响应解析后，我们会通过 reader.into_inner() 取回底层的 upstream_io，
+        // 继续将同一个 TCP 连接用于 WebSocket 隧道的数据转发。
         let mut reader = tokio::io::BufReader::new(upstream_io);
         let mut response_line = String::new();
         reader.read_line(&mut response_line).await?;
 
         // 检查响应状态码
         let status_code = response_line.split_whitespace().nth(1).unwrap_or("");
+        if status_code.is_empty() {
+            warn!("[forward] Failed to parse status code from upstream response: {}", response_line);
+            return Err(io::Error::other(format!(
+                "Failed to parse status code from upstream response: {}",
+                response_line
+            )));
+        }
         if status_code != "101" {
             warn!("[forward] WebSocket upgrade failed, upstream returned: {}", response_line);
             return Err(io::Error::other(format!("WebSocket upgrade failed: {}", response_line)));

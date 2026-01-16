@@ -72,7 +72,7 @@ where
         &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
         stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
-        // 1. Check if there is an available client (skip for WebSocket upgrades)
+        // 1. Check if there is an available client
         if let Some(c) = self.get_cached_connection(access_label).await {
             debug!("HTTP client for host: {} taken from cache", &access_label);
             match self.send_request_conn(access_label, c, req).await {
