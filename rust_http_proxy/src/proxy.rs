@@ -311,12 +311,45 @@ impl ProxyHandler {
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
+        // 检查是否需要 TLS (wss://)
+        let is_secure = is_schema_secure(req.uri());
+
         // 直接建立到上游的 TCP 连接
-        let upstream_stream = connect_with_preference(&traffic_label.target, self.config.ipv6_first).await?;
-        info!("[forward] WebSocket TCP connection established to {}", &traffic_label.target);
+        let tcp_stream = connect_with_preference(&traffic_label.target, self.config.ipv6_first).await?;
+        info!(
+            "[forward] WebSocket TCP connection established to {} (secure: {})",
+            &traffic_label.target, is_secure
+        );
+
+        // 根据是否安全连接决定是否需要 TLS
+        let stream = if is_secure {
+            // 建立 TLS 连接
+            let connector = build_tls_connector();
+            // 从 URI 中提取主机名用于 TLS SNI
+            let host = req
+                .uri()
+                .host()
+                .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "Missing host in URI"))?;
+            let server_name = pki_types::ServerName::try_from(host)
+                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
+                .to_owned();
+
+            match connector.connect(server_name, tcp_stream).await {
+                Ok(tls_stream) => {
+                    info!("[forward] WebSocket TLS handshake successful");
+                    EitherTlsStream::Tls { stream: tls_stream }
+                }
+                Err(e) => {
+                    warn!("[forward] WebSocket TLS handshake failed: {}", e);
+                    return Err(io::Error::new(ErrorKind::ConnectionAborted, format!("TLS handshake failed: {}", e)));
+                }
+            }
+        } else {
+            EitherTlsStream::Tcp { stream: tcp_stream }
+        };
 
         let mut upstream_io =
-            CounterIO::new(upstream_stream, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone()));
+            CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone()));
 
         // 构建 HTTP 请求行和头部
         let mut request_bytes = Vec::new();
@@ -423,7 +456,7 @@ impl ProxyHandler {
 
     /// WebSocket 双向数据转发（正向代理场景）
     async fn tunnel_websocket_forward(
-        mut upstream_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>, client: Upgraded,
+        mut upstream_io: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>, client: Upgraded,
     ) -> io::Result<()> {
         let mut client_io = TokioIo::new(client);
 
