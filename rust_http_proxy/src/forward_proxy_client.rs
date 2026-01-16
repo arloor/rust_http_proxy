@@ -46,6 +46,26 @@ where
         }
     }
 
+    #[allow(unused)]
+    pub async fn send_request_no_cache(
+        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
+        stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
+    ) -> Result<Response<body::Incoming>, std::io::Error> {
+        // Make a new connection
+        let mut c = match HttpConnection::connect(access_label, ipv6_first, stream_map_func).await {
+            Ok(c) => c,
+            Err(err) => {
+                error!("failed to connect to host: {}, error: {}", &access_label.target, err);
+                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+            }
+        };
+
+        trace!("HTTP making request to host: {access_label}, request: {req:?}");
+        let response = c.send_request(req).await.map_err(io::Error::other)?;
+        trace!("HTTP received response from host: {access_label}, response: {response:?}");
+        Ok(response)
+    }
+
     /// Make HTTP requests
     #[inline]
     pub async fn send_request(
@@ -97,7 +117,7 @@ where
         None
     }
 
-    async fn send_request_conn(
+    pub(crate) async fn send_request_conn(
         &self, access_label: &AccessLabel, mut c: HttpConnection<B>, req: Request<B>,
     ) -> hyper::Result<Response<body::Incoming>> {
         trace!("HTTP making request to host: {access_label}, request: {req:?}");
@@ -164,7 +184,7 @@ fn get_keep_alive_val(values: header::GetAll<HeaderValue>) -> Option<bool> {
 }
 
 #[allow(dead_code)]
-enum HttpConnection<B> {
+pub(crate) enum HttpConnection<B> {
     Http1(http1::SendRequest<B>),
 }
 
@@ -174,7 +194,7 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
-    async fn connect(
+    pub(crate) async fn connect(
         access_label: &AccessLabel, ipv6_first: Option<bool>,
         stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
