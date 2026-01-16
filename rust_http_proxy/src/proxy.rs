@@ -298,59 +298,100 @@ impl ProxyHandler {
 
     /// 处理 WebSocket 升级请求（正向代理场景）
     async fn handle_websocket_upgrade_forward(
-        &self, upstream_req: Request<Incoming>, client_upgrade_fut: hyper::upgrade::OnUpgrade,
-        traffic_label: AccessLabel,
+        &self, mut req: Request<Incoming>, traffic_label: AccessLabel,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        // 发送升级请求到上游
-        let mut upstream_resp = self
-            .forward_proxy_client
-            .send_request(
-                upstream_req,
-                &traffic_label,
-                self.config.ipv6_first,
-                |stream: EitherTlsStream, access_label: AccessLabel| {
-                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-                },
-            )
-            .await?;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-        // 检查上游是否返回 101 Switching Protocols
-        if upstream_resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
-            warn!("[forward] WebSocket upgrade failed, upstream returned: {}", upstream_resp.status());
-            return Ok(upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed()));
+        // 直接建立到上游的 TCP 连接
+        let upstream_stream = connect_with_preference(&traffic_label.target, self.config.ipv6_first).await?;
+        info!("[forward] WebSocket TCP connection established to {}", &traffic_label.target);
+
+        let mut upstream_io =
+            CounterIO::new(upstream_stream, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone()));
+
+        // 构建 HTTP 请求行和头部
+        let mut request_bytes = Vec::new();
+        request_bytes.extend_from_slice(
+            format!(
+                "{} {} {:?}\r\n",
+                req.method(),
+                req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/"),
+                req.version()
+            )
+            .as_bytes(),
+        );
+
+        // 添加所有请求头
+        for (name, value) in req.headers() {
+            request_bytes.extend_from_slice(name.as_str().as_bytes());
+            request_bytes.extend_from_slice(b": ");
+            request_bytes.extend_from_slice(value.as_bytes());
+            request_bytes.extend_from_slice(b"\r\n");
+        }
+        request_bytes.extend_from_slice(b"\r\n");
+
+        // 发送请求到上游
+        upstream_io.write_all(&request_bytes).await?;
+        upstream_io.flush().await?;
+
+        info!("[forward] WebSocket upgrade request sent to upstream");
+
+        // 读取上游响应
+        let mut reader = tokio::io::BufReader::new(upstream_io);
+        let mut response_line = String::new();
+        reader.read_line(&mut response_line).await?;
+
+        // 检查响应状态码
+        let status_code = response_line.split_whitespace().nth(1).unwrap_or("");
+        if status_code != "101" {
+            warn!("[forward] WebSocket upgrade failed, upstream returned: {}", response_line);
+            return Err(io::Error::other(format!("WebSocket upgrade failed: {}", response_line)));
         }
 
-        info!("[forward] WebSocket upgrade successful, status: {}", upstream_resp.status());
+        info!("[forward] WebSocket upgrade successful, status: {}", status_code);
 
-        // 准备上游的升级
-        let upstream_upgrade_fut = hyper::upgrade::on(&mut upstream_resp);
+        // 读取并保存响应头
+        let mut response_headers = Vec::new();
+        loop {
+            let mut header_line = String::new();
+            reader.read_line(&mut header_line).await?;
+            if header_line == "\r\n" || header_line == "\n" {
+                break;
+            }
+            response_headers.push(header_line);
+        }
 
-        // 构造 101 响应给客户端，复制上游的响应头
-        let mut client_response_builder = Response::builder().status(http::StatusCode::SWITCHING_PROTOCOLS);
+        // 从BufReader中取回原始stream
+        let upstream_io = reader.into_inner();
 
-        // 复制所有响应头
-        if let Some(headers) = client_response_builder.headers_mut() {
-            for (key, value) in upstream_resp.headers() {
-                headers.insert(key.clone(), value.clone());
+        // 构造 101 响应给客户端，并添加上游返回的响应头
+        let mut response_builder = Response::builder().status(http::StatusCode::SWITCHING_PROTOCOLS);
+
+        // 添加上游返回的所有响应头
+        for header_line in response_headers {
+            if let Some((name, value)) = header_line.trim_end().split_once(':') {
+                let name = name.trim();
+                let value = value.trim();
+                if let Ok(header_value) = HeaderValue::from_str(value) {
+                    response_builder = response_builder.header(name, header_value);
+                }
             }
         }
 
-        let client_response = client_response_builder
+        let client_response = response_builder
             .body(http_body_util::Empty::<Bytes>::new().map_err(|e| match e {}).boxed())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
 
         // 启动异步任务进行双向数据转发
         tokio::spawn(async move {
-            match (upstream_upgrade_fut.await, client_upgrade_fut.await) {
-                (Ok(upstream_upgraded), Ok(client_upgraded)) => {
-                    if let Err(e) =
-                        Self::tunnel_websocket_forward(upstream_upgraded, client_upgraded, traffic_label).await
-                    {
+            match hyper::upgrade::on(&mut req).await {
+                Ok(client_upgraded) => {
+                    if let Err(e) = Self::tunnel_websocket_forward(upstream_io, client_upgraded).await {
                         warn!("[forward] WebSocket tunnel error: {e:?}");
                     }
                 }
-                (Err(e), _) | (_, Err(e)) => {
-                    warn!("[forward] WebSocket upgrade error: {e:?}");
+                Err(e) => {
+                    warn!("[forward] WebSocket client upgrade error: {e:?}");
                 }
             }
         });
@@ -360,18 +401,12 @@ impl ProxyHandler {
 
     /// WebSocket 双向数据转发（正向代理场景）
     async fn tunnel_websocket_forward(
-        upstream: Upgraded, client: Upgraded, _traffic_label: AccessLabel,
+        mut upstream_io: CounterIO<TcpStream, LabelImpl<AccessLabel>>, client: Upgraded,
     ) -> io::Result<()> {
-        let mut upstream_io = TokioIo::new(upstream);
         let mut client_io = TokioIo::new(client);
 
         // 双向数据转发
-        let _ = tokio::io::copy_bidirectional(
-            &mut client_io,
-            // &mut CounterIO::new(client_io, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone())),
-            &mut upstream_io,
-        )
-        .await?;
+        let _ = tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
 
         Ok(())
     }
@@ -398,6 +433,7 @@ impl ProxyHandler {
             .map(|v| v.eq_ignore_ascii_case("websocket"))
             .unwrap_or(false);
 
+        mod_http1_proxy_req(&mut req)?;
         if is_websocket {
             info!(
                 "[forward] WebSocket upgrade request: {:^35} ==> {} {:?}",
@@ -405,17 +441,10 @@ impl ProxyHandler {
                 req.method(),
                 req.uri(),
             );
-            // 在消费 request 之前，先获取客户端的 upgrade future
-            let client_upgrade_fut = hyper::upgrade::on(&mut req);
 
-            mod_http1_proxy_req(&mut req)?;
-
-            return self
-                .handle_websocket_upgrade_forward(req, client_upgrade_fut, access_label)
-                .await;
+            return self.handle_websocket_upgrade_forward(req, access_label).await;
         }
 
-        mod_http1_proxy_req(&mut req)?;
         match self
             .forward_proxy_client
             .send_request(
@@ -485,12 +514,8 @@ impl ProxyHandler {
                 req.method(),
                 req.uri(),
             );
-            // 在消费 request 之前，先获取客户端的 upgrade future
-            let client_upgrade_fut = hyper::upgrade::on(&mut req);
 
-            return self
-                .handle_websocket_upgrade_forward(req, client_upgrade_fut, access_label)
-                .await;
+            return self.handle_websocket_upgrade_forward(req, access_label).await;
         }
 
         warn!("bypass {:?} {} {}", req.version(), req.method(), req.uri());
