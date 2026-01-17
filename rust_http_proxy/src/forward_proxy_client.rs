@@ -135,7 +135,7 @@ where
             tokio::spawn(async move {
                 match c.ready().await {
                     Ok(_) => {
-                        info!("HTTP connection for host: {access_label} {url} is ready and will be cached");
+                        debug!("HTTP connection for host: {access_label} {url} is ready and will be cached");
                         cache_conn
                             .lock()
                             .await
@@ -144,7 +144,7 @@ where
                             .push_back((c, Instant::now()));
                     }
                     Err(e) => {
-                        warn!("HTTP connection for host: {access_label} {url} failed to become ready: {}", e);
+                        debug!("HTTP connection for host: {access_label} {url} failed to become ready: {}", e);
                     }
                 };
             });
