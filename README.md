@@ -18,6 +18,7 @@
 - **正向代理**：支持 HTTP/HTTPS 代理，可通过用户名密码认证
 - **反向代理**：支持 HTTP/HTTPS/WebSocket 反向代理，灵活配置路由规则
 - **链式代理**：通过 `--forward-bypass-url` 指定上游代理服务器
+- **websocket**: 正向代理和反向代理均支持websocket
 
 ### 📁 静态文件服务
 
