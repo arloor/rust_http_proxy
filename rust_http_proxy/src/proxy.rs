@@ -331,21 +331,17 @@ impl ProxyHandler {
 
         // 启动异步任务进行双向数据转发
         tokio::spawn(async move {
-            match client_upgrade.await {
-                Ok(client_upgraded) => match upstream_upgrade.await {
-                    Ok(upstream_upgraded) => {
-                        if let Err(e) =
-                            Self::tunnel_websocket_forward_upgraded(client_upgraded, upstream_upgraded).await
-                        {
-                            warn!("[forward] WebSocket tunnel error: {e:?}");
-                        }
+            match (client_upgrade.await, upstream_upgrade.await) {
+                (Ok(client_upgraded), Ok(upstream_upgraded)) => {
+                    if let Err(e) = Self::tunnel_websocket_forward_upgraded(client_upgraded, upstream_upgraded).await {
+                        warn!("[forward] WebSocket tunnel error: {e:?}");
                     }
-                    Err(e) => {
-                        warn!("[forward] WebSocket upstream upgrade error: {e:?}");
-                    }
-                },
-                Err(e) => {
+                }
+                (Err(e), _) => {
                     warn!("[forward] WebSocket client upgrade error: {e:?}");
+                }
+                (_, Err(e)) => {
+                    warn!("[forward] WebSocket upstream upgrade error: {e:?}");
                 }
             }
         });
