@@ -139,20 +139,6 @@ impl<'a> RequestSpec<'a> {
         // 准备上游的升级
         let upstream_upgrade_fut = hyper::upgrade::on(&mut upstream_resp);
 
-        // 构造 101 响应给客户端，复制上游的响应头
-        let mut client_response_builder = Response::builder().status(http::StatusCode::SWITCHING_PROTOCOLS);
-
-        // 复制所有响应头
-        if let Some(headers) = client_response_builder.headers_mut() {
-            for (key, value) in upstream_resp.headers() {
-                headers.insert(key.clone(), value.clone());
-            }
-        }
-
-        let client_response = client_response_builder
-            .body(http_body_util::Empty::<Bytes>::new().map_err(|e| match e {}).boxed())
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-
         // 启动异步任务进行双向数据转发
         tokio::spawn(async move {
             match (upstream_upgrade_fut.await, client_upgrade_fut.await) {
@@ -166,6 +152,9 @@ impl<'a> RequestSpec<'a> {
                 }
             }
         });
+
+        let client_response =
+            upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
 
         Ok(client_response)
     }
