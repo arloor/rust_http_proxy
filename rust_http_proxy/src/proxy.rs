@@ -300,7 +300,7 @@ impl ProxyHandler {
     async fn handle_websocket_upgrade_forward(
         &self, mut req: Request<Incoming>, traffic_label: AccessLabel,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        info!("[forward] WebSocket upgrade request to {}", &traffic_label.target);
+        debug!("[forward] WebSocket upgrade request to {}", &traffic_label.target);
 
         // 在消费 request 之前先获取客户端的 upgrade future
         let client_upgrade = hyper::upgrade::on(&mut req);

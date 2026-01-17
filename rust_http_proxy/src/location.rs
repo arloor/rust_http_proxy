@@ -110,7 +110,7 @@ pub(crate) enum RequestSpec<'a> {
 }
 
 impl<'a> RequestSpec<'a> {
-    async fn handle_websocket_upgrade(
+    async fn handle_websocket_upgrade_reverse(
         upstream_req: Request<Incoming>, client_upgrade_fut: hyper::upgrade::OnUpgrade, traffic_label: AccessLabel,
         reverse_client: &legacy::Client<
             HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
@@ -225,7 +225,7 @@ impl<'a> RequestSpec<'a> {
                     let client_upgrade_fut = hyper::upgrade::on(&mut *request);
                     let upstream_req =
                         Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
-                    return Self::handle_websocket_upgrade(
+                    return Self::handle_websocket_upgrade_reverse(
                         upstream_req,
                         client_upgrade_fut,
                         traffic_label,
