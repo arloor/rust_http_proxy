@@ -32,8 +32,8 @@ git stash
 echo "🔀 正在切换到 release 分支..."
 git checkout release
 
-echo "🔄 正在 rebase origin/master..."
-git rebase origin/master
+echo "🔄 正在 rebase master..."
+git rebase master
 
 echo "📤 正在推送到远程..."
 git push
