@@ -30,7 +30,7 @@ echo "💾 正在保存本地更改..."
 git stash
 
 echo "🔀 正在切换到 release 分支..."
-git checkout release
+git checkout -b release||git checkout release
 
 echo "🔄 正在 rebase master..."
 git rebase master
