@@ -6,7 +6,7 @@ use std::{
     fmt::Debug,
     io::{self, ErrorKind},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use http::{HeaderMap, HeaderValue, Version, header};
@@ -25,6 +25,8 @@ use tokio_rustls::rustls::pki_types;
 
 use crate::proxy::{AccessLabel, EitherTlsStream, build_tls_connector};
 
+pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// ForwardProxyClient, supporting HTTP/1.1 and H2, HTTPS.
 pub struct ForwardProxyClient<B> {
     #[allow(clippy::type_complexity)]
@@ -40,7 +42,7 @@ where
     /// Create a new HttpClient
     pub fn new() -> ForwardProxyClient<B> {
         ForwardProxyClient {
-            cache_conn: Arc::new(Mutex::new(LruCache::with_expiry_duration_and_capacity(crate::IDLE_TIMEOUT, 100))),
+            cache_conn: Arc::new(Mutex::new(LruCache::with_expiry_duration(CONN_EXPIRE_TIMEOUT))),
         }
     }
 
@@ -98,7 +100,7 @@ where
             debug!("HTTP client for host: {} found in cache, len: {}", access_label, q.len());
             while let Some((c, inst)) = q.pop_front() {
                 let now = Instant::now();
-                if now - inst >= crate::IDLE_TIMEOUT {
+                if now - inst >= CONN_EXPIRE_TIMEOUT {
                     debug!("HTTP connection for host: {access_label} expired",);
                     continue;
                 }
@@ -247,7 +249,7 @@ where
     async fn connect_http_http1(
         access_label: &AccessLabel, stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
+        let stream = TimeoutIO::new(stream, CONN_EXPIRE_TIMEOUT);
 
         // HTTP/1.x
         let (send_request, connection) = match http1::Builder::new()
