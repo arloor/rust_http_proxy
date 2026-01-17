@@ -6,7 +6,7 @@ use std::{
     fmt::Debug,
     io::{self, ErrorKind},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use http::{HeaderMap, HeaderValue, Version, header};
@@ -25,8 +25,6 @@ use tokio_rustls::rustls::pki_types;
 
 use crate::proxy::{AccessLabel, EitherTlsStream, build_tls_connector};
 
-const CONNECTION_EXPIRE_DURATION: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 30 } else { 10 });
-
 /// ForwardProxyClient, supporting HTTP/1.1 and H2, HTTPS.
 pub struct ForwardProxyClient<B> {
     #[allow(clippy::type_complexity)]
@@ -42,7 +40,7 @@ where
     /// Create a new HttpClient
     pub fn new() -> ForwardProxyClient<B> {
         ForwardProxyClient {
-            cache_conn: Arc::new(Mutex::new(LruCache::with_expiry_duration(CONNECTION_EXPIRE_DURATION))),
+            cache_conn: Arc::new(Mutex::new(LruCache::with_expiry_duration_and_capacity(crate::IDLE_TIMEOUT, 100))),
         }
     }
 
@@ -100,7 +98,7 @@ where
             debug!("HTTP client for host: {} found in cache, len: {}", access_label, q.len());
             while let Some((c, inst)) = q.pop_front() {
                 let now = Instant::now();
-                if now - inst >= CONNECTION_EXPIRE_DURATION {
+                if now - inst >= crate::IDLE_TIMEOUT {
                     debug!("HTTP connection for host: {access_label} expired",);
                     continue;
                 }
@@ -125,18 +123,31 @@ where
         &self, access_label: &AccessLabel, mut c: HttpConnection<B>, req: Request<B>,
     ) -> hyper::Result<Response<body::Incoming>> {
         trace!("HTTP making request to host: {access_label}, request: {req:?}");
+        let url = req.uri().clone();
         let response = c.send_request(req).await?;
         trace!("HTTP received response from host: {access_label}, response: {response:?}");
 
         // Check keep-alive
         if check_keep_alive(response.version(), response.headers(), false) {
             trace!("HTTP connection keep-alive for host: {access_label}, response: {response:?}");
-            self.cache_conn
-                .lock()
-                .await
-                .entry(access_label.clone())
-                .or_insert_with(VecDeque::new)
-                .push_back((c, Instant::now()));
+            let cache_conn = self.cache_conn.clone();
+            let access_label = access_label.clone();
+            tokio::spawn(async move {
+                match c.ready().await {
+                    Ok(_) => {
+                        info!("HTTP connection for host: {access_label} {url} is ready and will be cached");
+                        cache_conn
+                            .lock()
+                            .await
+                            .entry(access_label)
+                            .or_insert_with(VecDeque::new)
+                            .push_back((c, Instant::now()));
+                    }
+                    Err(e) => {
+                        warn!("HTTP connection for host: {access_label} {url} failed to become ready: {}", e);
+                    }
+                };
+            });
         }
 
         Ok(response)
@@ -236,7 +247,7 @@ where
     async fn connect_http_http1(
         access_label: &AccessLabel, stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        let stream = TimeoutIO::new(stream, CONNECTION_EXPIRE_DURATION);
+        let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
 
         // HTTP/1.x
         let (send_request, connection) = match http1::Builder::new()
@@ -274,6 +285,12 @@ where
     pub fn is_ready(&self) -> bool {
         match self {
             HttpConnection::Http1(r) => r.is_ready(),
+        }
+    }
+
+    pub async fn ready(&mut self) -> Result<(), hyper::Error> {
+        match self {
+            HttpConnection::Http1(r) => r.ready().await,
         }
     }
 }

@@ -308,7 +308,7 @@ impl ProxyHandler {
         // 使用 send_request_no_cache 发送请求
         let mut upstream_response = self
             .forward_proxy_client
-            .send_request_no_cache(
+            .send_request(
                 req,
                 &traffic_label,
                 self.config.ipv6_first,
