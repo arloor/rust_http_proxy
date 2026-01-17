@@ -36,7 +36,7 @@ echo "🔄 正在 rebase master..."
 git rebase master
 
 echo "📤 正在推送到远程..."
-git push
+git push -u origin release
 
 echo "♻️  正在恢复本地更改..."
 git stash pop||true
