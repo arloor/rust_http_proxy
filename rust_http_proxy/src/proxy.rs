@@ -329,16 +329,6 @@ impl ProxyHandler {
         // 获取上游的 upgrade future
         let upstream_upgrade = hyper::upgrade::on(&mut upstream_response);
 
-        // 构造 101 响应给客户端，复制上游返回的响应头
-        let mut response_builder = Response::builder().status(http::StatusCode::SWITCHING_PROTOCOLS);
-        for (name, value) in upstream_response.headers() {
-            response_builder = response_builder.header(name, value);
-        }
-
-        let client_response = response_builder
-            .body(http_body_util::Empty::<Bytes>::new().map_err(|e| match e {}).boxed())
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-
         // 启动异步任务进行双向数据转发
         tokio::spawn(async move {
             match client_upgrade.await {
@@ -360,7 +350,14 @@ impl ProxyHandler {
             }
         });
 
-        Ok(client_response)
+        let response = upstream_response.map(|body| {
+            body.map_err(|e| {
+                let e = e;
+                io::Error::new(ErrorKind::InvalidData, e)
+            })
+            .boxed()
+        });
+        Ok(response)
     }
 
     /// WebSocket 双向数据转发（正向代理场景）- Upgraded 版本
