@@ -13,7 +13,7 @@ use http::{HeaderMap, HeaderValue, Version, header};
 use hyper::{
     Request, Response,
     body::{self, Body},
-    client::conn::http1,
+    client::conn::http1::{self},
 };
 use hyper_util::rt::TokioIo;
 use io_x::{CounterIO, TimeoutIO};
@@ -251,7 +251,7 @@ where
 
         let access_label = access_label.clone();
         tokio::spawn(async move {
-            if let Err(err) = connection.await {
+            if let Err(err) = connection.with_upgrades().await {
                 handle_http1_connection_error(err, access_label);
             }
         });
