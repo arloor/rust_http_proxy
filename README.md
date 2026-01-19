@@ -209,6 +209,12 @@ api.example.com:
         X-Custom-Header: "custom_value"
 ```
 
+反向代理到上游的请求url构建方式如下：
+
+```rust
+let upstream_url = upstream.url_base.clone() + &path_and_query[location.len()..]; // upstream.url_base + 原始url_path去除location的部分
+```
+
 #### upstream 配置项说明
 
 | 参数       | 说明                        | 可选值                      |
@@ -419,7 +425,6 @@ yum install cmake      # CentOS/RHEL
 #### 验证测试
 
 使用 tcpdump 抓包验证，对比代理服务器和上游服务器收到的请求：
-
 
 **代理服务器收到的原始请求**：
 
