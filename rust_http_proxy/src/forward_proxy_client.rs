@@ -25,9 +25,8 @@ use tokio_rustls::rustls::pki_types;
 
 use crate::proxy::{AccessLabel, EitherTlsStream, build_tls_connector};
 
-pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(120);
+pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// ForwardProxyClient, supporting HTTP/1.1 and H2, HTTPS.
 pub struct ForwardProxyClient<B> {
     #[allow(clippy::type_complexity)]
     cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>,
@@ -249,7 +248,7 @@ where
     async fn connect_http_http1(
         access_label: &AccessLabel, stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        let stream = TimeoutIO::new(stream, CONN_EXPIRE_TIMEOUT);
+        let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
 
         // HTTP/1.x
         let (send_request, connection) = match http1::Builder::new()
