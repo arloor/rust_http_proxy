@@ -297,17 +297,15 @@ where
 }
 
 fn handle_http1_connection_error(err: hyper::Error, access_label: AccessLabel) {
-    if let Some(source) = err.source() {
-        if let Some(io_err) = source.downcast_ref::<io::Error>() {
-            if io_err.kind() == ErrorKind::TimedOut {
-                // 由于超时导致的连接关闭（TimeoutIO）
-                info!("[legacy proxy connection io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
-            } else {
-                warn!("[legacy proxy io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
-            }
+    if let Some(io_err) = err.source().and_then(|s| s.downcast_ref::<io::Error>()) {
+        if io_err.kind() == ErrorKind::TimedOut {
+            // 由于超时导致的连接关闭（TimeoutIO）
+            info!("[legacy proxy connection io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
         } else {
-            warn!("[legacy proxy io error]: [{source}] to {access_label}");
+            warn!("[legacy proxy io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
         }
+    } else if let Some(source) = err.source() {
+        warn!("[legacy proxy io error]: [{source}] to {access_label}");
     } else {
         warn!("[legacy proxy io error] [{err}] to {access_label}");
     }
