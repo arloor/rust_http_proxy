@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
@@ -13,14 +14,21 @@ use crate::{
     config::{Config, ForwardBypassConfig},
     dns_resolver::CustomGaiDNSResolver,
     forward_proxy_client::ForwardProxyClient,
-    ip_x::local_ip,
-    location::{DEFAULT_HOST, LocationConfig, RequestSpec, Upstream},
+    hyper_x::CounterBody,
+    ip_x::{SocketAddrFormat, local_ip},
+    location::{
+        DEFAULT_HOST, LocationConfig, Upstream, build_upstream_req, handle_websocket_upgrade_reverse, normalize302,
+    },
+    static_serve,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 
 use axum::extract::Request;
 use axum_bootstrap::InterceptResult;
-use http::{Uri, header::HOST};
+use http::{
+    Uri,
+    header::{HOST, LOCATION},
+};
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
 use hyper::{Method, Response, Version, body::Bytes, header::HeaderValue, http, upgrade::Upgraded};
@@ -29,6 +37,7 @@ use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
+use percent_encoding::percent_decode_str;
 use prometheus_client::encoding::EncodeLabelSet;
 use rand::Rng;
 use std::sync::Arc;
@@ -38,6 +47,13 @@ use tokio_rustls::TlsConnector;
 use tokio_rustls::{client::TlsStream, rustls::pki_types};
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
+static ALL_REVERSE_PROXY_REQ: LazyLock<LabelImpl<ReverseProxyReqLabel>> = LazyLock::new(|| {
+    LabelImpl::new(ReverseProxyReqLabel {
+        client: "all".to_string(),
+        origin: "all".to_string(),
+        upstream: "all".to_string(),
+    })
+});
 
 #[allow(dead_code)]
 pub(crate) enum InterceptResultAdapter {
@@ -76,17 +92,112 @@ impl<'a> ServiceType<'a> {
                 location,
                 upstream,
             } => {
-                let res = RequestSpec::ForReverseProxy {
-                    request: Box::new(req),
-                    client_socket_addr,
-                    original_scheme_host_port,
-                    location,
-                    upstream,
-                    reverse_client: &proxy_handler.reverse_proxy_client,
-                    config,
+                let res = async {
+                    config.allow_cidrs.check_serving_control(client_socket_addr)?;
+                    // 创建流量统计标签
+                    let traffic_label = AccessLabel {
+                        client: client_socket_addr.ip().to_canonical().to_string(),
+                        target: upstream.url_base.clone(),
+                        username: "reverse_proxy".to_owned(),
+                        relay_over_tls: None,
+                    };
+
+                    // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
+                    let mut request = req;
+                    let is_websocket = request
+                        .headers()
+                        .get(http::header::UPGRADE)
+                        .and_then(|v| v.to_str().ok())
+                        .map(|v| v.eq_ignore_ascii_case("websocket"))
+                        .unwrap_or(false);
+
+                    // 记录指标
+                    METRICS
+                        .reverse_proxy_req
+                        .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
+                            client: client_socket_addr.ip().to_canonical().to_string(),
+                            origin: original_scheme_host_port.to_string() + location.as_str(),
+                            upstream: upstream.url_base.clone(),
+                        }))
+                        .inc();
+                    METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
+
+                    if is_websocket {
+                        info!(
+                            "[reverse] {:^35} ==> wss {} {:?} <== [{}{}]",
+                            SocketAddrFormat(&client_socket_addr).to_string(),
+                            request.uri(),
+                            request.version(),
+                            original_scheme_host_port,
+                            location,
+                        );
+                        // 在消费 request 之前，先获取客户端的 upgrade future
+                        let client_upgrade_fut = hyper::upgrade::on(&mut request);
+                        let upstream_req = build_upstream_req(location, upstream, request, original_scheme_host_port)?;
+                        return handle_websocket_upgrade_reverse(
+                            upstream_req,
+                            client_upgrade_fut,
+                            traffic_label,
+                            &proxy_handler.reverse_proxy_client,
+                        )
+                        .await;
+                    }
+
+                    let upstream_req = build_upstream_req(location, upstream, request, original_scheme_host_port)?;
+                    let upstream_req = upstream_req.map(|body| {
+                        // 使用 CounterBody 包装 body 来统计请求流量
+                        let counter_body = CounterBody::new(
+                            body,
+                            METRICS.proxy_traffic.clone(),
+                            LabelImpl::new(traffic_label.clone()),
+                        );
+                        counter_body
+                            .map_err(|e| {
+                                let e = e;
+                                io::Error::new(ErrorKind::InvalidData, e)
+                            })
+                            .boxed()
+                    });
+                    info!(
+                        "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
+                        SocketAddrFormat(&client_socket_addr).to_string(),
+                        upstream_req.method(),
+                        &upstream_req.uri(),
+                        upstream_req.version(),
+                        original_scheme_host_port,
+                        location,
+                    );
+
+                    match proxy_handler.reverse_proxy_client.request(upstream_req).await {
+                        Ok(mut resp) => {
+                            if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
+                                normalize302(original_scheme_host_port, resp.headers_mut(), config)?;
+                                //修改302的location
+                            }
+
+                            Ok(resp.map(|body| {
+                                // 使用 CounterBody 包装 body 来统计响应流量
+                                let counter_body = CounterBody::new(
+                                    body,
+                                    METRICS.proxy_traffic.clone(),
+                                    LabelImpl::new(traffic_label),
+                                );
+                                counter_body
+                                    .map_err(|e| {
+                                        let e = e;
+                                        io::Error::new(ErrorKind::InvalidData, e)
+                                    })
+                                    .boxed()
+                            }))
+                        }
+                        Err(e) => {
+                            warn!("reverse_proxy error: {e:?}");
+                            Err(io::Error::new(ErrorKind::InvalidData, e))
+                        }
+                    }
                 }
-                .handle()
                 .await;
+
                 match res {
                     Ok(resp) => Ok(InterceptResultAdapter::Return(resp)),
                     Err(e) => match e.kind() {
@@ -96,15 +207,43 @@ impl<'a> ServiceType<'a> {
                 }
             }
             ServiceType::LocationStaticServing { static_dir, location } => {
-                let res = RequestSpec::ForServing {
-                    request: &req,
-                    client_socket_addr,
-                    location,
-                    static_dir,
-                    config,
+                let res = async {
+                    config.allow_cidrs.check_serving_control(client_socket_addr)?;
+
+                    if axum_handler::AXUM_PATHS.contains(&req.uri().path()) {
+                        return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
+                    }
+
+                    // 创建流量统计标签
+                    let traffic_label = AccessLabel {
+                        client: client_socket_addr.ip().to_canonical().to_string(),
+                        target: static_dir.to_string(),
+                        username: "static_serving".to_owned(),
+                        relay_over_tls: None,
+                    };
+
+                    let raw_path = req.uri().path();
+                    let path = percent_decode_str(raw_path)
+                        .decode_utf8()
+                        .unwrap_or(Cow::from(raw_path));
+                    #[allow(clippy::expect_used)]
+                    let path = path
+                        .strip_prefix(location.as_str())
+                        .expect("should start with location");
+                    let path = "/".to_string() + path;
+                    let resp = static_serve::serve_http_request(&req, client_socket_addr, &path, static_dir, config)
+                        .await
+                        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+
+                    // 使用 CounterBody 包装响应 body 来统计响应流量
+                    Ok(resp.map(|body| {
+                        let counter_body =
+                            CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label));
+                        counter_body.boxed()
+                    }))
                 }
-                .handle()
                 .await;
+
                 match res {
                     Ok(resp) => {
                         if resp.status() == http::StatusCode::NOT_FOUND {

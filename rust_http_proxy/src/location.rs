@@ -12,27 +12,17 @@ use hyper_util::rt::TokioIo;
 use io_x::CounterIO;
 use log::info;
 use log::warn;
-use percent_encoding::percent_decode_str;
 use prom_label::LabelImpl;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::{self, ErrorKind};
 use std::str::FromStr;
-use std::sync::LazyLock;
-use std::{
-    io::{self, ErrorKind},
-    net::SocketAddr,
-};
 
-use crate::axum_handler::AXUM_PATHS;
+use crate::METRICS;
 use crate::config::{Config, Param};
 use crate::dns_resolver::CustomGaiDNSResolver;
-use crate::hyper_x::CounterBody;
-use crate::ip_x::SocketAddrFormat;
 use crate::proxy::AccessLabel;
-use crate::proxy::ReverseProxyReqLabel;
 use crate::proxy::SchemeHostPort;
-use crate::{METRICS, static_serve};
 
 pub(crate) struct RedirectBackpaths {
     pub(crate) redirect_url: String,
@@ -87,326 +77,151 @@ impl LocationConfig {
     }
 }
 
-pub(crate) enum RequestSpec<'a> {
-    ForServing {
-        request: &'a Request<Incoming>,
-        client_socket_addr: SocketAddr,
-        location: &'a String,
-        static_dir: &'a String,
-        config: &'a Config,
-    },
-    ForReverseProxy {
-        request: Box<Request<Incoming>>,
-        client_socket_addr: SocketAddr,
-        original_scheme_host_port: &'a SchemeHostPort,
-        location: &'a String,
-        upstream: &'a Upstream,
-        reverse_client: &'a legacy::Client<
-            HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
-            http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
-        >,
-        config: &'a Config,
-    },
+pub(crate) async fn handle_websocket_upgrade_reverse(
+    upstream_req: Request<Incoming>, client_upgrade_fut: hyper::upgrade::OnUpgrade, traffic_label: AccessLabel,
+    reverse_client: &legacy::Client<
+        HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
+        http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
+    >,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+    // 客户端的升级 future 已经在调用前准备好了
+
+    // 将 Incoming body 转换为 BoxBody
+    let upstream_req = upstream_req.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
+
+    // 发送升级请求到上游
+    let mut upstream_resp = reverse_client
+        .request(upstream_req)
+        .await
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+
+    // 检查上游是否返回 101 Switching Protocols
+    if upstream_resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        warn!("WebSocket upgrade failed, upstream returned: {}", upstream_resp.status());
+        return Ok(upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed()));
+    }
+
+    info!("[reverse] WebSocket upgrade successful, status: {}", upstream_resp.status());
+
+    // 准备上游的升级
+    let upstream_upgrade_fut = hyper::upgrade::on(&mut upstream_resp);
+
+    // 启动异步任务进行双向数据转发
+    tokio::spawn(async move {
+        match (upstream_upgrade_fut.await, client_upgrade_fut.await) {
+            (Ok(upstream_upgraded), Ok(client_upgraded)) => {
+                if let Err(e) = tunnel_websocket(upstream_upgraded, client_upgraded, traffic_label).await {
+                    warn!("WebSocket tunnel error: {e:?}");
+                }
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                warn!("WebSocket upgrade error: {e:?}");
+            }
+        }
+    });
+
+    let client_response = upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
+
+    Ok(client_response)
 }
 
-impl<'a> RequestSpec<'a> {
-    async fn handle_websocket_upgrade_reverse(
-        upstream_req: Request<Incoming>, client_upgrade_fut: hyper::upgrade::OnUpgrade, traffic_label: AccessLabel,
-        reverse_client: &legacy::Client<
-            HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
-            http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
-        >,
-    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        // 客户端的升级 future 已经在调用前准备好了
+async fn tunnel_websocket(upstream: Upgraded, client: Upgraded, traffic_label: AccessLabel) -> io::Result<()> {
+    let mut upstream_io = TokioIo::new(upstream);
+    let client_io = TokioIo::new(client);
 
-        // 将 Incoming body 转换为 BoxBody
-        let upstream_req = upstream_req.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
+    // 双向数据转发
+    let _ = tokio::io::copy_bidirectional(
+        &mut CounterIO::new(client_io, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone())),
+        &mut upstream_io,
+    )
+    .await?;
 
-        // 发送升级请求到上游
-        let mut upstream_resp = reverse_client
-            .request(upstream_req)
-            .await
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    Ok(())
+}
 
-        // 检查上游是否返回 101 Switching Protocols
-        if upstream_resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
-            warn!("WebSocket upgrade failed, upstream returned: {}", upstream_resp.status());
-            return Ok(upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed()));
-        }
+pub(crate) fn build_upstream_req(
+    location: &str, upstream: &Upstream, req: Request<Incoming>, original_scheme_host_port: &SchemeHostPort,
+) -> io::Result<Request<Incoming>> {
+    let method = req.method().clone();
+    let path_and_query = match req.uri().path_and_query() {
+        Some(path_and_query) => path_and_query.as_str(),
+        None => "",
+    };
+    let upstream_url = upstream.url_base.clone() + &path_and_query[location.len()..]; // upstream.url_base + 原始url去除location的部分
 
-        info!("[reverse] WebSocket upgrade successful, status: {}", upstream_resp.status());
+    // 先解析 URI 以提取 authority，然后再移动 upstream_url
+    let upstream_uri = upstream_url
+        .parse::<Uri>()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    // let upstream_authority = upstream_uri.authority().cloned();
 
-        // 准备上游的升级
-        let upstream_upgrade_fut = hyper::upgrade::on(&mut upstream_resp);
-
-        // 启动异步任务进行双向数据转发
-        tokio::spawn(async move {
-            match (upstream_upgrade_fut.await, client_upgrade_fut.await) {
-                (Ok(upstream_upgraded), Ok(client_upgraded)) => {
-                    if let Err(e) = Self::tunnel_websocket(upstream_upgraded, client_upgraded, traffic_label).await {
-                        warn!("WebSocket tunnel error: {e:?}");
-                    }
-                }
-                (Err(e), _) | (_, Err(e)) => {
-                    warn!("WebSocket upgrade error: {e:?}");
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(upstream_uri)
+        .version(match upstream.version {
+            Version::H1 => http::Version::HTTP_11,
+            Version::H2 => http::Version::HTTP_2,
+            Version::Auto => {
+                if upstream.url_base.starts_with("https:") {
+                    req.version()
+                } else {
+                    http::Version::HTTP_11
                 }
             }
         });
-
-        let client_response =
-            upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
-
-        Ok(client_response)
-    }
-
-    async fn tunnel_websocket(upstream: Upgraded, client: Upgraded, traffic_label: AccessLabel) -> io::Result<()> {
-        let mut upstream_io = TokioIo::new(upstream);
-        let client_io = TokioIo::new(client);
-
-        // 双向数据转发
-        let _ = tokio::io::copy_bidirectional(
-            &mut CounterIO::new(client_io, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone())),
-            &mut upstream_io,
-        )
-        .await?;
-
-        Ok(())
-    }
-
-    pub(crate) async fn handle(self) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        match self {
-            RequestSpec::ForReverseProxy {
-                location,
-                upstream,
-                mut request,
-                client_socket_addr,
-                original_scheme_host_port,
-                reverse_client,
-                config,
-            } => {
-                config.allow_cidrs.check_serving_control(client_socket_addr)?;
-                // 创建流量统计标签
-                let traffic_label = AccessLabel {
-                    client: client_socket_addr.ip().to_canonical().to_string(),
-                    target: upstream.url_base.clone(),
-                    username: "reverse_proxy".to_owned(),
-                    relay_over_tls: None,
-                };
-
-                // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
-                let is_websocket = request
-                    .headers()
-                    .get(header::UPGRADE)
-                    .and_then(|v| v.to_str().ok())
-                    .map(|v| v.eq_ignore_ascii_case("websocket"))
-                    .unwrap_or(false);
-
-                // 记录指标
-                METRICS
-                    .reverse_proxy_req
-                    .get_or_create(&LabelImpl::new(ReverseProxyReqLabel {
-                        client: client_socket_addr.ip().to_canonical().to_string(),
-                        origin: original_scheme_host_port.to_string() + location.as_str(),
-                        upstream: upstream.url_base.clone(),
-                    }))
-                    .inc();
-                METRICS.reverse_proxy_req.get_or_create(&ALL_REVERSE_PROXY_REQ).inc();
-
-                if is_websocket {
-                    info!(
-                        "[reverse] {:^35} ==> wss {} {:?} <== [{}{}]",
-                        SocketAddrFormat(&client_socket_addr).to_string(),
-                        request.uri(),
-                        request.version(),
-                        original_scheme_host_port,
-                        location,
-                    );
-                    // 在消费 request 之前，先获取客户端的 upgrade future
-                    let client_upgrade_fut = hyper::upgrade::on(&mut *request);
-                    let upstream_req =
-                        Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
-                    return Self::handle_websocket_upgrade_reverse(
-                        upstream_req,
-                        client_upgrade_fut,
-                        traffic_label,
-                        reverse_client,
-                    )
-                    .await;
-                }
-
-                let upstream_req = Self::build_upstream_req(location, upstream, *request, original_scheme_host_port)?;
-                let upstream_req = upstream_req.map(|body| {
-                    // 使用 CounterBody 包装 body 来统计请求流量
-                    let counter_body =
-                        CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone()));
-                    counter_body
-                        .map_err(|e| {
-                            let e = e;
-                            io::Error::new(ErrorKind::InvalidData, e)
-                        })
-                        .boxed()
-                });
-                info!(
-                    "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
-                    SocketAddrFormat(&client_socket_addr).to_string(),
-                    upstream_req.method(),
-                    &upstream_req.uri(),
-                    upstream_req.version(),
-                    original_scheme_host_port,
-                    location,
-                );
-
-                match reverse_client.request(upstream_req).await {
-                    Ok(mut resp) => {
-                        if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
-                            normalize302(original_scheme_host_port, resp.headers_mut(), config)?;
-                            //修改302的location
-                        }
-
-                        Ok(resp.map(|body| {
-                            // 使用 CounterBody 包装 body 来统计响应流量
-                            let counter_body =
-                                CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label));
-                            counter_body
-                                .map_err(|e| {
-                                    let e = e;
-                                    io::Error::new(ErrorKind::InvalidData, e)
-                                })
-                                .boxed()
-                        }))
-                    }
-                    Err(e) => {
-                        warn!("reverse_proxy error: {e:?}");
-                        Err(io::Error::new(ErrorKind::InvalidData, e))
-                    }
-                }
-            }
-            RequestSpec::ForServing {
-                location,
-                request,
-                client_socket_addr,
-                static_dir,
-                config,
-            } => {
-                config.allow_cidrs.check_serving_control(client_socket_addr)?;
-
-                if AXUM_PATHS.contains(&request.uri().path()) {
-                    return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-                }
-
-                // 创建流量统计标签
-                let traffic_label = AccessLabel {
-                    client: client_socket_addr.ip().to_canonical().to_string(),
-                    target: static_dir.clone(),
-                    username: "static_serving".to_owned(),
-                    relay_over_tls: None,
-                };
-
-                let raw_path = request.uri().path();
-                let path = percent_decode_str(raw_path)
-                    .decode_utf8()
-                    .unwrap_or(Cow::from(raw_path));
-                #[allow(clippy::expect_used)]
-                let path = path.strip_prefix(location).expect("should start with location");
-                let path = "/".to_string() + path;
-                let resp = static_serve::serve_http_request(request, client_socket_addr, &path, static_dir, config)
-                    .await
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-
-                // 使用 CounterBody 包装响应 body 来统计响应流量
-                Ok(resp.map(|body| {
-                    let counter_body =
-                        CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label));
-                    counter_body.boxed()
-                }))
-            }
+    let header_map = match builder.headers_mut() {
+        Some(header_map) => header_map,
+        None => {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "new_req.headers_mut() is None, which means error occurs in new request build. Check URL, method, version...",
+            ));
+        }
+    };
+    for ele in req.headers() {
+        if ele.0 != header::HOST {
+            header_map.append(ele.0.clone(), ele.1.clone());
+        } else {
+            info!("skip host header: {:?}", ele.1);
         }
     }
 
-    fn build_upstream_req(
-        location: &str, upstream: &Upstream, req: Request<Incoming>, original_scheme_host_port: &SchemeHostPort,
-    ) -> io::Result<Request<Incoming>> {
-        let method = req.method().clone();
-        let path_and_query = match req.uri().path_and_query() {
-            Some(path_and_query) => path_and_query.as_str(),
-            None => "",
-        };
-        let upstream_url = upstream.url_base.clone() + &path_and_query[location.len()..]; // upstream.url_base + 原始url去除location的部分
+    // // 为上游请求添加正确的 Host 头部
+    // if let Some(authority) = upstream_authority {
+    //     if let Ok(host_value) = HeaderValue::from_str(authority.as_str()) {
+    //         header_map.insert(header::HOST, host_value);
+    //     }
+    // }
 
-        // 先解析 URI 以提取 authority，然后再移动 upstream_url
-        let upstream_uri = upstream_url
-            .parse::<Uri>()
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-        // let upstream_authority = upstream_uri.authority().cloned();
-
-        let mut builder = Request::builder()
-            .method(method)
-            .uri(upstream_uri)
-            .version(match upstream.version {
-                Version::H1 => http::Version::HTTP_11,
-                Version::H2 => http::Version::HTTP_2,
-                Version::Auto => {
-                    if upstream.url_base.starts_with("https:") {
-                        req.version()
-                    } else {
-                        http::Version::HTTP_11
-                    }
-                }
-            });
-        let header_map = match builder.headers_mut() {
-            Some(header_map) => header_map,
-            None => {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidData,
-                    "new_req.headers_mut() is None, which means error occurs in new request build. Check URL, method, version...",
-                ));
+    if let Some(ref headers) = upstream.headers {
+        for (key, value) in headers {
+            if value.is_empty() || key.is_empty() {
+                warn!("skip empty header value for key: {}", key);
+                continue;
             }
-        };
-        for ele in req.headers() {
-            if ele.0 != header::HOST {
-                header_map.append(ele.0.clone(), ele.1.clone());
-            } else {
-                info!("skip host header: {:?}", ele.1);
+            let mut header_value = value.clone();
+            if value == "#{host}" {
+                // TIPS: 即使本程序在反向代理的request中增加Host头部，如果upstream在H2协议中不读取Host头部，则仍然会使用uri中的host进行跨域检测，容易出现origin not allowed的问题
+                if let Some(port) = original_scheme_host_port.port {
+                    header_value = format!("{}:{port}", original_scheme_host_port.host);
+                } else {
+                    header_value = original_scheme_host_port.host.clone();
+                }
+            }
+            if let Some(old_value) = header_map.insert(
+                HeaderName::from_str(key).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+                HeaderValue::from_str(&header_value).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+            ) {
+                info!("override header {} from {old_value:?} to: {}", key, value);
             }
         }
-
-        // // 为上游请求添加正确的 Host 头部
-        // if let Some(authority) = upstream_authority {
-        //     if let Ok(host_value) = HeaderValue::from_str(authority.as_str()) {
-        //         header_map.insert(header::HOST, host_value);
-        //     }
-        // }
-
-        if let Some(ref headers) = upstream.headers {
-            for (key, value) in headers {
-                if value.is_empty() || key.is_empty() {
-                    warn!("skip empty header value for key: {}", key);
-                    continue;
-                }
-                let mut header_value = value.clone();
-                if value == "#{host}" {
-                    // TIPS: 即使本程序在反向代理的request中增加Host头部，如果upstream在H2协议中不读取Host头部，则仍然会使用uri中的host进行跨域检测，容易出现origin not allowed的问题
-                    if let Some(port) = original_scheme_host_port.port {
-                        header_value = format!("{}:{port}", original_scheme_host_port.host);
-                    } else {
-                        header_value = original_scheme_host_port.host.clone();
-                    }
-                }
-                if let Some(old_value) = header_map.insert(
-                    HeaderName::from_str(key).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-                    HeaderValue::from_str(&header_value).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-                ) {
-                    info!("override header {} from {old_value:?} to: {}", key, value);
-                }
-            }
-        }
-        builder
-            .body(req.into_body())
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
+    builder
+        .body(req.into_body())
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
 }
 
-fn normalize302(
+pub(crate) fn normalize302(
     original_scheme_host_port: &SchemeHostPort, resp_headers: &mut http::HeaderMap, config: &Config,
 ) -> Result<(), io::Error> {
     let redirect_url = resp_headers
@@ -492,14 +307,6 @@ fn lookup_replacement(
     }
     None
 }
-
-static ALL_REVERSE_PROXY_REQ: LazyLock<prom_label::LabelImpl<ReverseProxyReqLabel>> = LazyLock::new(|| {
-    LabelImpl::new(ReverseProxyReqLabel {
-        client: "all".to_string(),
-        origin: "all".to_string(),
-        upstream: "all".to_string(),
-    })
-});
 
 pub(crate) struct LocationSpecs {
     pub(crate) locations: HashMap<String, Vec<LocationConfig>>,
