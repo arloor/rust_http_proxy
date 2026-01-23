@@ -54,10 +54,10 @@ install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
 
 ```bash
 # 标准版本
-docker run --rm -it --net host --pid host docker.io/arloor/rust_http_proxy -p 7788
+docker run --rm -it --net host --pid host quay.io/arloor/rust_http_proxy -p 7788
 
 # eBPF 增强版本
-docker run --rm -it --privileged --net host --pid host docker.io/arloor/rust_http_proxy:bpf_static -p 7788
+docker run --rm -it --privileged --net host --pid host quay.io/arloor/rust_http_proxy:bpf_static -p 7788
 ```
 
 > 💡 Docker 镜像通过 GitHub Actions 自动构建，始终保持最新版本
