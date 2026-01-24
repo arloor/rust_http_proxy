@@ -4,25 +4,21 @@ use http_body_util::BodyExt as _;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::body::Incoming;
-use hyper::upgrade::Upgraded;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy;
 use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::rt::TokioIo;
-use io_x::CounterIO;
 use log::info;
 use log::warn;
-use prom_label::LabelImpl;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, ErrorKind};
 use std::str::FromStr;
 
-use crate::METRICS;
 use crate::config::{Config, Param};
 use crate::dns_resolver::CustomGaiDNSResolver;
 use crate::proxy::AccessLabel;
 use crate::proxy::SchemeHostPort;
+use crate::proxy::spawn_websocket_tunnel;
 
 pub(crate) struct RedirectBackpaths {
     pub(crate) redirect_url: String,
@@ -106,37 +102,12 @@ pub(crate) async fn handle_websocket_upgrade_reverse(
     // 准备上游的升级
     let upstream_upgrade_fut = hyper::upgrade::on(&mut upstream_resp);
 
-    // 启动异步任务进行双向数据转发
-    tokio::spawn(async move {
-        match (upstream_upgrade_fut.await, client_upgrade_fut.await) {
-            (Ok(upstream_upgraded), Ok(client_upgraded)) => {
-                if let Err(e) = tunnel_websocket(upstream_upgraded, client_upgraded, traffic_label).await {
-                    warn!("WebSocket tunnel error: {e:?}");
-                }
-            }
-            (Err(e), _) | (_, Err(e)) => {
-                warn!("WebSocket upgrade error: {e:?}");
-            }
-        }
-    });
+    // 启动异步任务进行双向数据转发（反向代理场景需要统计流量）
+    spawn_websocket_tunnel(client_upgrade_fut, upstream_upgrade_fut, Some(traffic_label), "reverse");
 
     let client_response = upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
 
     Ok(client_response)
-}
-
-async fn tunnel_websocket(upstream: Upgraded, client: Upgraded, traffic_label: AccessLabel) -> io::Result<()> {
-    let mut upstream_io = TokioIo::new(upstream);
-    let client_io = TokioIo::new(client);
-
-    // 双向数据转发
-    let _ = tokio::io::copy_bidirectional(
-        &mut CounterIO::new(client_io, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone())),
-        &mut upstream_io,
-    )
-    .await?;
-
-    Ok(())
 }
 
 pub(crate) fn build_upstream_req(

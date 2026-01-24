@@ -104,12 +104,7 @@ impl<'a> ServiceType<'a> {
 
                     // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
                     let mut request = req;
-                    let is_websocket = request
-                        .headers()
-                        .get(http::header::UPGRADE)
-                        .and_then(|v| v.to_str().ok())
-                        .map(|v| v.eq_ignore_ascii_case("websocket"))
-                        .unwrap_or(false);
+                    let is_websocket = is_websocket_upgrade(&request);
 
                     // 记录指标
                     METRICS
@@ -468,22 +463,8 @@ impl ProxyHandler {
         // 获取上游的 upgrade future
         let upstream_upgrade = hyper::upgrade::on(&mut upstream_response);
 
-        // 启动异步任务进行双向数据转发
-        tokio::spawn(async move {
-            match (client_upgrade.await, upstream_upgrade.await) {
-                (Ok(client_upgraded), Ok(upstream_upgraded)) => {
-                    if let Err(e) = Self::tunnel_websocket_forward_upgraded(client_upgraded, upstream_upgraded).await {
-                        warn!("[forward] WebSocket tunnel error: {e:?}");
-                    }
-                }
-                (Err(e), _) => {
-                    warn!("[forward] WebSocket client upgrade error: {e:?}");
-                }
-                (_, Err(e)) => {
-                    warn!("[forward] WebSocket upstream upgrade error: {e:?}");
-                }
-            }
-        });
+        // 启动异步任务进行双向数据转发（正向代理场景不统计流量）
+        spawn_websocket_tunnel(client_upgrade, upstream_upgrade, None, "forward");
 
         let response = upstream_response.map(|body| {
             body.map_err(|e| {
@@ -495,16 +476,6 @@ impl ProxyHandler {
         Ok(response)
     }
 
-    /// WebSocket 双向数据转发（正向代理场景）- Upgraded 版本
-    async fn tunnel_websocket_forward_upgraded(client: Upgraded, upstream: Upgraded) -> io::Result<()> {
-        let mut client_io = TokioIo::new(client);
-        let mut upstream_io = TokioIo::new(upstream);
-
-        // 双向数据转发
-        let _ = tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
-
-        Ok(())
-    }
 
     /// 代理普通请求
     /// HTTP/1.1 GET/POST/PUT/DELETE/HEAD
@@ -521,12 +492,7 @@ impl ProxyHandler {
         };
 
         // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
-        let is_websocket = req
-            .headers()
-            .get(http::header::UPGRADE)
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.eq_ignore_ascii_case("websocket"))
-            .unwrap_or(false);
+        let is_websocket = is_websocket_upgrade(&req);
 
         mod_http1_proxy_req(&mut req)?;
         if is_websocket {
@@ -576,12 +542,7 @@ impl ProxyHandler {
         };
 
         // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
-        let is_websocket = req
-            .headers()
-            .get(http::header::UPGRADE)
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.eq_ignore_ascii_case("websocket"))
-            .unwrap_or(false);
+        let is_websocket = is_websocket_upgrade(&req);
 
         // 如果配置了 username 和 password，添加 Proxy-Authorization 头
         if let (Some(username), Some(password)) = (&forward_bypass_config.username, &forward_bypass_config.password) {
@@ -1337,6 +1298,58 @@ fn get_client_ip(req: &Request<Incoming>, client_socket_addr: SocketAddr) -> Str
                 .map(|s| s.trim().to_string())
         })
         .unwrap_or_else(|| client_socket_addr.ip().to_canonical().to_string())
+}
+
+/// 检测请求是否为 WebSocket 升级请求
+fn is_websocket_upgrade(req: &Request<Incoming>) -> bool {
+    req.headers()
+        .get(http::header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false)
+}
+
+/// WebSocket 双向数据转发 - 统一版本
+/// 支持可选的流量统计
+pub(crate) async fn tunnel_websocket_upgraded(
+    client: Upgraded, upstream: Upgraded, traffic_label: Option<AccessLabel>,
+) -> io::Result<()> {
+    let mut client_io = TokioIo::new(client);
+    let mut upstream_io = TokioIo::new(upstream);
+
+    // 如果提供了流量标签，则使用 CounterIO 进行流量统计
+    if let Some(label) = traffic_label {
+        let mut client_counter = CounterIO::new(client_io, METRICS.proxy_traffic.clone(), LabelImpl::new(label));
+        let _ = tokio::io::copy_bidirectional(&mut client_counter, &mut upstream_io).await?;
+    } else {
+        // 不进行流量统计，直接转发
+        let _ = tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await?;
+    }
+
+    Ok(())
+}
+
+/// 启动 WebSocket 升级后的异步任务
+/// 处理 upgrade future 的等待和双向数据转发
+pub(crate) fn spawn_websocket_tunnel(
+    client_upgrade: hyper::upgrade::OnUpgrade, upstream_upgrade: hyper::upgrade::OnUpgrade,
+    traffic_label: Option<AccessLabel>, scenario: &'static str,
+) {
+    tokio::spawn(async move {
+        match (client_upgrade.await, upstream_upgrade.await) {
+            (Ok(client_upgraded), Ok(upstream_upgraded)) => {
+                if let Err(e) = tunnel_websocket_upgraded(client_upgraded, upstream_upgraded, traffic_label).await {
+                    warn!("[{scenario}] WebSocket tunnel error: {e:?}");
+                }
+            }
+            (Err(e), _) => {
+                warn!("[{scenario}] WebSocket client upgrade error: {e:?}");
+            }
+            (_, Err(e)) => {
+                warn!("[{scenario}] WebSocket upstream upgrade error: {e:?}");
+            }
+        }
+    });
 }
 
 fn origin_form(uri: &mut Uri) -> io::Result<()> {
