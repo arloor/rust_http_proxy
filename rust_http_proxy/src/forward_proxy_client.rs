@@ -1,5 +1,5 @@
 //! HTTP Client
-
+#![allow(clippy::type_complexity)]
 use std::{
     collections::VecDeque,
     error::Error,
@@ -26,9 +26,10 @@ use tokio_rustls::rustls::pki_types;
 use crate::proxy::{AccessLabel, EitherTlsStream, build_tls_connector};
 
 pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
+/// 清理任务的执行间隔
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct ForwardProxyClient<B> {
-    #[allow(clippy::type_complexity)]
     cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>,
 }
 
@@ -40,8 +41,62 @@ where
 {
     /// Create a new HttpClient
     pub fn new() -> ForwardProxyClient<B> {
-        ForwardProxyClient {
-            cache_conn: Arc::new(Mutex::new(LruCache::with_expiry_duration(CONN_EXPIRE_TIMEOUT))),
+        let cache_conn = Arc::new(Mutex::new(LruCache::with_expiry_duration(CONN_EXPIRE_TIMEOUT)));
+
+        // 启动后台清理任务
+        Self::spawn_cleanup_task(cache_conn.clone());
+
+        ForwardProxyClient { cache_conn }
+    }
+
+    /// 启动定时清理过期连接的后台任务
+    fn spawn_cleanup_task(cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
+            loop {
+                interval.tick().await;
+                Self::cleanup_expired_connections(&cache_conn).await;
+            }
+        });
+    }
+
+    /// 清理过期和已关闭的连接
+    async fn cleanup_expired_connections(
+        cache_conn: &Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>,
+    ) {
+        let mut cache = cache_conn.lock().await;
+        let now = Instant::now();
+        let mut total_removed = 0usize;
+        let mut empty_keys = Vec::new();
+
+        // 收集所有的 key
+        let keys: Vec<AccessLabel> = cache.iter().map(|(k, _)| k.clone()).collect();
+
+        for key in keys {
+            if let Some(queue) = cache.get_mut(&key) {
+                let before_len = queue.len();
+                // 保留未过期且未关闭的连接
+                queue.retain(|(conn, inst)| {
+                    let expired = now.duration_since(*inst) >= CONN_EXPIRE_TIMEOUT;
+                    let closed = conn.is_closed();
+                    !expired && !closed
+                });
+                let removed = before_len - queue.len();
+                total_removed += removed;
+
+                if queue.is_empty() {
+                    empty_keys.push(key);
+                }
+            }
+        }
+
+        // 移除空的条目
+        for key in empty_keys {
+            cache.remove(&key);
+        }
+
+        if total_removed > 0 {
+            info!("Cleaned up {} expired/closed connections from cache", total_removed);
         }
     }
 
