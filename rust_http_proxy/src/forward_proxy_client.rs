@@ -95,9 +95,8 @@ where
             cache.remove(&key);
         }
 
-        if total_removed > 0 {
-            info!("Cleaned up {} expired/closed connections from cache", total_removed);
-        }
+        let elapsed = now.elapsed();
+        info!("Connection cleanup completed: removed {} connections in {:?}", total_removed, elapsed);
     }
 
     #[allow(unused)]
