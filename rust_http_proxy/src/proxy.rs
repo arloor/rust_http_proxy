@@ -86,7 +86,16 @@ impl<'a> ServiceType<'a> {
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, proxy_handler: &ProxyHandler, config: &Config,
     ) -> Result<InterceptResultAdapter, io::Error> {
         match self {
-            ServiceType::NonMatch => Ok(InterceptResultAdapter::Continue(req)),
+            ServiceType::NonMatch => {
+                // 仍然检查allow_cidrs，避免漏到 axum router
+                if let Err(e) = config.allow_cidrs.check_serving_control(client_socket_addr) {
+                    return match e.kind() {
+                        ErrorKind::PermissionDenied => Ok(InterceptResultAdapter::Drop),
+                        _ => Err(e),
+                    };
+                }
+                Ok(InterceptResultAdapter::Continue(req))
+            }
             ServiceType::ReverseProxy {
                 original_scheme_host_port,
                 location,
@@ -475,7 +484,6 @@ impl ProxyHandler {
         });
         Ok(response)
     }
-
 
     /// 代理普通请求
     /// HTTP/1.1 GET/POST/PUT/DELETE/HEAD
