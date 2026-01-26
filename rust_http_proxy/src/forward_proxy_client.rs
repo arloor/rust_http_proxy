@@ -96,7 +96,7 @@ where
         }
 
         let elapsed = now.elapsed();
-        info!("Connection cleanup completed: removed {} connections in {:?}", total_removed, elapsed);
+        debug!("Connection cleanup completed: removed {} connections in {:?}", total_removed, elapsed);
     }
 
     #[allow(unused)]
