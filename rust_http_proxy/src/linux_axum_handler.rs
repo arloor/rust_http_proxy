@@ -2,6 +2,7 @@ use crate::axum_handler::{AppProxyError, AppState, HtmlTemplate};
 use askama::Template;
 use axum::extract::State;
 use axum::response::IntoResponse;
+use axum_bootstrap::util::extractor::Host;
 use http::{HeaderMap, HeaderValue};
 use log::{debug, warn};
 use std::collections::HashMap;
@@ -195,16 +196,12 @@ fn parse_process_info(process_field: &str) -> String {
     "".to_string()
 }
 
-pub async fn net_html(State(_): State<Arc<AppState>>) -> Result<impl IntoResponse, AppProxyError> {
-    Ok(HtmlTemplate(NetTemplate {
-        hostname: "".to_string(),
-    }))
+pub async fn net_html(State(_): State<Arc<AppState>>, Host(host): Host) -> Result<impl IntoResponse, AppProxyError> {
+    Ok(HtmlTemplate(NetTemplate { hostname: host }))
 }
 
-pub async fn netx_html(State(_): State<Arc<AppState>>) -> Result<impl IntoResponse, AppProxyError> {
-    Ok(HtmlTemplate(NetXTemplate {
-        hostname: "".to_string(),
-    }))
+pub async fn netx_html(State(_): State<Arc<AppState>>, Host(host): Host) -> Result<impl IntoResponse, AppProxyError> {
+    Ok(HtmlTemplate(NetXTemplate { hostname: host }))
 }
 
 pub async fn net_json(
