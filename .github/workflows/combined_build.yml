@@ -65,7 +65,7 @@ jobs:
       - name: Copy binary
         run: |
           mkdir -p ${{ github.workspace }}/release_binaries
-          cp ${{ steps.build.outputs.release_dir }}rust_http_proxy ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
+          cp ${{ steps.build.outputs.release_dir }}/rust_http_proxy ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
           ls -lh ${{ github.workspace }}/release_binaries/
 
       # 上传构建好的二进制文件作为构建工件
