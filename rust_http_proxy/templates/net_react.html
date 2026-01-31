@@ -600,10 +600,6 @@
             setShowModal(false);
           };
 
-          const handleReset = () => {
-            setTempBackendUrl('');
-          };
-
           const handleSaveToList = () => {
             const trimmedUrl = tempBackendUrl.trim();
             if (!trimmedUrl) {
@@ -850,9 +846,6 @@
                     </div>
 
                     <div className='modal-actions'>
-                      <button className='modal-button modal-button-danger' onClick={handleReset}>
-                        重置
-                      </button>
                       <button className='modal-button modal-button-secondary' onClick={handleCloseModal}>
                         取消
                       </button>
