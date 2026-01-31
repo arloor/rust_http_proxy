@@ -196,12 +196,16 @@ fn parse_process_info(process_field: &str) -> String {
     "".to_string()
 }
 
-pub async fn net_html(State(_): State<Arc<AppState>>, Host(host): Host) -> Result<impl IntoResponse, AppProxyError> {
-    Ok(HtmlTemplate(NetTemplate { hostname: host }))
+pub async fn net_html(State(_): State<Arc<AppState>>, Host(_host): Host) -> Result<impl IntoResponse, AppProxyError> {
+    Ok(HtmlTemplate(NetTemplate {
+        hostname: "".to_string(),
+    }))
 }
 
-pub async fn netx_html(State(_): State<Arc<AppState>>, Host(host): Host) -> Result<impl IntoResponse, AppProxyError> {
-    Ok(HtmlTemplate(NetXTemplate { hostname: host }))
+pub async fn netx_html(State(_): State<Arc<AppState>>, Host(_host): Host) -> Result<impl IntoResponse, AppProxyError> {
+    Ok(HtmlTemplate(NetXTemplate {
+        hostname: "".to_string(),
+    }))
 }
 
 pub async fn net_json(
