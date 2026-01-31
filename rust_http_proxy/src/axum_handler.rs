@@ -52,22 +52,7 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
                     .unwrap_or("Failed to render error template".to_string()),
                 ),
             )
-        }))
-        .layer((
-            TraceLayer::new_for_http() // Create our own span for the request and include the matched path. The matched
-                // path is useful for figuring out which handler the request was routed to.
-                .make_span_with(make_span)
-                // By default `TraceLayer` will log 5xx responses but we're doing our specific
-                // logging of errors so disable that
-                .on_failure(()),
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any)
-                .expose_headers(Any),
-            TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)),
-            CompressionLayer::new(),
-        ));
+        }));
     #[cfg(target_os = "linux")]
     let router = router
         .route("/nt", get(linux_axum_handler::count_incoming_stream))
@@ -75,6 +60,22 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
         .route("/net", get(linux_axum_handler::net_html))
         .route("/netx", get(linux_axum_handler::netx_html))
         .route("/net.json", get(linux_axum_handler::net_json));
+
+    let router = router.layer((
+        TraceLayer::new_for_http() // Create our own span for the request and include the matched path. The matched
+            // path is useful for figuring out which handler the request was routed to.
+            .make_span_with(make_span)
+            // By default `TraceLayer` will log 5xx responses but we're doing our specific
+            // logging of errors so disable that
+            .on_failure(()),
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .expose_headers(Any),
+        TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)),
+        CompressionLayer::new(),
+    ));
 
     router.with_state(Arc::new(appstate))
 }
