@@ -10,20 +10,350 @@
       margin: 0;
     }
 
-    .out {
-      min-height: 100vh;
-      margin: 0;
+    .app-container {
       display: flex;
-      justify-content: center;
       flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+    }
+
+    .top-bar {
+      display: flex;
       align-items: center;
-      font-size: calc(10px + 1vmin);
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: linear-gradient(135deg, #5f72bd 0%, #9921e8 100%);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      z-index: 100;
+    }
+
+    .backend-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: white;
+      font-size: 14px;
+      flex: 1;
+    }
+
+    .backend-label {
+      font-weight: 600;
+      opacity: 0.9;
+    }
+
+    .backend-value {
+      font-family: 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;
+      background: rgba(255, 255, 255, 0.2);
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chart-container {
+      flex: 1;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    .chart-main {
+      width: 100%;
+      height: 100%;
     }
 
     .in {
       padding: 10px;
       margin: 0;
       font-family: "JetBrains Mono", "SFMono-Regular", "SF-Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Roboto Mono", "Ubuntu Mono", "Courier New", Courier, monospace;
+    }
+
+    .settings-button {
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.25);
+      color: white;
+      border: 1.5px solid rgba(255, 255, 255, 0.4);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      backdrop-filter: blur(10px);
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .settings-button:hover {
+      background: rgba(255, 255, 255, 0.35);
+      border-color: rgba(255, 255, 255, 0.6);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .settings-button:active {
+      transform: translateY(0);
+    }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      animation: fadeIn 0.2s;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+    .modal-content {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      animation: slideIn 0.3s;
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateY(-20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .modal-header {
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 20px;
+      color: #333;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+
+    .modal-section {
+      margin-bottom: 20px;
+    }
+
+    .modal-label {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 8px;
+    }
+
+    .modal-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+      transition: border-color 0.2s;
+    }
+
+    .modal-input:focus {
+      outline: none;
+      border-color: #007bff;
+    }
+
+    .saved-list {
+      margin-top: 8px;
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .saved-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid #f0f0f0;
+      transition: all 0.2s ease;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .saved-item:last-child {
+      border-bottom: none;
+    }
+
+    .saved-item:hover {
+      background: #f8f9fa;
+      padding-left: 18px;
+    }
+
+    .saved-item.active {
+      background: linear-gradient(90deg, #e7f3ff 0%, #f0f8ff 100%);
+      border-left: 4px solid #007bff;
+      padding-left: 14px;
+      font-weight: 600;
+    }
+
+    .saved-item-text {
+      flex: 1;
+      font-size: 14px;
+      color: #2c3e50;
+      font-family: 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;
+      font-weight: 500;
+      line-height: 1.6;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      letter-spacing: 0.3px;
+    }
+
+    .saved-item-delete {
+      padding: 4px 8px;
+      background: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-left: 8px;
+      transition: background 0.2s;
+    }
+
+    .saved-item-delete:hover {
+      background: #c82333;
+    }
+
+    .empty-list {
+      padding: 30px 20px;
+      text-align: center;
+      color: #6c757d;
+      font-size: 14px;
+      font-style: italic;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .save-current-button {
+      flex: 1;
+      padding: 8px;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+
+    .save-current-button:hover {
+      background: #218838;
+    }
+
+    .save-current-button:disabled {
+      background: #6c757d;
+      cursor: not-allowed;
+    }
+
+    .use-current-button {
+      flex: 1;
+      padding: 8px;
+      background: #17a2b8;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+
+    .use-current-button:hover {
+      background: #138496;
+    }
+
+    .current-url {
+      background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #1a1a1a;
+      word-break: break-all;
+      font-family: 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;
+      font-weight: 600;
+      line-height: 1.7;
+      letter-spacing: 0.5px;
+      border: 1px solid #dee2e6;
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 24px;
+      justify-content: flex-end;
+    }
+
+    .modal-button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .modal-button-primary {
+      background: #007bff;
+      color: white;
+    }
+
+    .modal-button-primary:hover {
+      background: #0056b3;
+    }
+
+    .modal-button-secondary {
+      background: #6c757d;
+      color: white;
+    }
+
+    .modal-button-secondary:hover {
+      background: #5a6268;
+    }
+
+    .modal-button-danger {
+      background: #dc3545;
+      color: white;
+    }
+
+    .modal-button-danger:hover {
+      background: #c82333;
     }
   </style>
   <script
@@ -45,35 +375,234 @@
   <div id="app"></div>
 
   <script type="text/jsx">
+        const API_PATH = '/net.json';  // 固定的 API 路径
+        const SAVED_BACKENDS_KEY = 'saved_backends';  // localStorage 键名
+
         const query = new URLSearchParams(window.location.search);
-        let dataUrl = query.get('data'); // 替换 'paramName' 为你需要的查询参数名称
-        if (!dataUrl) {
-          dataUrl = '/net.json';
+        let initialBackendUrl = query.get('backend'); // 从 URL 参数读取后端地址
+
+        // 尝试从 localStorage 读取保存的后端地址
+        const savedBackend = localStorage.getItem('backend_url');
+        if (savedBackend) {
+          initialBackendUrl = savedBackend;
         }
-        
+
+        // 如果没有设置后端地址，使用空字符串表示当前域名
+        if (!initialBackendUrl) {
+          initialBackendUrl = '';
+        }
+
+        // 从 localStorage 读取已保存的后端地址列表
+        function loadSavedBackends() {
+          try {
+            const saved = localStorage.getItem(SAVED_BACKENDS_KEY);
+            return saved ? JSON.parse(saved) : [];
+          } catch {
+            return [];
+          }
+        }
+
+        // 保存后端地址列表到 localStorage
+        function saveSavedBackends(backends) {
+          localStorage.setItem(SAVED_BACKENDS_KEY, JSON.stringify(backends));
+        }
+
         function App() {
+          const [backendUrl, setBackendUrl] = React.useState(initialBackendUrl);
+          const [showModal, setShowModal] = React.useState(false);
+          const [tempBackendUrl, setTempBackendUrl] = React.useState(initialBackendUrl);
+          const [savedBackends, setSavedBackends] = React.useState(loadSavedBackends());
+
+          // 根据后端地址构建完整的数据 URL
+          const dataUrl = React.useMemo(() => {
+            const backend = backendUrl.trim();
+            if (!backend) {
+              // 空字符串表示使用当前域名
+              return API_PATH;
+            }
+            // 移除末尾的斜杠
+            const cleanBackend = backend.replace(/\/+$/, '');
+            return cleanBackend + API_PATH;
+          }, [backendUrl]);
+
           React.useEffect(() => {
             const mainDiv = document.getElementById('main');
             let myChart = echarts.init(mainDiv);
             myChart.showLoading();
             window.addEventListener('resize', myChart.resize);
             refresh(myChart, dataUrl);
-        
+
             const intervalId = setInterval(() => {
-              // 在这里添加你想要定时执行的代码
               refresh(myChart, dataUrl);
-            }, 5000); // 每秒执行一次
-        
+            }, 5000); // 每5秒执行一次
+
             // 清除定时器
             return () => {
               clearInterval(intervalId)
               window.removeEventListener('resize', myChart.resize);
               myChart.dispose();
             };
-          }, []);
-        
+          }, [dataUrl]);
+
+          const handleOpenModal = () => {
+            setTempBackendUrl(backendUrl);
+            setShowModal(true);
+          };
+
+          const handleCloseModal = () => {
+            setShowModal(false);
+          };
+
+          const handleSave = () => {
+            setBackendUrl(tempBackendUrl);
+            localStorage.setItem('backend_url', tempBackendUrl);
+            setShowModal(false);
+          };
+
+          const handleReset = () => {
+            setTempBackendUrl('');
+          };
+
+          const handleSaveToList = () => {
+            const trimmedUrl = tempBackendUrl.trim();
+            if (!trimmedUrl) {
+              alert('请输入后端地址');
+              return;
+            }
+            if (savedBackends.includes(trimmedUrl)) {
+              alert('该地址已存在');
+              return;
+            }
+            const newBackends = [...savedBackends, trimmedUrl];
+            setSavedBackends(newBackends);
+            saveSavedBackends(newBackends);
+          };
+
+          const handleUseCurrent = () => {
+            setTempBackendUrl('');
+          };
+
+          const handleSelectSaved = (url) => {
+            setTempBackendUrl(url);
+          };
+
+          const handleDeleteSaved = (url, e) => {
+            e.stopPropagation();
+            const newBackends = savedBackends.filter(b => b !== url);
+            setSavedBackends(newBackends);
+            saveSavedBackends(newBackends);
+          };
+
+          const handleModalKeyPress = (e) => {
+            if (e.key === 'Enter') {
+              handleSave();
+            } else if (e.key === 'Escape') {
+              handleCloseModal();
+            }
+          };
+
           return (
-            <div id='main' className='out'></div>
+            <div className='app-container'>
+              <div className='top-bar'>
+                <div className='backend-info'>
+                  <span className='backend-label'>当前后端:</span>
+                  <span className='backend-value' title={backendUrl || '当前域名'}>
+                    {backendUrl || '当前域名'}
+                  </span>
+                </div>
+                <button className='settings-button' onClick={handleOpenModal}>
+                  ⚙️ 后端设置
+                </button>
+              </div>
+
+              <div className='chart-container'>
+                <div id='main' className='chart-main'></div>
+              </div>
+
+              {showModal && (
+                <div className='modal-overlay' onClick={handleCloseModal}>
+                  <div className='modal-content' onClick={(e) => e.stopPropagation()}>
+                    <div className='modal-header'>
+                      后端地址设置
+                    </div>
+
+                    <div className='modal-section'>
+                      <label className='modal-label'>后端地址</label>
+                      <input
+                        className='modal-input'
+                        type="text"
+                        value={tempBackendUrl}
+                        onChange={(e) => setTempBackendUrl(e.target.value)}
+                        onKeyDown={handleModalKeyPress}
+                        placeholder="留空使用当前域名，或输入如: https://us.arloor.dev"
+                        autoFocus
+                      />
+                      <div className='button-group'>
+                        <button
+                          className='save-current-button'
+                          onClick={handleSaveToList}
+                          disabled={!tempBackendUrl.trim() || savedBackends.includes(tempBackendUrl.trim())}
+                        >
+                          💾 保存此地址到列表
+                        </button>
+                        <button
+                          className='use-current-button'
+                          onClick={handleUseCurrent}
+                        >
+                          🏠 使用当前服务器
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className='modal-section'>
+                      <label className='modal-label'>已保存的后端地址</label>
+                      <div className='saved-list'>
+                        {savedBackends.length === 0 ? (
+                          <div className='empty-list'>暂无保存的地址</div>
+                        ) : (
+                          savedBackends.map((url) => (
+                            <div
+                              key={url}
+                              className={`saved-item ${tempBackendUrl === url ? 'active' : ''}`}
+                              onClick={() => handleSelectSaved(url)}
+                            >
+                              <div className='saved-item-text' title={url}>
+                                {url || '当前域名'}
+                              </div>
+                              <button
+                                className='saved-item-delete'
+                                onClick={(e) => handleDeleteSaved(url, e)}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className='modal-section'>
+                      <label className='modal-label'>当前请求 URL</label>
+                      <div className='current-url'>
+                        {tempBackendUrl ? tempBackendUrl.replace(/\/+$/, '') + API_PATH : API_PATH}
+                      </div>
+                    </div>
+
+                    <div className='modal-actions'>
+                      <button className='modal-button modal-button-danger' onClick={handleReset}>
+                        重置
+                      </button>
+                      <button className='modal-button modal-button-secondary' onClick={handleCloseModal}>
+                        取消
+                      </button>
+                      <button className='modal-button modal-button-primary' onClick={handleSave}>
+                        应用
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           );
         }
         const refresh = (myChart, url) => fetch(url)
@@ -117,6 +646,7 @@
             // console.log("interval is", formatDataRateIEC(interval));
             // 指定图表的配置项和数据
             var option = {
+              color: ['#667eea', '#9921e8', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140', '#30cfd0'],
               title: {
                 text: ''
               },
@@ -124,10 +654,19 @@
                 trigger: 'axis',
                 formatter: series => {
                   return series[0].name + series.map(s => '<br/>' + s.seriesName + ': ' + formatDataRateIEC(s.value, 4)).join('');
+                },
+                backgroundColor: 'rgba(50, 50, 50, 0.9)',
+                borderColor: '#667eea',
+                borderWidth: 1,
+                textStyle: {
+                  color: '#fff'
                 }
               },
               legend: {
-                data: series.map(s => s.name)
+                data: series.map(s => s.name),
+                textStyle: {
+                  color: '#666'
+                }
               },
               toolbox: {
                 feature: {

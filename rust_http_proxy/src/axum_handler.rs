@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
@@ -68,11 +68,7 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
             // By default `TraceLayer` will log 5xx responses but we're doing our specific
             // logging of errors so disable that
             .on_failure(()),
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any)
-            .expose_headers(Any),
+        CorsLayer::permissive(),
         TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)),
         CompressionLayer::new(),
     ));
