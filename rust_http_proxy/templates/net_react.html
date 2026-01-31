@@ -21,7 +21,8 @@
     .top-bar {
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-start;
+      gap: 16px;
       padding: 12px 20px;
       background: linear-gradient(135deg, #5f72bd 0%, #9921e8 100%);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
@@ -34,7 +35,6 @@
       gap: 12px;
       color: white;
       font-size: 14px;
-      flex: 1;
     }
 
     .backend-label {
@@ -45,9 +45,10 @@
     .backend-value {
       font-family: 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;
       background: rgba(255, 255, 255, 0.2);
-      padding: 6px 12px;
-      border-radius: 4px;
-      font-size: 13px;
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1.5px solid rgba(255, 255, 255, 0.3);
+      font-size: 14px;
       font-weight: 500;
       max-width: 400px;
       overflow: hidden;
@@ -706,13 +707,13 @@
               <div className='top-bar'>
                 <div className='backend-info'>
                   <span className='backend-label'>当前后端:</span>
-                  <span className='backend-value' title={backendUrl || '当前域名'}>
+                  <span className='backend-label' title={backendUrl || '当前域名'}>
                     {backendUrl || '当前域名'}
                   </span>
+                  <button className='settings-button' onClick={handleOpenModal}>
+                    ⚙️ 后端设置
+                  </button>
                 </div>
-                <button className='settings-button' onClick={handleOpenModal}>
-                  ⚙️ 后端设置
-                </button>
               </div>
 
               <div className='chart-container'>
