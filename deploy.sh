@@ -1,5 +1,5 @@
-cargo build -r --features aws_lc_rs,bpf,mimalloc --no-default-features
-podman build . -f Dockerfile.dyn -t quay.io/arloor/rust_http_proxy:custom --network host --env TARGET_PATH=
+cargo build -r --features aws_lc_rs,bpf,mimalloc --no-default-features --target x86_64-unknown-linux-gnu
+podman build . -f Dockerfile.dyn -t quay.io/arloor/rust_http_proxy:custom --network host
 podman login quay.io
 podman push quay.io/arloor/rust_http_proxy:custom
 
