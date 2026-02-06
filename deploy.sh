@@ -7,7 +7,7 @@ kubectl rollout restart ds/proxy
 kubectl rollout status ds/proxy
 
 #! /bin/bash
-hosts="hk.arloor.dev us.arloor.dev bwg.arloor.dev ttl.arloor.com xq.arloor.com ti.arloor.com"
+hosts="ttl.arloor.com wee.arloor.dev hknat.arloor.dev ix.arloor.com us.arloor.dev bwg.arloor.dev hk.arloor.dev xq.arloor.com ti.arloor.com"
 for i in ${hosts}; do
     ssh -o StrictHostKeyChecking=no root@${i} <<'EOFEOF'
         . pass
