@@ -99,26 +99,6 @@ where
         debug!("Connection cleanup completed: removed {} connections in {:?}", total_removed, elapsed);
     }
 
-    #[allow(unused)]
-    pub async fn send_request_no_cache(
-        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
-    ) -> Result<Response<body::Incoming>, std::io::Error> {
-        // Make a new connection
-        let mut c = match HttpConnection::connect(access_label, ipv6_first, stream_map_func).await {
-            Ok(c) => c,
-            Err(err) => {
-                error!("failed to connect to host: {}, error: {}", &access_label.target, err);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
-            }
-        };
-
-        trace!("HTTP making request to host: {access_label}, request: {req:?}");
-        let response = c.send_request(req).await.map_err(io::Error::other)?;
-        trace!("HTTP received response from host: {access_label}, response: {response:?}");
-        Ok(response)
-    }
-
     /// Make HTTP requests
     #[inline]
     pub async fn send_request(
