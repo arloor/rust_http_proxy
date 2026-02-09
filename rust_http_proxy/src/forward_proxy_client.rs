@@ -1,7 +1,7 @@
 //! HTTP Client
 #![allow(clippy::type_complexity)]
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     error::Error,
     fmt::{Debug, Display, Formatter},
     io::{self, ErrorKind},
@@ -51,18 +51,18 @@ struct IdleEntry<B> {
 }
 
 struct PoolInner<B> {
-    idle: BTreeMap<AccessLabel, Vec<IdleEntry<B>>>,
-    waiters: BTreeMap<AccessLabel, VecDeque<oneshot::Sender<HttpConnection<B>>>>,
-    connecting_h2: BTreeSet<AccessLabel>,
+    idle: HashMap<AccessLabel, Vec<IdleEntry<B>>>,
+    waiters: HashMap<AccessLabel, VecDeque<oneshot::Sender<HttpConnection<B>>>>,
+    connecting_h2: HashSet<AccessLabel>,
     max_idle_per_host: usize,
 }
 
 impl<B> PoolInner<B> {
     fn new(max_idle_per_host: usize) -> Self {
         Self {
-            idle: BTreeMap::new(),
-            waiters: BTreeMap::new(),
-            connecting_h2: BTreeSet::new(),
+            idle: HashMap::new(),
+            waiters: HashMap::new(),
+            connecting_h2: HashSet::new(),
             max_idle_per_host,
         }
     }

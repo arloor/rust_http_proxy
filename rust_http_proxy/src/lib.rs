@@ -41,7 +41,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub const IDLE_TIMEOUT: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 60 }); 
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 60 });
 
 pub type DynError = Box<dyn stdError + Send + Sync>; // wrapper for dyn Error
 
