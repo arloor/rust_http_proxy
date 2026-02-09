@@ -1,36 +1,213 @@
 //! HTTP Client
 #![allow(clippy::type_complexity)]
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     error::Error,
-    fmt::Debug,
+    fmt::{Debug, Display, Formatter},
     io::{self, ErrorKind},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
-use http::{HeaderMap, HeaderValue, Version, header};
+use futures_util::{
+    FutureExt,
+    future::{self, Either},
+};
+use http::{HeaderMap, HeaderValue, Uri, Version, header};
 use hyper::{
     Request, Response,
     body::{self, Body},
-    client::conn::http1::{self},
+    client::conn::{
+        TrySendError as ConnTrySendError,
+        http1::{self},
+        http2,
+    },
 };
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use io_x::{CounterIO, TimeoutIO};
 use log::{debug, error, info, trace, warn};
-use lru_time_cache::LruCache;
 use prom_label::LabelImpl;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 use tokio_rustls::rustls::pki_types;
 
 use crate::proxy::{AccessLabel, EitherTlsStream, build_tls_connector};
 
 pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
-/// 清理任务的执行间隔
+/// Cleanup task interval.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
+const DEFAULT_MAX_IDLE_PER_HOST: usize = usize::MAX;
+
+enum Reservation<T> {
+    Shared(T, T),
+    Unique(T),
+}
+
+struct IdleEntry<B> {
+    conn: HttpConnection<B>,
+    idle_at: Instant,
+}
+
+struct PoolInner<B> {
+    idle: BTreeMap<AccessLabel, Vec<IdleEntry<B>>>,
+    waiters: BTreeMap<AccessLabel, VecDeque<oneshot::Sender<HttpConnection<B>>>>,
+    connecting_h2: BTreeSet<AccessLabel>,
+    max_idle_per_host: usize,
+}
+
+impl<B> PoolInner<B> {
+    fn new(max_idle_per_host: usize) -> Self {
+        Self {
+            idle: BTreeMap::new(),
+            waiters: BTreeMap::new(),
+            connecting_h2: BTreeSet::new(),
+            max_idle_per_host,
+        }
+    }
+}
+
+impl<B> PoolInner<B>
+where
+    B: Body + Send + Unpin + Debug + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
+{
+    fn put(&mut self, access_label: AccessLabel, conn: HttpConnection<B>) {
+        if conn.can_share() && self.idle.get(&access_label).is_some_and(|idle| !idle.is_empty()) {
+            trace!("put; existing idle HTTP/2 connection for {access_label}");
+            return;
+        }
+
+        let mut conn = Some(conn);
+        let mut remove_waiters = false;
+
+        if let Some(waiters) = self.waiters.get_mut(&access_label) {
+            while let Some(waiter) = waiters.pop_front() {
+                if waiter.is_closed() {
+                    continue;
+                }
+
+                #[allow(clippy::expect_used)]
+                let current = conn.take().expect("connection should exist");
+                match current.reserve() {
+                    Reservation::Unique(unique) => match waiter.send(unique) {
+                        Ok(()) => {
+                            conn = None;
+                            break;
+                        }
+                        Err(returned) => {
+                            conn = Some(returned);
+                        }
+                    },
+                    Reservation::Shared(to_keep, to_send) => {
+                        conn = Some(to_keep);
+                        if waiter.send(to_send).is_ok() {
+                            continue;
+                        }
+                    }
+                }
+            }
+            remove_waiters = waiters.is_empty();
+        }
+
+        if remove_waiters {
+            self.waiters.remove(&access_label);
+        }
+
+        if let Some(conn) = conn {
+            let idle_list = self.idle.entry(access_label.clone()).or_default();
+            if idle_list.len() >= self.max_idle_per_host {
+                trace!("max idle per host reached for {access_label}, dropping connection");
+                return;
+            }
+            idle_list.push(IdleEntry {
+                conn,
+                idle_at: Instant::now(),
+            });
+        }
+    }
+
+    fn take_idle(&mut self, access_label: &AccessLabel) -> Option<HttpConnection<B>> {
+        let now = Instant::now();
+        let mut should_remove_entry = false;
+        let mut selected = None;
+
+        if let Some(idle_list) = self.idle.get_mut(access_label) {
+            while let Some(entry) = idle_list.pop() {
+                let expired = now.saturating_duration_since(entry.idle_at) >= CONN_EXPIRE_TIMEOUT;
+                if expired {
+                    trace!("removing expired connection for {access_label}");
+                    continue;
+                }
+                if !entry.conn.is_open() {
+                    trace!("removing closed connection for {access_label}");
+                    continue;
+                }
+
+                selected = Some(match entry.conn.reserve() {
+                    Reservation::Unique(unique) => unique,
+                    Reservation::Shared(to_reinsert, to_checkout) => {
+                        idle_list.push(IdleEntry {
+                            conn: to_reinsert,
+                            idle_at: now,
+                        });
+                        to_checkout
+                    }
+                });
+                break;
+            }
+
+            should_remove_entry = idle_list.is_empty();
+        }
+
+        if should_remove_entry {
+            self.idle.remove(access_label);
+        }
+
+        selected
+    }
+
+    fn clear_expired(&mut self) -> usize {
+        let now = Instant::now();
+        let mut removed = 0usize;
+
+        self.idle.retain(|access_label, idle_list| {
+            let before = idle_list.len();
+            idle_list.retain(|entry| {
+                let expired = now.saturating_duration_since(entry.idle_at) >= CONN_EXPIRE_TIMEOUT;
+                let open = entry.conn.is_open();
+                !expired && open
+            });
+            removed += before.saturating_sub(idle_list.len());
+            if idle_list.is_empty() {
+                trace!("all idle connections removed for {access_label}");
+            }
+            !idle_list.is_empty()
+        });
+
+        removed
+    }
+
+    fn clean_waiters(&mut self) {
+        self.waiters.retain(|_, waiters| {
+            waiters.retain(|waiter| !waiter.is_closed());
+            !waiters.is_empty()
+        });
+    }
+}
 
 pub struct ForwardProxyClient<B> {
-    cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>,
+    pool: Arc<Mutex<PoolInner<B>>>,
+}
+
+impl<B> Clone for ForwardProxyClient<B> {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
 }
 
 impl<B> ForwardProxyClient<B>
@@ -39,175 +216,331 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
-    /// Create a new HttpClient
+    /// Create a new ForwardProxyClient.
     pub fn new() -> ForwardProxyClient<B> {
-        let cache_conn = Arc::new(Mutex::new(LruCache::with_expiry_duration(CONN_EXPIRE_TIMEOUT)));
+        let pool = Arc::new(Mutex::new(PoolInner::new(DEFAULT_MAX_IDLE_PER_HOST)));
 
-        // 启动后台清理任务
-        Self::spawn_cleanup_task(cache_conn.clone());
+        Self::spawn_cleanup_task(pool.clone());
 
-        ForwardProxyClient { cache_conn }
+        ForwardProxyClient { pool }
     }
 
-    /// 启动定时清理过期连接的后台任务
-    fn spawn_cleanup_task(cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>) {
+    fn spawn_cleanup_task(pool: Arc<Mutex<PoolInner<B>>>) {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
             loop {
                 interval.tick().await;
-                Self::cleanup_expired_connections(&cache_conn).await;
+                Self::cleanup_expired_connections(&pool).await;
             }
         });
     }
 
-    /// 清理过期和已关闭的连接
-    async fn cleanup_expired_connections(
-        cache_conn: &Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>,
-    ) {
-        let mut cache = cache_conn.lock().await;
-        let now = Instant::now();
-        let mut total_removed = 0usize;
-        let mut empty_keys = Vec::new();
-
-        // 收集所有的 key
-        let keys: Vec<AccessLabel> = cache.iter().map(|(k, _)| k.clone()).collect();
-
-        for key in keys {
-            if let Some(queue) = cache.get_mut(&key) {
-                let before_len = queue.len();
-                // 保留未过期且未关闭的连接
-                queue.retain(|(conn, inst)| {
-                    let expired = now.duration_since(*inst) >= CONN_EXPIRE_TIMEOUT;
-                    let closed = conn.is_closed();
-                    !expired && !closed
-                });
-                let removed = before_len - queue.len();
-                total_removed += removed;
-
-                if queue.is_empty() {
-                    empty_keys.push(key);
-                }
-            }
-        }
-
-        // 移除空的条目
-        for key in empty_keys {
-            cache.remove(&key);
-        }
-
-        let elapsed = now.elapsed();
-        debug!("Connection cleanup completed: removed {} connections in {:?}", total_removed, elapsed);
+    async fn cleanup_expired_connections(pool: &Mutex<PoolInner<B>>) {
+        let mut inner = pool.lock().await;
+        let removed = inner.clear_expired();
+        inner.clean_waiters();
+        debug!("Connection cleanup completed: removed {removed} connections");
     }
 
     /// Make HTTP requests
     #[inline]
-    pub async fn send_request(
-        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
-    ) -> Result<Response<body::Incoming>, std::io::Error> {
-        // 1. Check if there is an available client
-        if let Some(c) = self.get_cached_connection(access_label).await {
-            debug!("HTTP client for host: {} taken from cache", &access_label);
-            match self.send_request_conn(access_label, c, req).await {
-                Ok(o) => return Ok(o),
-                Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
+    pub async fn send_request<F>(
+        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>, stream_map_func: F,
+    ) -> Result<Response<body::Incoming>, io::Error>
+    where
+        F: Fn(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>
+            + Send
+            + Sync
+            + Clone
+            + 'static,
+    {
+        let uri = req.uri().clone();
+        let req_version = req.version();
+        let force_http1 = is_upgrade_request(&req);
+        let mut req = req;
+
+        loop {
+            let mut pooled = self
+                .connection_for(access_label.clone(), ipv6_first, req_version, force_http1, stream_map_func.clone())
+                .await?;
+
+            let url = req.uri().clone();
+            trace!("HTTP making request to host: {access_label}, request: {req:?}");
+
+            match pooled.conn.try_send_request(req).await {
+                Ok(response) => {
+                    trace!("HTTP received response from host: {access_label}, response: {response:?}");
+                    self.recycle_after_response(access_label.clone(), pooled.conn, &response, url);
+                    return Ok(response);
+                }
+                Err(mut err) => {
+                    let req_back = err.take_message();
+                    let send_err = err.into_error();
+
+                    if let Some(mut retry_req) = req_back {
+                        if pooled.is_reused {
+                            trace!("unstarted request canceled, trying again for host: {access_label}");
+                            *retry_req.uri_mut() = uri.clone();
+                            req = retry_req;
+                            continue;
+                        }
+                    }
+
+                    return Err(io::Error::new(ErrorKind::InvalidData, send_err));
+                }
             }
         }
+    }
 
-        // 2. If no. Make a new connection
-        let c = match HttpConnection::connect(access_label, ipv6_first, stream_map_func).await {
-            Ok(c) => c,
-            Err(err) => {
-                error!("failed to connect to host: {}, error: {}", &access_label.target, err);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+    fn recycle_after_response(
+        &self, access_label: AccessLabel, mut conn: HttpConnection<B>, response: &Response<body::Incoming>, url: Uri,
+    ) {
+        if conn.is_http2() {
+            return;
+        }
+
+        if !check_keep_alive(response.version(), response.headers(), false) {
+            return;
+        }
+
+        let this = self.clone();
+        tokio::spawn(async move {
+            match conn.ready().await {
+                Ok(_) => {
+                    debug!("HTTP connection for host: {access_label} {url} is ready and will be cached");
+                    this.insert_connection(access_label, conn).await;
+                }
+                Err(err) => {
+                    debug!("HTTP connection for host: {access_label} {url} failed to become ready: {err}");
+                }
             }
+        });
+    }
+
+    async fn connection_for<F>(
+        &self, access_label: AccessLabel, ipv6_first: Option<bool>, req_version: Version, force_http1: bool,
+        stream_map_func: F,
+    ) -> Result<PooledConnection<B>, io::Error>
+    where
+        F: Fn(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>
+            + Send
+            + Sync
+            + Clone
+            + 'static,
+    {
+        loop {
+            match self
+                .one_connection_for(access_label.clone(), ipv6_first, req_version, force_http1, stream_map_func.clone())
+                .await
+            {
+                Ok(pooled) => return Ok(pooled),
+                Err(AcquireError::CheckoutCanceled) | Err(AcquireError::ConnectCanceled) => {
+                    trace!("connection acquire canceled for host: {access_label}, retrying");
+                    continue;
+                }
+                Err(AcquireError::Io(err)) => return Err(err),
+            }
+        }
+    }
+
+    async fn one_connection_for<F>(
+        &self, access_label: AccessLabel, ipv6_first: Option<bool>, req_version: Version, force_http1: bool,
+        stream_map_func: F,
+    ) -> Result<PooledConnection<B>, AcquireError>
+    where
+        F: Fn(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>
+            + Send
+            + Sync
+            + Clone
+            + 'static,
+    {
+        if let Some(conn) = self.try_take_idle_connection(&access_label).await {
+            return Ok(PooledConnection { conn, is_reused: true });
+        }
+
+        let checkout_client = self.clone();
+        let checkout_key = access_label.clone();
+        let checkout = async move { checkout_client.checkout_connection(checkout_key).await }.boxed();
+
+        let started = Arc::new(AtomicBool::new(false));
+        let started_for_connect = started.clone();
+        let connect_client = self.clone();
+        let connect_key = access_label.clone();
+        let connect = async move {
+            started_for_connect.store(true, Ordering::Relaxed);
+            connect_client
+                .connect_to(connect_key, ipv6_first, req_version, force_http1, stream_map_func)
+                .await
+        }
+        .boxed();
+
+        match future::select(checkout, connect).await {
+            Either::Left((Ok(checked_out), connecting)) => {
+                if started.load(Ordering::Relaxed) {
+                    self.spawn_background_connect(access_label, connecting);
+                }
+                Ok(checked_out)
+            }
+            Either::Right((Ok(connected), _checkout)) => Ok(connected),
+            Either::Left((Err(err), connecting)) => {
+                if err.is_canceled() {
+                    connecting.await
+                } else {
+                    Err(AcquireError::CheckoutCanceled)
+                }
+            }
+            Either::Right((Err(err), checkout)) => {
+                if err.is_canceled() {
+                    match checkout.await {
+                        Ok(checked_out) => Ok(checked_out),
+                        Err(checkout_err) => {
+                            if checkout_err.is_canceled() {
+                                Err(AcquireError::CheckoutCanceled)
+                            } else {
+                                Err(AcquireError::Io(io::Error::other(checkout_err.to_string())))
+                            }
+                        }
+                    }
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    fn spawn_background_connect(
+        &self, access_label: AccessLabel,
+        connecting: futures_util::future::BoxFuture<'static, Result<PooledConnection<B>, AcquireError>>,
+    ) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            match connecting.await {
+                Ok(mut pooled) => {
+                    if let Err(err) = pooled.conn.ready().await {
+                        trace!("background connection for {access_label} is not ready: {err}");
+                        return;
+                    }
+                    this.insert_connection(access_label, pooled.conn).await;
+                }
+                Err(AcquireError::Io(err)) => {
+                    trace!("background connect error: {err}");
+                }
+                Err(_) => {}
+            }
+        });
+    }
+
+    async fn checkout_connection(&self, access_label: AccessLabel) -> Result<PooledConnection<B>, CheckoutError> {
+        if let Some(conn) = self.try_take_idle_connection(&access_label).await {
+            return Ok(PooledConnection { conn, is_reused: true });
+        }
+
+        let rx = {
+            let mut inner = self.pool.lock().await;
+            if let Some(conn) = inner.take_idle(&access_label) {
+                return Ok(PooledConnection { conn, is_reused: true });
+            }
+            let (tx, rx) = oneshot::channel();
+            inner.waiters.entry(access_label).or_default().push_back(tx);
+            rx
         };
 
-        self.send_request_conn(access_label, c, req)
-            .await
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-    }
-
-    async fn get_cached_connection(&self, access_label: &AccessLabel) -> Option<HttpConnection<B>> {
-        if let Some(q) = self.cache_conn.lock().await.get_mut(access_label) {
-            debug!("HTTP client for host: {} found in cache, len: {}", access_label, q.len());
-            while let Some((c, inst)) = q.pop_front() {
-                let now = Instant::now();
-                if now - inst >= CONN_EXPIRE_TIMEOUT {
-                    debug!("HTTP connection for host: {access_label} expired",);
-                    continue;
+        match rx.await {
+            Ok(conn) => {
+                if conn.is_open() {
+                    Ok(PooledConnection { conn, is_reused: true })
+                } else {
+                    Err(CheckoutError::CheckedOutClosedValue)
                 }
-                if c.is_closed() {
-                    // true at once after connection.await return
-                    debug!("HTTP connection for host: {access_label} is closed",);
-                    continue;
-                }
-                if !c.is_ready() {
-                    debug!("HTTP connection for host: {access_label} is not ready",);
-                    continue;
-                }
-                return Some(c);
             }
-        } else {
-            debug!("HTTP client for host: {access_label} not found in cache");
+            Err(_) => Err(CheckoutError::CheckoutNoLongerWanted),
         }
-        None
     }
 
-    pub(crate) async fn send_request_conn(
-        &self, access_label: &AccessLabel, mut c: HttpConnection<B>, req: Request<B>,
-    ) -> hyper::Result<Response<body::Incoming>> {
-        trace!("HTTP making request to host: {access_label}, request: {req:?}");
-        let url = req.uri().clone();
-        let response = c.send_request(req).await?;
-        trace!("HTTP received response from host: {access_label}, response: {response:?}");
+    async fn connect_to<F>(
+        &self, access_label: AccessLabel, ipv6_first: Option<bool>, req_version: Version, force_http1: bool,
+        stream_map_func: F,
+    ) -> Result<PooledConnection<B>, AcquireError>
+    where
+        F: Fn(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>
+            + Send
+            + Sync
+            + Clone
+            + 'static,
+    {
+        let lock_h2_connecting = req_version == Version::HTTP_2 && !force_http1;
 
-        // Check keep-alive
-        if check_keep_alive(response.version(), response.headers(), false) {
-            trace!("HTTP connection keep-alive for host: {access_label}, response: {response:?}");
-            let cache_conn = self.cache_conn.clone();
-            let access_label = access_label.clone();
-            tokio::spawn(async move {
-                match c.ready().await {
-                    Ok(_) => {
-                        debug!("HTTP connection for host: {access_label} {url} is ready and will be cached");
-                        cache_conn
-                            .lock()
-                            .await
-                            .entry(access_label)
-                            .or_insert_with(VecDeque::new)
-                            .push_back((c, Instant::now()));
-                    }
-                    Err(e) => {
-                        debug!("HTTP connection for host: {access_label} {url} failed to become ready: {}", e);
-                    }
-                };
-            });
+        if lock_h2_connecting {
+            let mut inner = self.pool.lock().await;
+            if !inner.connecting_h2.insert(access_label.clone()) {
+                return Err(AcquireError::ConnectCanceled);
+            }
         }
 
-        Ok(response)
+        let connected =
+            HttpConnection::connect(&access_label, ipv6_first, req_version, force_http1, stream_map_func).await;
+
+        if lock_h2_connecting {
+            let mut inner = self.pool.lock().await;
+            inner.connecting_h2.remove(&access_label);
+            if connected.is_err() {
+                // Wake all in-flight checkouts to retry like hyper-util legacy pool does.
+                inner.waiters.remove(&access_label);
+            }
+        }
+
+        let connected = connected.map_err(|err| {
+            error!("failed to connect to host: {}, error: {}", access_label.target, err);
+            AcquireError::Io(io::Error::new(ErrorKind::InvalidData, err))
+        })?;
+
+        self.build_pooled_connection(access_label, connected).await
+    }
+
+    async fn build_pooled_connection(
+        &self, access_label: AccessLabel, connected: HttpConnection<B>,
+    ) -> Result<PooledConnection<B>, AcquireError> {
+        match connected.reserve() {
+            Reservation::Unique(unique) => Ok(PooledConnection {
+                conn: unique,
+                is_reused: false,
+            }),
+            Reservation::Shared(to_insert, to_return) => {
+                self.insert_connection(access_label, to_insert).await;
+                Ok(PooledConnection {
+                    conn: to_return,
+                    is_reused: false,
+                })
+            }
+        }
+    }
+
+    async fn try_take_idle_connection(&self, access_label: &AccessLabel) -> Option<HttpConnection<B>> {
+        let mut inner = self.pool.lock().await;
+        inner.take_idle(access_label)
+    }
+
+    async fn insert_connection(&self, access_label: AccessLabel, conn: HttpConnection<B>) {
+        let mut inner = self.pool.lock().await;
+        inner.put(access_label, conn);
     }
 }
 
 pub fn check_keep_alive(version: Version, headers: &HeaderMap<HeaderValue>, check_proxy: bool) -> bool {
-    // HTTP/1.1, HTTP/2, HTTP/3 keeps alive by default
+    // HTTP/1.1, HTTP/2, HTTP/3 keeps alive by default.
     let mut conn_keep_alive = !matches!(version, Version::HTTP_09 | Version::HTTP_10);
 
     if check_proxy {
         // Modern browsers will send Proxy-Connection instead of Connection
-        // for HTTP/1.0 proxies which blindly forward Connection to remote
-        //
-        // https://tools.ietf.org/html/rfc7230#appendix-A.1.2
+        // for HTTP/1.0 proxies which blindly forward Connection to remote.
         if let Some(b) = get_keep_alive_val(headers.get_all("Proxy-Connection")) {
-            conn_keep_alive = b
+            conn_keep_alive = b;
         }
     }
 
-    // Connection will replace Proxy-Connection
-    //
-    // But why client sent both Connection and Proxy-Connection? That's not standard!
+    // Connection will replace Proxy-Connection.
     if let Some(b) = get_keep_alive_val(headers.get_all("Connection")) {
-        conn_keep_alive = b
+        conn_keep_alive = b;
     }
 
     conn_keep_alive
@@ -236,6 +569,7 @@ fn get_keep_alive_val(values: header::GetAll<HeaderValue>) -> Option<bool> {
 #[allow(dead_code)]
 pub(crate) enum HttpConnection<B> {
     Http1(http1::SendRequest<B>),
+    Http2(http2::SendRequest<B>),
 }
 
 impl<B> HttpConnection<B>
@@ -244,13 +578,15 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
-    pub(crate) async fn connect(
-        access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
-    ) -> io::Result<HttpConnection<B>> {
+    pub(crate) async fn connect<F>(
+        access_label: &AccessLabel, ipv6_first: Option<bool>, req_version: Version, force_http1: bool,
+        stream_map_func: F,
+    ) -> io::Result<HttpConnection<B>>
+    where
+        F: Fn(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>> + Send + Sync,
+    {
         let stream = crate::proxy::connect_with_preference(&access_label.target, ipv6_first).await?;
         let stream = if let Some(true) = access_label.relay_over_tls {
-            // 建立 TLS 连接
             let connector = build_tls_connector();
 
             let host = &access_label
@@ -259,7 +595,7 @@ where
                 .next()
                 .ok_or(io::Error::other("invalid host"))?;
             let server_name = pki_types::ServerName::try_from(*host)
-                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
+                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {e}")))?
                 .to_owned();
 
             match connector.connect(server_name, stream).await {
@@ -270,30 +606,34 @@ where
                 }
             }
         } else {
-            // 使用普通 TCP 连接
             EitherTlsStream::Tcp { stream }
+        };
+
+        let negotiated_h2 = match &stream {
+            EitherTlsStream::Tcp { .. } => false,
+            EitherTlsStream::Tls { stream } => stream.get_ref().1.alpn_protocol().is_some_and(|alpn| alpn == b"h2"),
         };
 
         let stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>> = stream_map_func(stream, access_label.clone());
 
-        HttpConnection::connect_http_http1(access_label, stream).await
+        let use_h2 = !force_http1 && (req_version == Version::HTTP_2 || negotiated_h2);
+        if use_h2 {
+            Self::connect_http2(access_label, stream).await
+        } else {
+            Self::connect_http1(access_label, stream).await
+        }
     }
 
-    async fn connect_http_http1(
+    async fn connect_http1(
         access_label: &AccessLabel, stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
-
-        // HTTP/1.x
-        let (send_request, connection) = match http1::Builder::new()
+        let (send_request, connection) = http1::Builder::new()
             .preserve_header_case(true)
             .title_case_headers(true)
             .handshake(Box::pin(TokioIo::new(stream)))
             .await
-        {
-            Ok(s) => s,
-            Err(err) => return Err(io::Error::other(err)),
-        };
+            .map_err(io::Error::other)?;
 
         let access_label = access_label.clone();
         tokio::spawn(async move {
@@ -304,36 +644,128 @@ where
         Ok(HttpConnection::Http1(send_request))
     }
 
+    async fn connect_http2(
+        access_label: &AccessLabel, stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
+    ) -> io::Result<HttpConnection<B>> {
+        let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
+        let (mut send_request, connection) = http2::Builder::new(TokioExecutor::new())
+            .handshake(Box::pin(TokioIo::new(stream)))
+            .await
+            .map_err(io::Error::other)?;
+
+        let access_label = access_label.clone();
+        tokio::spawn(async move {
+            if let Err(err) = connection.await {
+                handle_http2_connection_error(err, access_label);
+            }
+        });
+
+        send_request.ready().await.map_err(io::Error::other)?;
+        Ok(HttpConnection::Http2(send_request))
+    }
+
     #[inline]
-    pub async fn send_request(&mut self, req: Request<B>) -> hyper::Result<Response<body::Incoming>> {
+    pub async fn try_send_request(
+        &mut self, req: Request<B>,
+    ) -> Result<Response<body::Incoming>, ConnTrySendError<Request<B>>> {
         match self {
-            HttpConnection::Http1(r) => r.send_request(req).await,
+            HttpConnection::Http1(r) => r.try_send_request(req).await,
+            HttpConnection::Http2(r) => r.try_send_request(req).await,
         }
     }
 
     pub fn is_closed(&self) -> bool {
         match self {
             HttpConnection::Http1(r) => r.is_closed(),
+            HttpConnection::Http2(r) => r.is_closed(),
         }
     }
 
     pub fn is_ready(&self) -> bool {
         match self {
             HttpConnection::Http1(r) => r.is_ready(),
+            HttpConnection::Http2(r) => r.is_ready(),
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        !self.is_closed() && self.is_ready()
+    }
+
+    pub fn is_http2(&self) -> bool {
+        matches!(self, HttpConnection::Http2(_))
+    }
+
+    pub fn can_share(&self) -> bool {
+        self.is_http2()
+    }
+
+    fn reserve(self) -> Reservation<Self> {
+        match self {
+            HttpConnection::Http1(tx) => Reservation::Unique(HttpConnection::Http1(tx)),
+            HttpConnection::Http2(tx) => {
+                let to_checkout = HttpConnection::Http2(tx.clone());
+                let to_reinsert = HttpConnection::Http2(tx);
+                Reservation::Shared(to_reinsert, to_checkout)
+            }
         }
     }
 
     pub async fn ready(&mut self) -> Result<(), hyper::Error> {
         match self {
             HttpConnection::Http1(r) => r.ready().await,
+            HttpConnection::Http2(r) => r.ready().await,
         }
     }
+}
+
+struct PooledConnection<B> {
+    conn: HttpConnection<B>,
+    is_reused: bool,
+}
+
+#[derive(Debug)]
+enum CheckoutError {
+    CheckoutNoLongerWanted,
+    CheckedOutClosedValue,
+}
+
+impl CheckoutError {
+    fn is_canceled(&self) -> bool {
+        true
+    }
+}
+
+impl Display for CheckoutError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CheckoutError::CheckoutNoLongerWanted => f.write_str("request was canceled"),
+            CheckoutError::CheckedOutClosedValue => f.write_str("checked out connection was closed"),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum AcquireError {
+    CheckoutCanceled,
+    ConnectCanceled,
+    Io(io::Error),
+}
+
+impl AcquireError {
+    fn is_canceled(&self) -> bool {
+        matches!(self, AcquireError::CheckoutCanceled | AcquireError::ConnectCanceled)
+    }
+}
+
+fn is_upgrade_request<B>(req: &Request<B>) -> bool {
+    req.headers().contains_key(http::header::UPGRADE)
 }
 
 fn handle_http1_connection_error(err: hyper::Error, access_label: AccessLabel) {
     if let Some(io_err) = err.source().and_then(|s| s.downcast_ref::<io::Error>()) {
         if io_err.kind() == ErrorKind::TimedOut {
-            // 由于超时导致的连接关闭（TimeoutIO）
+            // Closed by TimeoutIO.
             info!("[legacy proxy connection io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
         } else {
             warn!("[legacy proxy io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
@@ -342,5 +774,19 @@ fn handle_http1_connection_error(err: hyper::Error, access_label: AccessLabel) {
         warn!("[legacy proxy io error]: [{source}] to {access_label}");
     } else {
         warn!("[legacy proxy io error] [{err}] to {access_label}");
+    }
+}
+
+fn handle_http2_connection_error(err: hyper::Error, access_label: AccessLabel) {
+    if let Some(io_err) = err.source().and_then(|s| s.downcast_ref::<io::Error>()) {
+        if io_err.kind() == ErrorKind::TimedOut {
+            info!("[legacy proxy h2 io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
+        } else {
+            warn!("[legacy proxy h2 io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
+        }
+    } else if let Some(source) = err.source() {
+        warn!("[legacy proxy h2 io error]: [{source}] to {access_label}");
+    } else {
+        warn!("[legacy proxy h2 io error] [{err}] to {access_label}");
     }
 }

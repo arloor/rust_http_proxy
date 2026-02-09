@@ -614,8 +614,6 @@ impl ProxyHandler {
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
         forward_bypass_config: &ForwardBypassConfig,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        // 开始计时
-        let start_time = std::time::Instant::now();
         let proxy_traffic = METRICS.proxy_traffic.clone();
 
         match host_addr(req.uri()) {
@@ -635,6 +633,7 @@ impl ProxyHandler {
                 };
 
                 // 首先建立 TCP 连接
+                let start_time = std::time::Instant::now();
                 let tcp_stream = match connect_with_preference(&bypass_host, forward_bypass_config.ipv6_first).await {
                     Ok(stream) => {
                         // 记录从接收请求到完成bypass握手的耗时
@@ -781,8 +780,6 @@ impl ProxyHandler {
     fn tunnel_proxy(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        // 开始计时
-        let start_time = std::time::Instant::now();
         // Received an HTTP request like:
         // ```
         // CONNECT www.domain.com:443 HTTP/1.1
@@ -809,6 +806,7 @@ impl ProxyHandler {
                             relay_over_tls: None,
                         };
                         // Connect to remote server
+                        let start_time = std::time::Instant::now();
                         match connect_with_preference(&addr.to_string(), ipv6_first).await {
                             Ok(target_stream) => {
                                 // 记录从接收请求到成功建立连接的耗时
@@ -1199,10 +1197,11 @@ pub(crate) fn build_tls_connector() -> TlsConnector {
         use tokio_rustls::rustls::ClientConfig;
 
         warn!("⚠️  DEBUG MODE: TLS certificate verification is DISABLED");
-        let config = ClientConfig::builder()
+        let mut config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerifier))
             .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         TlsConnector::from(Arc::new(config))
     }
 
@@ -1210,10 +1209,11 @@ pub(crate) fn build_tls_connector() -> TlsConnector {
     {
         use hyper_rustls::ConfigBuilderExt;
         #[allow(clippy::expect_used)]
-        let config = tokio_rustls::rustls::ClientConfig::builder()
+        let mut config = tokio_rustls::rustls::ClientConfig::builder()
             .try_with_platform_verifier()
             .expect("Failed to create platform verifier")
             .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         TlsConnector::from(Arc::new(config))
     }
 }
