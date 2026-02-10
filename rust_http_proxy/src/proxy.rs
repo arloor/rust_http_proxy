@@ -614,8 +614,6 @@ impl ProxyHandler {
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
         forward_bypass_config: &ForwardBypassConfig,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        // 开始计时
-        let start_time = std::time::Instant::now();
         let proxy_traffic = METRICS.proxy_traffic.clone();
 
         match host_addr(req.uri()) {
@@ -635,6 +633,7 @@ impl ProxyHandler {
                 };
 
                 // 首先建立 TCP 连接
+                let start_time = std::time::Instant::now();
                 let tcp_stream = match connect_with_preference(&bypass_host, forward_bypass_config.ipv6_first).await {
                     Ok(stream) => {
                         // 记录从接收请求到完成bypass握手的耗时
@@ -781,8 +780,6 @@ impl ProxyHandler {
     fn tunnel_proxy(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        // 开始计时
-        let start_time = std::time::Instant::now();
         // Received an HTTP request like:
         // ```
         // CONNECT www.domain.com:443 HTTP/1.1
@@ -809,6 +806,7 @@ impl ProxyHandler {
                             relay_over_tls: None,
                         };
                         // Connect to remote server
+                        let start_time = std::time::Instant::now();
                         match connect_with_preference(&addr.to_string(), ipv6_first).await {
                             Ok(target_stream) => {
                                 // 记录从接收请求到成功建立连接的耗时
