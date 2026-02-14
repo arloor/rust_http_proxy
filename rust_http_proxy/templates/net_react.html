@@ -878,9 +878,13 @@
               };
               if (ele.show_avg_line) {
                 tmpSeries.markLine = avgMarkLine;
+              }else {
+                delete tmpSeries.markLine;
               }
               if (ele.show_max_point) {
                 tmpSeries.markPoint = maxMarkPoint;
+              }else {
+                delete tmpSeries.markPoint;
               }
               if (ele.color) {
                 tmpSeries.itemStyle = {
