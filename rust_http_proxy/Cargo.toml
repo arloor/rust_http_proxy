@@ -40,7 +40,8 @@ pin-project-lite.workspace = true
 prometheus-client.workspace = true
 flate2 = { version = "1.0" }
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "env"] }
+dotenvy = { version = "0", features = ["cli"] }
 base64 = "0.22"
 jemallocator = { version = "0.5", optional = true }
 mimalloc = { version = "0.1", optional = true }

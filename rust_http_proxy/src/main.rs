@@ -23,7 +23,11 @@ fn main() -> Result<(), DynError> {
 
     // 使用 _guard 进入 runtime 上下文，这样 create_futures 内部的 tokio::spawn 才能正常工作
     let _guard = runtime.enter();
-    let param = Param::parse();
+    // 解析命令行参数和环境变量
+    let param = {
+        dotenvy::dotenv().ok();
+        Param::parse()
+    };
     if let Err(log_init_error) = log_x::init_log(&param.log_dir, &param.log_file, "info") {
         return Err(format!("init log error:{log_init_error}").into());
     }
