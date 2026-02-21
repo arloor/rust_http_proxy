@@ -14,36 +14,45 @@ use crate::{DynError, IDLE_TIMEOUT};
 #[derive(Parser)]
 #[command(author, version=None, about, long_about = None)]
 pub struct Param {
-    #[arg(long, value_name = "LOG_DIR", default_value = "/tmp")]
+    #[arg(long, env = "LOG_DIR", value_name = "LOG_DIR", default_value = "/tmp")]
     pub log_dir: String,
-    #[arg(long, value_name = "LOG_FILE", default_value = "proxy.log")]
+    #[arg(long, env = "LOG_FILE", value_name = "LOG_FILE", default_value = "proxy.log")]
     pub log_file: String,
     #[arg(
         short,
         long,
+        env = "PORT",
         value_name = "PORT",
         default_value = "3128",
         help = "可以多次指定来实现多端口\n"
     )]
     port: Vec<u16>,
-    #[arg(short, long, value_name = "CERT", default_value = "cert.pem")]
+    #[arg(short, long, env = "CERT", value_name = "CERT", default_value = "cert.pem")]
     cert: String,
-    #[arg(short, long, value_name = "KEY", default_value = "privkey.pem")]
+    #[arg(short, long, env = "KEY", value_name = "KEY", default_value = "privkey.pem")]
     key: String,
     #[arg(
         short,
         long,
+        env = "USER",
         value_name = "USER",
         help = "默认为空，表示不鉴权。\n\
     格式为 'username:password'\n\
     可以多次指定来实现多用户"
     )]
     users: Vec<String>,
-    #[arg(short, long, value_name = "WEB_CONTENT_PATH", help = "静态文件托管的根目录")]
+    #[arg(
+        short,
+        long,
+        env = "WEB_CONTENT_PATH",
+        value_name = "WEB_CONTENT_PATH",
+        help = "静态文件托管的根目录"
+    )]
     web_content_path: Option<String>,
     #[arg(
         short,
         long,
+        env = "REFERER_KEYWORD_TO_SELF",
         value_name = "REFERER",
         help = "Http Referer请求头处理 \n\
         1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值\n\
@@ -53,26 +62,34 @@ pub struct Param {
     referer_keywords_to_self: Vec<String>,
     #[arg(
         long,
+        env = "NEVER_ASK_FOR_AUTH",
         help = "if enable, never send '407 Proxy Authentication Required' to client。\n\
         当作为正向代理使用时建议开启，否则有被嗅探的风险。"
     )]
     never_ask_for_auth: bool,
     #[arg(
         long,
+        env = "ALLOW_SERVING_NETWORK",
         value_name = "CIDR",
         help = "允许访问静态文件托管的网段白名单，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8\n\
         可以多次指定来允许多个网段\n\
         如未设置任何网段，则允许所有IP访问静态文件"
     )]
     allow_serving_network: Vec<String>,
-    #[arg(short, long, help = "if enable, proxy server will listen on https")]
+    #[arg(short, long, env = "OVER_TLS", help = "if enable, proxy server will listen on https")]
     over_tls: bool,
-    #[arg(long, value_name = "FILE_PATH", help = r#"静态文件托管和反向代理的配置文件"#)]
+    #[arg(
+        long,
+        env = "LOCATION_CONFIG_FILE",
+        value_name = "FILE_PATH",
+        help = r#"静态文件托管和反向代理的配置文件"#
+    )]
     location_config_file: Option<String>,
-    #[arg(long, help = r#"是否开启github proxy"#)]
+    #[arg(long, env = "ENABLE_GITHUB_PROXY", help = r#"是否开启github proxy"#)]
     enable_github_proxy: bool,
     #[arg(
         long,
+        env = "APPEND_UPSTREAM_URL",
         value_name = "https://example.com",
         help = "便捷反向代理配置\n\
         例如：--append-upstream-url=https://cdnjs.cloudflare.com\n\
@@ -81,12 +98,14 @@ pub struct Param {
     append_upstream_url: Vec<String>,
     #[arg(
         long,
+        env = "FORWARD_BYPASS_URL",
         value_name = "https://username:password@example.com:123",
         help = "指定上游代理服务器"
     )]
     forward_bypass_url: Option<Uri>,
     #[arg(
         long,
+        env = "IPV6_FIRST",
         help = "优先使用 IPv6 进行连接。true表示IPv6优先，false表示IPv4优先，不设置则保持DNS原始顺序"
     )]
     ipv6_first: Option<bool>,
