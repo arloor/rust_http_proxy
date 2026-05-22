@@ -39,7 +39,7 @@ use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 use percent_encoding::percent_decode_str;
 use prometheus_client::encoding::EncodeLabelSet;
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 
 use tokio::{net::TcpStream, pin};
