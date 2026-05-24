@@ -166,7 +166,7 @@ impl<'a> ServiceType<'a> {
                     let upstream_req_uri = upstream_req.uri().clone();
                     let upstream_req_version = upstream_req.version();
                     info!(
-                        "[reverse response] {:^35} ==> {} {:?} {:?} <== [{}{}]",
+                        "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
                         SocketAddrFormat(&client_socket_addr).to_string(),
                         upstream_req_method,
                         upstream_req_uri,
@@ -182,7 +182,7 @@ impl<'a> ServiceType<'a> {
                                 //修改302的location
                             }
                             info!(
-                                "[reverse] {:^35} ==> {} {:?} {:?} <== {} [{}{}]",
+                                "[reverse response] {:^35} ==> {} {:?} {:?} <== {} [{}{}]",
                                 SocketAddrFormat(&client_socket_addr).to_string(),
                                 upstream_req_method,
                                 upstream_req_uri,
