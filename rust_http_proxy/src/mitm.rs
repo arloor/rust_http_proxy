@@ -1,10 +1,15 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use http::{HeaderName, HeaderValue, StatusCode};
+use hyper::body::Bytes;
 use lru_time_cache::LruCache;
 use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose};
+use serde::Deserialize;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -65,4 +70,155 @@ impl MitmAuthority {
 
 fn to_io_error(err: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct MitmStubSpecs {
+    stubs: Arc<HashMap<String, Vec<MitmStubRule>>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct MitmStubRule {
+    path: String,
+    response: MitmStubResponse,
+}
+
+#[derive(Clone)]
+pub(crate) struct MitmStubResponse {
+    pub(crate) status: StatusCode,
+    pub(crate) headers: Vec<(HeaderName, HeaderValue)>,
+    pub(crate) body: Bytes,
+}
+
+#[derive(Deserialize)]
+struct MitmStubConfig {
+    path: String,
+    #[serde(default = "default_status")]
+    status: u16,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    body_file: String,
+}
+
+fn default_status() -> u16 {
+    200
+}
+
+pub(crate) fn parse_mitm_stub_specs(config_file: &Option<String>) -> Result<MitmStubSpecs, crate::DynError> {
+    let Some(config_file) = config_file else {
+        return Ok(MitmStubSpecs::default());
+    };
+
+    let content = fs::read_to_string(config_file)
+        .map_err(|e| format!("failed to read MITM stub config file {config_file}: {e}"))?;
+    let raw_stubs: HashMap<String, Vec<MitmStubConfig>> = serde_yaml_bw::from_str(&content)
+        .map_err(|e| format!("failed to parse MITM stub config file {config_file}: {e}"))?;
+    let base_dir = Path::new(config_file).parent().unwrap_or_else(|| Path::new("."));
+    let mut stubs = HashMap::new();
+
+    for (authority, rules) in raw_stubs {
+        let authority = normalize_authority(&authority);
+        if authority.is_empty() {
+            return Err("MITM stub authority must not be empty".into());
+        }
+
+        let mut parsed_rules = Vec::new();
+        for rule in rules {
+            let body_path = resolve_relative_path(base_dir, &rule.body_file);
+            let body = fs::read(&body_path)
+                .map_err(|e| format!("failed to read MITM stub body file {}: {e}", body_path.display()))?;
+            let status = StatusCode::from_u16(rule.status)
+                .map_err(|e| format!("invalid MITM stub status {} for {authority}{}: {e}", rule.status, rule.path))?;
+            let mut headers = Vec::new();
+            for (name, value) in rule.headers {
+                let header_name = HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|e| format!("invalid MITM stub response header name {name}: {e}"))?;
+                let header_value = HeaderValue::from_str(&value)
+                    .map_err(|e| format!("invalid MITM stub response header value for {name}: {e}"))?;
+                headers.push((header_name, header_value));
+            }
+
+            parsed_rules.push(MitmStubRule {
+                path: rule.path,
+                response: MitmStubResponse {
+                    status,
+                    headers,
+                    body: Bytes::from(body),
+                },
+            });
+        }
+        stubs.insert(authority, parsed_rules);
+    }
+
+    Ok(MitmStubSpecs { stubs: Arc::new(stubs) })
+}
+
+impl MitmStubSpecs {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.stubs.is_empty()
+    }
+
+    pub(crate) fn find(&self, authority: &str, path: &str) -> Option<MitmStubResponse> {
+        self.stubs
+            .get(&normalize_authority(authority))
+            .and_then(|rules| rules.iter().find(|rule| rule.path == path))
+            .map(|rule| rule.response.clone())
+    }
+}
+
+fn normalize_authority(authority: &str) -> String {
+    authority.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn resolve_relative_path(base_dir: &Path, file_path: &str) -> PathBuf {
+    let path = Path::new(file_path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn parses_mitm_stub_specs_with_relative_body_file() -> Result<(), crate::DynError> {
+        let base_dir = std::env::temp_dir().join(format!(
+            "rust_http_proxy_mitm_stub_test_{}_{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        fs::create_dir_all(&base_dir)?;
+        let body_path = base_dir.join("validate.json");
+        let config_path = base_dir.join("mitm-stubs.yaml");
+        fs::write(&body_path, r#"{"ok":true}"#)?;
+        fs::write(
+            &config_path,
+            r#"
+AdminMaxApi.KnowHub.Cloud:443:
+  - path: /access-tokens/validate
+    status: 201
+    headers:
+      content-type: application/json
+    body_file: validate.json
+"#,
+        )?;
+
+        let specs = parse_mitm_stub_specs(&Some(config_path.to_string_lossy().into_owned()))?;
+        let response = match specs.find("adminmaxapi.knowhub.cloud:443.", "/access-tokens/validate") {
+            Some(response) => response,
+            None => return Err("expected MITM stub response".into()),
+        };
+
+        assert_eq!(response.status, StatusCode::CREATED);
+        assert_eq!(response.body, Bytes::from_static(br#"{"ok":true}"#));
+        assert_eq!(response.headers.len(), 1);
+        assert!(specs.find("adminmaxapi.knowhub.cloud:443", "/other").is_none());
+
+        fs::remove_dir_all(base_dir)?;
+        Ok(())
+    }
 }

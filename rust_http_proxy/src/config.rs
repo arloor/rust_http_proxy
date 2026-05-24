@@ -9,7 +9,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::location::{LocationSpecs, parse_location_specs};
-use crate::mitm::MitmAuthority;
+use crate::mitm::{MitmAuthority, MitmStubSpecs, parse_mitm_stub_specs};
 use crate::{DynError, IDLE_TIMEOUT};
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
@@ -104,6 +104,12 @@ pub struct Param {
     mitm_ca_key: Option<String>,
     #[arg(long, help = "打印 MITM 解密后的请求/响应头和 body 前 16KB。仅用于调试")]
     mitm_dump_plaintext: bool,
+    #[arg(
+        long,
+        value_name = "FILE_PATH",
+        help = "MITM stub YAML 配置文件，按 authority + path 固定返回响应"
+    )]
+    mitm_stub_config_file: Option<String>,
 }
 
 pub(crate) struct Config {
@@ -121,6 +127,7 @@ pub(crate) struct Config {
     pub(crate) mitm_authority: Option<Arc<MitmAuthority>>,
     pub(crate) mitm_domain_suffixes: Vec<String>,
     pub(crate) mitm_dump_plaintext: bool,
+    pub(crate) mitm_stub_specs: MitmStubSpecs,
 }
 
 pub(crate) struct ForwardBypassConfig {
@@ -219,6 +226,7 @@ impl TryFrom<Param> for Config {
             &mut param.append_upstream_url,
             param.enable_github_proxy,
         )?;
+        let mitm_stub_specs = parse_mitm_stub_specs(&param.mitm_stub_config_file)?;
 
         let mitm_domain_suffixes = normalize_mitm_domain_suffixes(param.mitm_domain_suffix);
         let mitm_authority =
@@ -262,6 +270,7 @@ impl TryFrom<Param> for Config {
             mitm_authority,
             mitm_domain_suffixes,
             mitm_dump_plaintext: param.mitm_dump_plaintext,
+            mitm_stub_specs,
         })
     }
 }
@@ -313,6 +322,9 @@ fn log_config(config: &Config) {
     }
     if config.mitm_dump_plaintext {
         info!("MITM plaintext dump is enabled");
+    }
+    if !config.mitm_stub_specs.is_empty() {
+        info!("MITM stubs are enabled");
     }
     info!("basic auth is {:?}", config.basic_auth);
     if !config.location_specs.locations.is_empty() {

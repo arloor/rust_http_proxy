@@ -19,6 +19,7 @@ use crate::{
     location::{
         DEFAULT_HOST, LocationConfig, Upstream, build_upstream_req, handle_websocket_upgrade_reverse, normalize302,
     },
+    mitm::{MitmStubResponse, MitmStubSpecs},
     static_serve,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
@@ -27,7 +28,7 @@ use axum::extract::Request;
 use axum_bootstrap::InterceptResult;
 use http::{
     Uri,
-    header::{CONTENT_LENGTH, CONTENT_TYPE, HOST, LOCATION},
+    header::{CONTENT_LENGTH, HOST, LOCATION, TRANSFER_ENCODING},
 };
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
@@ -847,8 +848,11 @@ impl ProxyHandler {
         };
 
         let mitm_proxy_client = self.mitm_proxy_client.clone();
-        let ipv6_first = self.config.ipv6_first;
-        let mitm_dump_plaintext = self.config.mitm_dump_plaintext;
+        let mitm_request_context = MitmRequestContext {
+            ipv6_first: self.config.ipv6_first,
+            stub_specs: self.config.mitm_stub_specs.clone(),
+            dump_plaintext: self.config.mitm_dump_plaintext,
+        };
         tokio::task::spawn(async move {
             let access_tag = format!("{} -> {}", client_socket_addr.ip().to_canonical(), target);
             let src_upgraded = match hyper::upgrade::on(req).await {
@@ -870,6 +874,7 @@ impl ProxyHandler {
 
             let service = service_fn(move |req| {
                 let mitm_proxy_client = mitm_proxy_client.clone();
+                let mitm_request_context = mitm_request_context.clone();
                 let target = target.clone();
                 let username = username.clone();
                 async move {
@@ -879,8 +884,7 @@ impl ProxyHandler {
                         client_socket_addr,
                         target,
                         username,
-                        ipv6_first,
-                        mitm_dump_plaintext,
+                        mitm_request_context,
                     )
                     .await
                 }
@@ -1005,6 +1009,13 @@ impl ProxyHandler {
     }
 }
 
+#[derive(Clone)]
+struct MitmRequestContext {
+    ipv6_first: Option<bool>,
+    stub_specs: MitmStubSpecs,
+    dump_plaintext: bool,
+}
+
 fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     // 删除代理特有的请求头
     req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
@@ -1036,7 +1047,7 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
 
 async fn handle_mitm_request(
     mut req: Request<Incoming>, mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
-    client_socket_addr: SocketAddr, target: String, username: String, ipv6_first: Option<bool>, dump_plaintext: bool,
+    client_socket_addr: SocketAddr, target: String, username: String, context: MitmRequestContext,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     let access_label = AccessLabel {
         client: client_socket_addr.ip().to_canonical().to_string(),
@@ -1046,7 +1057,7 @@ async fn handle_mitm_request(
     };
     let is_websocket = is_websocket_upgrade(&req);
     mod_mitm_proxy_req(&mut req, &access_label.target)?;
-    if dump_plaintext {
+    if context.dump_plaintext {
         log_mitm_request_head(&req, &access_label);
     }
 
@@ -1058,81 +1069,52 @@ async fn handle_mitm_request(
         req.version(),
     );
 
-    if is_knowhub_access_token_validate_request(&req, &access_label.target) {
-        info!("[mitm stub] returning fixed access-token validation response for {access_label}");
-        return build_knowhub_access_token_validate_response();
+    if let Some(stub_response) = context.stub_specs.find(&access_label.target, req.uri().path()) {
+        info!("[mitm stub] returning configured response for {access_label}{}", req.uri().path());
+        return build_mitm_stub_response(stub_response);
     }
 
     if is_websocket {
-        return handle_mitm_websocket_upgrade(req, mitm_proxy_client, access_label, ipv6_first, dump_plaintext).await;
+        return handle_mitm_websocket_upgrade(
+            req,
+            mitm_proxy_client,
+            access_label,
+            context.ipv6_first,
+            context.dump_plaintext,
+        )
+        .await;
     }
 
-    let req = map_mitm_request_body(req, access_label.clone(), dump_plaintext);
+    let req = map_mitm_request_body(req, access_label.clone(), context.dump_plaintext);
     let resp = mitm_proxy_client
-        .send_request(req, &access_label, ipv6_first, |stream: EitherTlsStream, access_label: AccessLabel| {
+        .send_request(req, &access_label, context.ipv6_first, |stream: EitherTlsStream, access_label: AccessLabel| {
             CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
         })
         .await?;
-    if dump_plaintext {
+    if context.dump_plaintext {
         log_mitm_response_head(&resp, &access_label);
     }
 
-    Ok(map_mitm_response_body(resp, access_label, dump_plaintext))
+    Ok(map_mitm_response_body(resp, access_label, context.dump_plaintext))
 }
 
-const KNOWHUB_VALIDATE_TARGET: &str = "adminmaxapi.knowhub.cloud:443";
-const KNOWHUB_VALIDATE_PATH: &str = "/access-tokens/validate";
-const KNOWHUB_VALIDATE_RESPONSE_BODY: &str = r#"{"ok":true,"status":"enabled","owner":"mitm","expire_at":0,"user_ok":true,"user_status":"free","user_expire_at":0}"#;
-
-fn is_knowhub_access_token_validate_request<B>(req: &Request<B>, target_authority: &str) -> bool {
-    target_authority.trim().trim_end_matches('.').to_ascii_lowercase() == KNOWHUB_VALIDATE_TARGET
-        && req.uri().path() == KNOWHUB_VALIDATE_PATH
-        && req.uri().query().is_none()
-}
-
-fn build_knowhub_access_token_validate_response() -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    Response::builder()
-        .status(http::StatusCode::OK)
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .header(
-            CONTENT_LENGTH,
-            HeaderValue::from_str(&KNOWHUB_VALIDATE_RESPONSE_BODY.len().to_string())
-                .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-        )
-        .body(full_body(KNOWHUB_VALIDATE_RESPONSE_BODY))
+fn build_mitm_stub_response(stub_response: MitmStubResponse) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+    let mut builder = Response::builder().status(stub_response.status);
+    let headers = builder
+        .headers_mut()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "MITM stub response builder has no headers"))?;
+    for (name, value) in stub_response.headers {
+        headers.insert(name, value);
+    }
+    headers.remove(TRANSFER_ENCODING);
+    headers.insert(
+        CONTENT_LENGTH,
+        HeaderValue::from_str(&stub_response.body.len().to_string())
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+    );
+    builder
+        .body(full_body(stub_response.body))
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn request(uri: &str) -> Request<()> {
-        match Request::builder().uri(uri).body(()) {
-            Ok(req) => req,
-            Err(err) => panic!("failed to build test request for {uri}: {err}"),
-        }
-    }
-
-    #[test]
-    fn knowhub_validate_request_matches_exact_https_target_and_path() {
-        let req = request("/access-tokens/validate");
-
-        assert!(is_knowhub_access_token_validate_request(&req, "AdminMaxApi.KnowHub.Cloud:443."));
-    }
-
-    #[test]
-    fn knowhub_validate_request_rejects_query_path_or_target_changes() {
-        assert!(!is_knowhub_access_token_validate_request(
-            &request("/access-tokens/validate?x=1"),
-            KNOWHUB_VALIDATE_TARGET
-        ));
-        assert!(!is_knowhub_access_token_validate_request(&request("/access-tokens/other"), KNOWHUB_VALIDATE_TARGET));
-        assert!(!is_knowhub_access_token_validate_request(
-            &request("/access-tokens/validate"),
-            "adminmaxapi.knowhub.cloud:444"
-        ));
-    }
 }
 
 async fn handle_mitm_websocket_upgrade(

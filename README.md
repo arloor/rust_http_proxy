@@ -151,6 +151,8 @@ Options:
           MITM 动态签发证书使用的 CA 私钥 PEM 文件
       --mitm-dump-plaintext
           打印 MITM 解密后的请求/响应头和 body 前 16KB。仅用于调试
+      --mitm-stub-config-file <FILE_PATH>
+          MITM stub YAML 配置文件，按 authority + path 固定返回响应
   -h, --help
           Print help
 ```
@@ -197,6 +199,33 @@ rust_http_proxy -p 7788 \
 ```
 
 客户端需要信任 `mitm-ca-cert.pem`，否则 HTTPS 校验会失败。`--mitm-dump-plaintext` 会把解密后的请求/响应头和 body 前 16KB 写入日志，请只在你有权限解密和代理的流量上使用该功能。
+
+#### MITM Stub 固定响应
+
+通过 `--mitm-stub-config-file` 可以让 MITM 在转发上游前按 `authority + path` 返回本地固定响应。`body_file` 支持相对路径，相对配置文件所在目录解析；程序会按 body 实际长度写入 `Content-Length`，不会自动 gzip/br/deflate 压缩。
+
+```bash
+rust_http_proxy -p 7788 \
+  --mitm-domain-suffix knowhub.cloud \
+  --mitm-ca-cert mitm-ca-cert.pem \
+  --mitm-ca-key mitm-ca-key.pem \
+  --mitm-stub-config-file mitm-stubs.yaml
+```
+
+```yaml
+adminmaxapi.knowhub.cloud:443:
+  - path: /access-tokens/validate
+    status: 200 # 可选，默认 200
+    headers:
+      content-type: application/json
+    body_file: responses/knowhub-validate.json
+```
+
+`responses/knowhub-validate.json`:
+
+```json
+{"ok":true,"status":"enabled","owner":"mitm","expire_at":0,"user_ok":true,"user_status":"free","user_expire_at":0}
+```
 
 ### 📂 静态文件托管配置
 
