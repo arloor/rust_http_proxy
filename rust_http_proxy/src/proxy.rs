@@ -317,7 +317,7 @@ impl<'a> ServiceType<'a> {
 
                         match *req.method() {
                             Method::CONNECT => {
-                                if config.mitm_authority.is_some() {
+                                if proxy_handler.should_mitm(&req) {
                                     proxy_handler
                                         .mitm_proxy(req, client_socket_addr, username)
                                         .map(InterceptResultAdapter::Return)
@@ -425,6 +425,16 @@ impl ProxyHandler {
 
         // 根据服务类型分发处理
         service_type.handle(req, client_socket_addr, self, &self.config).await
+    }
+
+    fn should_mitm(&self, req: &Request<Incoming>) -> bool {
+        if self.config.mitm_authority.is_none() || self.config.mitm_domain_suffixes.is_empty() {
+            return false;
+        }
+        let Some(addr) = host_addr(req.uri()) else {
+            return false;
+        };
+        host_matches_mitm_suffix(&addr.host(), &self.config.mitm_domain_suffixes)
     }
 
     /// 确定服务类型
@@ -1305,6 +1315,17 @@ fn is_schema_secure(uri: &Uri) -> bool {
     uri.scheme_str()
         .map(|scheme_str| matches!(scheme_str, "wss" | "https"))
         .unwrap_or_default()
+}
+
+fn host_matches_mitm_suffix(host: &str, suffixes: &[String]) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    suffixes.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .map(|prefix| prefix.ends_with('.'))
+                .unwrap_or_default()
+    })
 }
 
 #[allow(dead_code)]

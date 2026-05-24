@@ -92,8 +92,12 @@ pub struct Param {
         help = "优先使用 IPv6 进行连接。true表示IPv6优先，false表示IPv4优先，不设置则保持DNS原始顺序"
     )]
     ipv6_first: Option<bool>,
-    #[arg(long, help = "开启 HTTPS MITM。需要同时指定 --mitm-ca-cert 和 --mitm-ca-key")]
-    enable_mitm: bool,
+    #[arg(
+        long,
+        value_name = "SUFFIX",
+        help = "允许进行 HTTPS MITM 的域名后缀，可以多次指定。例如 example.com 会匹配 example.com 和 *.example.com"
+    )]
+    mitm_domain_suffix: Vec<String>,
     #[arg(long, value_name = "CERT", help = "MITM 动态签发证书使用的 CA 证书 PEM 文件")]
     mitm_ca_cert: Option<String>,
     #[arg(long, value_name = "KEY", help = "MITM 动态签发证书使用的 CA 私钥 PEM 文件")]
@@ -115,6 +119,7 @@ pub(crate) struct Config {
     pub(crate) forward_bypass: Option<ForwardBypassConfig>,
     pub(crate) ipv6_first: Option<bool>,
     pub(crate) mitm_authority: Option<Arc<MitmAuthority>>,
+    pub(crate) mitm_domain_suffixes: Vec<String>,
     pub(crate) mitm_dump_plaintext: bool,
 }
 
@@ -215,16 +220,18 @@ impl TryFrom<Param> for Config {
             param.enable_github_proxy,
         )?;
 
-        let mitm_authority = match (param.enable_mitm, param.mitm_ca_cert.as_ref(), param.mitm_ca_key.as_ref()) {
-            (true, Some(ca_cert), Some(ca_key)) => Some(Arc::new(MitmAuthority::load(ca_cert, ca_key)?)),
-            (true, _, _) => {
-                return Err("enable_mitm requires both --mitm-ca-cert and --mitm-ca-key".into());
-            }
-            (false, Some(_), _) | (false, _, Some(_)) => {
-                return Err("--mitm-ca-cert/--mitm-ca-key require --enable-mitm".into());
-            }
-            (false, None, None) => None,
-        };
+        let mitm_domain_suffixes = normalize_mitm_domain_suffixes(param.mitm_domain_suffix);
+        let mitm_authority =
+            match (mitm_domain_suffixes.is_empty(), param.mitm_ca_cert.as_ref(), param.mitm_ca_key.as_ref()) {
+                (false, Some(ca_cert), Some(ca_key)) => Some(Arc::new(MitmAuthority::load(ca_cert, ca_key)?)),
+                (false, _, _) => {
+                    return Err("--mitm-domain-suffix requires both --mitm-ca-cert and --mitm-ca-key".into());
+                }
+                (true, Some(_), _) | (true, _, Some(_)) => {
+                    return Err("--mitm-ca-cert/--mitm-ca-key require --mitm-domain-suffix".into());
+                }
+                (true, None, None) => None,
+            };
 
         let mut allowed_networks = Vec::new();
         if !param.allow_serving_network.is_empty() {
@@ -253,9 +260,27 @@ impl TryFrom<Param> for Config {
             forward_bypass,
             ipv6_first: param.ipv6_first,
             mitm_authority,
+            mitm_domain_suffixes,
             mitm_dump_plaintext: param.mitm_dump_plaintext,
         })
     }
+}
+
+fn normalize_mitm_domain_suffixes(suffixes: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for suffix in suffixes {
+        let suffix = suffix
+            .trim()
+            .trim_start_matches('.')
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        if suffix.is_empty() {
+            warn!("skip empty MITM domain suffix");
+        } else if !normalized.contains(&suffix) {
+            normalized.push(suffix);
+        }
+    }
+    normalized
 }
 
 pub(crate) fn load_config(param: Param) -> Result<Config, DynError> {
@@ -284,7 +309,7 @@ fn log_config(config: &Config) {
         info!("Referer header to images must contain {:?}", config.referer_keywords_to_self);
     }
     if config.mitm_authority.is_some() {
-        info!("HTTPS MITM is enabled");
+        info!("HTTPS MITM is enabled for suffixes: {:?}", config.mitm_domain_suffixes);
     }
     if config.mitm_dump_plaintext {
         info!("MITM plaintext dump is enabled");

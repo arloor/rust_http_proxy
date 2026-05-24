@@ -143,8 +143,8 @@ Options:
           指定上游代理服务器
       --ipv6-first <IPV6_FIRST>
           优先使用 IPv6 进行连接。true表示IPv6优先，false表示IPv4优先，不设置则保持DNS原始顺序 [possible values: true, false]
-      --enable-mitm
-          开启 HTTPS MITM。需要同时指定 --mitm-ca-cert 和 --mitm-ca-key
+      --mitm-domain-suffix <SUFFIX>
+          允许进行 HTTPS MITM 的域名后缀，可以多次指定。例如 example.com 会匹配 example.com 和 *.example.com
       --mitm-ca-cert <CERT>
           MITM 动态签发证书使用的 CA 证书 PEM 文件
       --mitm-ca-key <KEY>
@@ -177,7 +177,7 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
 
 ### HTTPS MITM 配置
 
-MITM 默认关闭。开启后，代理会在 `CONNECT` 请求上与客户端建立 TLS，使用指定 CA 动态签发目标域名证书，再把解密后的 HTTP 请求转发到真实 HTTPS 上游。
+MITM 默认关闭。配置 `--mitm-domain-suffix` 后，只有命中后缀的 `CONNECT` 请求会进入 MITM；其它 HTTPS 请求仍按普通隧道转发。进入 MITM 后，代理会与客户端建立 TLS，使用指定 CA 动态签发目标域名证书，再把解密后的 HTTP 请求转发到真实 HTTPS 上游。
 
 ```bash
 # 生成测试 CA
@@ -189,7 +189,8 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
 
 # 启动 MITM 正向代理
 rust_http_proxy -p 7788 \
-  --enable-mitm \
+  --mitm-domain-suffix example.com \
+  --mitm-domain-suffix example.org \
   --mitm-dump-plaintext \
   --mitm-ca-cert mitm-ca-cert.pem \
   --mitm-ca-key mitm-ca-key.pem
