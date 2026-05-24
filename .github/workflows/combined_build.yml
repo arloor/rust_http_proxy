@@ -39,7 +39,7 @@ jobs:
               export LIBBPF_SYS_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/x86_64-linux-gnu
               echo -e "\e[31mLIBBPF_SYS_LIBRARY_PATH=$LIBBPF_SYS_LIBRARY_PATH\e[0m"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set outputs
         id: vars
         run: echo "sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
@@ -70,7 +70,7 @@ jobs:
 
       # 上传构建好的二进制文件作为构建工件
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.binary-name }}
           path: ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # 创建目录存放下载的二进制文件
       - name: Create directory for binaries
@@ -101,19 +101,19 @@ jobs:
 
       # 下载所有构建好的二进制文件
       - name: Download standard binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rust_http_proxy
           path: release_binaries
 
       - name: Download bpf dynamic binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rust_http_proxy_bpf
           path: release_binaries
 
       - name: Download bpf static binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rust_http_proxy_bpf_static
           path: release_binaries
