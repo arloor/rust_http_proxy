@@ -22,6 +22,7 @@
         "-p",
         "7788",
         "--enable-mitm",
+        "--mitm-dump-plaintext",
         "--mitm-ca-cert",
         "${workspaceFolder}/certs/mitm-ca-cert.pem",
         "--mitm-ca-key",

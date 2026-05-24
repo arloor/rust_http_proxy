@@ -384,6 +384,7 @@ impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
 pub struct ProxyHandler {
     config: Arc<Config>,
     forward_proxy_client: ForwardProxyClient<Incoming>,
+    mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
     reverse_proxy_client: legacy::Client<
         HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
         http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
@@ -407,11 +408,13 @@ impl ProxyHandler {
     pub fn new(config: Arc<Config>) -> Result<Self, crate::DynError> {
         let reverse_client = build_hyper_legacy_client(config.ipv6_first);
         let http1_client = ForwardProxyClient::<Incoming>::new();
+        let mitm_client = ForwardProxyClient::<BoxBody<Bytes, io::Error>>::new();
 
         Ok(ProxyHandler {
             config,
             reverse_proxy_client: reverse_client,
             forward_proxy_client: http1_client,
+            mitm_proxy_client: mitm_client,
         })
     }
     pub async fn handle(
@@ -833,8 +836,9 @@ impl ProxyHandler {
             }
         };
 
-        let forward_proxy_client = self.forward_proxy_client.clone();
+        let mitm_proxy_client = self.mitm_proxy_client.clone();
         let ipv6_first = self.config.ipv6_first;
+        let mitm_dump_plaintext = self.config.mitm_dump_plaintext;
         tokio::task::spawn(async move {
             let access_tag = format!("{} -> {}", client_socket_addr.ip().to_canonical(), target);
             let src_upgraded = match hyper::upgrade::on(req).await {
@@ -855,12 +859,20 @@ impl ProxyHandler {
             };
 
             let service = service_fn(move |req| {
-                let forward_proxy_client = forward_proxy_client.clone();
+                let mitm_proxy_client = mitm_proxy_client.clone();
                 let target = target.clone();
                 let username = username.clone();
                 async move {
-                    handle_mitm_request(req, forward_proxy_client, client_socket_addr, target, username, ipv6_first)
-                        .await
+                    handle_mitm_request(
+                        req,
+                        mitm_proxy_client,
+                        client_socket_addr,
+                        target,
+                        username,
+                        ipv6_first,
+                        mitm_dump_plaintext,
+                    )
+                    .await
                 }
             });
 
@@ -1013,8 +1025,8 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
 }
 
 async fn handle_mitm_request(
-    mut req: Request<Incoming>, forward_proxy_client: ForwardProxyClient<Incoming>, client_socket_addr: SocketAddr,
-    target: String, username: String, ipv6_first: Option<bool>,
+    mut req: Request<Incoming>, mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
+    client_socket_addr: SocketAddr, target: String, username: String, ipv6_first: Option<bool>, dump_plaintext: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     let access_label = AccessLabel {
         client: client_socket_addr.ip().to_canonical().to_string(),
@@ -1024,6 +1036,9 @@ async fn handle_mitm_request(
     };
     let is_websocket = is_websocket_upgrade(&req);
     mod_mitm_proxy_req(&mut req, &access_label.target)?;
+    if dump_plaintext {
+        log_mitm_request_head(&req, &access_label);
+    }
 
     info!(
         "[mitm] {:^35} ==> {} {:?} {:?}",
@@ -1034,56 +1049,166 @@ async fn handle_mitm_request(
     );
 
     if is_websocket {
-        return handle_mitm_websocket_upgrade(req, forward_proxy_client, access_label, ipv6_first).await;
+        return handle_mitm_websocket_upgrade(req, mitm_proxy_client, access_label, ipv6_first, dump_plaintext).await;
     }
 
-    let resp = forward_proxy_client
+    let req = map_mitm_request_body(req, access_label.clone(), dump_plaintext);
+    let resp = mitm_proxy_client
         .send_request(req, &access_label, ipv6_first, |stream: EitherTlsStream, access_label: AccessLabel| {
             CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
         })
         .await?;
+    if dump_plaintext {
+        log_mitm_response_head(&resp, &access_label);
+    }
 
-    Ok(resp.map(|body| {
-        body.map_err(|e| {
-            let e = e;
-            io::Error::new(ErrorKind::InvalidData, e)
-        })
-        .boxed()
-    }))
+    Ok(map_mitm_response_body(resp, access_label, dump_plaintext))
 }
 
 async fn handle_mitm_websocket_upgrade(
-    mut req: Request<Incoming>, forward_proxy_client: ForwardProxyClient<Incoming>, access_label: AccessLabel,
-    ipv6_first: Option<bool>,
+    mut req: Request<Incoming>, mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
+    access_label: AccessLabel, ipv6_first: Option<bool>, dump_plaintext: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     debug!("[mitm] WebSocket upgrade request to {}", &access_label.target);
+    if dump_plaintext {
+        info!("[mitm plaintext websocket] upgraded streams are tunneled without body dump: {access_label}");
+    }
     let client_upgrade = hyper::upgrade::on(&mut req);
-    let mut upstream_response = forward_proxy_client
+    let req = map_mitm_request_body(req, access_label.clone(), dump_plaintext);
+    let mut upstream_response = mitm_proxy_client
         .send_request(req, &access_label, ipv6_first, |stream: EitherTlsStream, access_label: AccessLabel| {
             CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
         })
         .await?;
+    if dump_plaintext {
+        log_mitm_response_head(&upstream_response, &access_label);
+    }
 
     if upstream_response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
         warn!("[mitm] WebSocket upgrade failed, upstream returned: {}", upstream_response.status());
-        return Ok(upstream_response.map(|body| {
-            body.map_err(|e| {
-                let e = e;
-                io::Error::new(ErrorKind::InvalidData, e)
-            })
-            .boxed()
-        }));
+        return Ok(map_mitm_response_body(upstream_response, access_label, dump_plaintext));
     }
 
     let upstream_upgrade = hyper::upgrade::on(&mut upstream_response);
     spawn_websocket_tunnel(client_upgrade, upstream_upgrade, None, "mitm");
-    Ok(upstream_response.map(|body| {
-        body.map_err(|e| {
-            let e = e;
-            io::Error::new(ErrorKind::InvalidData, e)
-        })
-        .boxed()
-    }))
+    Ok(map_mitm_response_body(upstream_response, access_label, dump_plaintext))
+}
+
+const MITM_DUMP_BODY_LIMIT: usize = 16 * 1024;
+
+fn map_mitm_request_body(
+    req: Request<Incoming>, access_label: AccessLabel, dump_plaintext: bool,
+) -> Request<BoxBody<Bytes, io::Error>> {
+    req.map(|body| {
+        let body = body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
+        if dump_plaintext {
+            let mut bytes_seen = 0usize;
+            let mut truncated = false;
+            body.map_frame(move |frame| {
+                if let Some(data) = frame.data_ref() {
+                    log_mitm_body_chunk(&access_label, "request", data, &mut bytes_seen, &mut truncated);
+                }
+                frame
+            })
+            .boxed()
+        } else {
+            body.boxed()
+        }
+    })
+}
+
+fn map_mitm_response_body(
+    resp: Response<Incoming>, access_label: AccessLabel, dump_plaintext: bool,
+) -> Response<BoxBody<Bytes, io::Error>> {
+    resp.map(|body| {
+        let body = body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
+        if dump_plaintext {
+            let mut bytes_seen = 0usize;
+            let mut truncated = false;
+            body.map_frame(move |frame| {
+                if let Some(data) = frame.data_ref() {
+                    log_mitm_body_chunk(&access_label, "response", data, &mut bytes_seen, &mut truncated);
+                }
+                frame
+            })
+            .boxed()
+        } else {
+            body.boxed()
+        }
+    })
+}
+
+fn log_mitm_request_head(req: &Request<Incoming>, access_label: &AccessLabel) {
+    info!("[mitm plaintext request curl] {access_label}\n{}", format_request_as_curl(req, access_label));
+}
+
+fn log_mitm_response_head(resp: &Response<Incoming>, access_label: &AccessLabel) {
+    info!(
+        "[mitm plaintext response head] {access_label}\n{:?} {}\n{}",
+        resp.version(),
+        resp.status(),
+        format_headers(resp.headers()),
+    );
+}
+
+fn format_headers(headers: &http::HeaderMap) -> String {
+    let mut output = String::new();
+    for (name, value) in headers {
+        output.push_str(name.as_str());
+        output.push_str(": ");
+        output.push_str(&String::from_utf8_lossy(value.as_bytes()));
+        output.push('\n');
+    }
+    output
+}
+
+fn format_request_as_curl(req: &Request<Incoming>, access_label: &AccessLabel) -> String {
+    let url = match req.uri().scheme() {
+        Some(_) => req.uri().to_string(),
+        None => {
+            let path = req.uri().path_and_query().map(|path| path.as_str()).unwrap_or("/");
+            format!("https://{}{path}", access_label.target)
+        }
+    };
+
+    let mut output = format!("curl --http1.1 -X {} \\\n  {}", req.method(), shell_quote(&url));
+    for (name, value) in req.headers() {
+        let header = format!("{}: {}", name.as_str(), String::from_utf8_lossy(value.as_bytes()));
+        output.push_str(" \\\n  -H ");
+        output.push_str(&shell_quote(&header));
+    }
+    output
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn log_mitm_body_chunk(
+    access_label: &AccessLabel, direction: &'static str, data: &Bytes, bytes_seen: &mut usize, truncated: &mut bool,
+) {
+    if data.is_empty() {
+        return;
+    }
+    if *bytes_seen >= MITM_DUMP_BODY_LIMIT {
+        if !*truncated {
+            info!("[mitm plaintext {direction} body] {access_label} truncated after {MITM_DUMP_BODY_LIMIT} bytes");
+            *truncated = true;
+        }
+        *bytes_seen = (*bytes_seen).saturating_add(data.len());
+        return;
+    }
+
+    let remaining = MITM_DUMP_BODY_LIMIT - *bytes_seen;
+    let logged_len = remaining.min(data.len());
+    let plaintext = String::from_utf8_lossy(&data[..logged_len]);
+    info!("[mitm plaintext {direction} body] {access_label} {logged_len} bytes\n{plaintext}");
+
+    *bytes_seen = (*bytes_seen).saturating_add(data.len());
+    if data.len() > remaining && !*truncated {
+        info!("[mitm plaintext {direction} body] {access_label} truncated after {MITM_DUMP_BODY_LIMIT} bytes");
+        *truncated = true;
+    }
 }
 
 fn mod_mitm_proxy_req(req: &mut Request<Incoming>, target_authority: &str) -> io::Result<()> {

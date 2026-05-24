@@ -149,6 +149,8 @@ Options:
           MITM 动态签发证书使用的 CA 证书 PEM 文件
       --mitm-ca-key <KEY>
           MITM 动态签发证书使用的 CA 私钥 PEM 文件
+      --mitm-dump-plaintext
+          打印 MITM 解密后的请求/响应头和 body 前 16KB。仅用于调试
   -h, --help
           Print help
 ```
@@ -188,11 +190,12 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
 # 启动 MITM 正向代理
 rust_http_proxy -p 7788 \
   --enable-mitm \
+  --mitm-dump-plaintext \
   --mitm-ca-cert mitm-ca-cert.pem \
   --mitm-ca-key mitm-ca-key.pem
 ```
 
-客户端需要信任 `mitm-ca-cert.pem`，否则 HTTPS 校验会失败。请只在你有权限解密和代理的流量上使用该功能。
+客户端需要信任 `mitm-ca-cert.pem`，否则 HTTPS 校验会失败。`--mitm-dump-plaintext` 会把解密后的请求/响应头和 body 前 16KB 写入日志，请只在你有权限解密和代理的流量上使用该功能。
 
 ### 📂 静态文件托管配置
 

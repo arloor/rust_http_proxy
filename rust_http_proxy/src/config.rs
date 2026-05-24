@@ -98,6 +98,8 @@ pub struct Param {
     mitm_ca_cert: Option<String>,
     #[arg(long, value_name = "KEY", help = "MITM 动态签发证书使用的 CA 私钥 PEM 文件")]
     mitm_ca_key: Option<String>,
+    #[arg(long, help = "打印 MITM 解密后的请求/响应头和 body 前 16KB。仅用于调试")]
+    mitm_dump_plaintext: bool,
 }
 
 pub(crate) struct Config {
@@ -113,6 +115,7 @@ pub(crate) struct Config {
     pub(crate) forward_bypass: Option<ForwardBypassConfig>,
     pub(crate) ipv6_first: Option<bool>,
     pub(crate) mitm_authority: Option<Arc<MitmAuthority>>,
+    pub(crate) mitm_dump_plaintext: bool,
 }
 
 pub(crate) struct ForwardBypassConfig {
@@ -250,6 +253,7 @@ impl TryFrom<Param> for Config {
             forward_bypass,
             ipv6_first: param.ipv6_first,
             mitm_authority,
+            mitm_dump_plaintext: param.mitm_dump_plaintext,
         })
     }
 }
@@ -281,6 +285,9 @@ fn log_config(config: &Config) {
     }
     if config.mitm_authority.is_some() {
         info!("HTTPS MITM is enabled");
+    }
+    if config.mitm_dump_plaintext {
+        info!("MITM plaintext dump is enabled");
     }
     info!("basic auth is {:?}", config.basic_auth);
     if !config.location_specs.locations.is_empty() {
