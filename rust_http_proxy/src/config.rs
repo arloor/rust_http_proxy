@@ -6,8 +6,10 @@ use ipnetwork::IpNetwork;
 use log::{info, warn};
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::location::{LocationSpecs, parse_location_specs};
+use crate::mitm::MitmAuthority;
 use crate::{DynError, IDLE_TIMEOUT};
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
@@ -90,6 +92,12 @@ pub struct Param {
         help = "优先使用 IPv6 进行连接。true表示IPv6优先，false表示IPv4优先，不设置则保持DNS原始顺序"
     )]
     ipv6_first: Option<bool>,
+    #[arg(long, help = "开启 HTTPS MITM。需要同时指定 --mitm-ca-cert 和 --mitm-ca-key")]
+    enable_mitm: bool,
+    #[arg(long, value_name = "CERT", help = "MITM 动态签发证书使用的 CA 证书 PEM 文件")]
+    mitm_ca_cert: Option<String>,
+    #[arg(long, value_name = "KEY", help = "MITM 动态签发证书使用的 CA 私钥 PEM 文件")]
+    mitm_ca_key: Option<String>,
 }
 
 pub(crate) struct Config {
@@ -104,6 +112,7 @@ pub(crate) struct Config {
     pub(crate) location_specs: LocationSpecs,
     pub(crate) forward_bypass: Option<ForwardBypassConfig>,
     pub(crate) ipv6_first: Option<bool>,
+    pub(crate) mitm_authority: Option<Arc<MitmAuthority>>,
 }
 
 pub(crate) struct ForwardBypassConfig {
@@ -203,6 +212,17 @@ impl TryFrom<Param> for Config {
             param.enable_github_proxy,
         )?;
 
+        let mitm_authority = match (param.enable_mitm, param.mitm_ca_cert.as_ref(), param.mitm_ca_key.as_ref()) {
+            (true, Some(ca_cert), Some(ca_key)) => Some(Arc::new(MitmAuthority::load(ca_cert, ca_key)?)),
+            (true, _, _) => {
+                return Err("enable_mitm requires both --mitm-ca-cert and --mitm-ca-key".into());
+            }
+            (false, Some(_), _) | (false, _, Some(_)) => {
+                return Err("--mitm-ca-cert/--mitm-ca-key require --enable-mitm".into());
+            }
+            (false, None, None) => None,
+        };
+
         let mut allowed_networks = Vec::new();
         if !param.allow_serving_network.is_empty() {
             for network_str in &param.allow_serving_network {
@@ -229,6 +249,7 @@ impl TryFrom<Param> for Config {
             location_specs,
             forward_bypass,
             ipv6_first: param.ipv6_first,
+            mitm_authority,
         })
     }
 }
@@ -257,6 +278,9 @@ fn log_config(config: &Config) {
     }
     if !config.referer_keywords_to_self.is_empty() {
         info!("Referer header to images must contain {:?}", config.referer_keywords_to_self);
+    }
+    if config.mitm_authority.is_some() {
+        info!("HTTPS MITM is enabled");
     }
     info!("basic auth is {:?}", config.basic_auth);
     if !config.location_specs.locations.is_empty() {

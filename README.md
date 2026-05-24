@@ -10,6 +10,7 @@
 ### 🚀 代理功能
 
 - **正向代理**：支持 HTTP/HTTPS 代理，可通过用户名密码认证
+- **HTTPS MITM**：可使用自定义 CA 动态签发目标域名证书并解密转发
 - **反向代理**：支持灵活配置反向代理路由规则
 - **链式代理**：通过 `--forward-bypass-url` 指定上游代理服务器
 - **websocket**: 正向代理和反向代理均支持websocket
@@ -142,6 +143,12 @@ Options:
           指定上游代理服务器
       --ipv6-first <IPV6_FIRST>
           优先使用 IPv6 进行连接。true表示IPv6优先，false表示IPv4优先，不设置则保持DNS原始顺序 [possible values: true, false]
+      --enable-mitm
+          开启 HTTPS MITM。需要同时指定 --mitm-ca-cert 和 --mitm-ca-key
+      --mitm-ca-cert <CERT>
+          MITM 动态签发证书使用的 CA 证书 PEM 文件
+      --mitm-ca-key <KEY>
+          MITM 动态签发证书使用的 CA 私钥 PEM 文件
   -h, --help
           Print help
 ```
@@ -165,6 +172,27 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
 
 - 购买商业 TLS 证书
 - 使用 [acme.sh](https://github.com/acmesh-official/acme.sh) 等工具申请 Let's Encrypt 免费证书
+
+### HTTPS MITM 配置
+
+MITM 默认关闭。开启后，代理会在 `CONNECT` 请求上与客户端建立 TLS，使用指定 CA 动态签发目标域名证书，再把解密后的 HTTP 请求转发到真实 HTTPS 上游。
+
+```bash
+# 生成测试 CA
+openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
+  -keyout mitm-ca-key.pem \
+  -out mitm-ca-cert.pem \
+  -days 3650 \
+  -subj "/CN=rust_http_proxy MITM CA"
+
+# 启动 MITM 正向代理
+rust_http_proxy -p 7788 \
+  --enable-mitm \
+  --mitm-ca-cert mitm-ca-cert.pem \
+  --mitm-ca-key mitm-ca-key.pem
+```
+
+客户端需要信任 `mitm-ca-cert.pem`，否则 HTTPS 校验会失败。请只在你有权限解密和代理的流量上使用该功能。
 
 ### 📂 静态文件托管配置
 

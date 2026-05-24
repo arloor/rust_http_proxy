@@ -33,6 +33,14 @@ pub struct ForwardProxyClient<B> {
     cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>,
 }
 
+impl<B> Clone for ForwardProxyClient<B> {
+    fn clone(&self) -> Self {
+        Self {
+            cache_conn: self.cache_conn.clone(),
+        }
+    }
+}
+
 impl<B> ForwardProxyClient<B>
 where
     B: Body + Send + Unpin + Debug + 'static,

@@ -78,6 +78,12 @@ anyhow = "1"
 serde_yaml_bw = "2.5.1"
 futures = "0.3.31"
 x509-cert = "0.2"
+rcgen = { version = "0.14", default-features = false, features = [
+    "crypto",
+    "pem",
+    "x509-parser",
+    "aws_lc_rs",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 socket_filter = { version = "0.2", optional = true }

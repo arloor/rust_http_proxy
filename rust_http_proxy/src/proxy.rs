@@ -31,7 +31,10 @@ use http::{
 };
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
-use hyper::{Method, Response, Version, body::Bytes, header::HeaderValue, http, upgrade::Upgraded};
+use hyper::{
+    Method, Response, Version, body::Bytes, header::HeaderValue, http, server::conn::http1, service::service_fn,
+    upgrade::Upgraded,
+};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
@@ -43,7 +46,7 @@ use rand::RngExt;
 use std::sync::Arc;
 
 use tokio::{net::TcpStream, pin};
-use tokio_rustls::TlsConnector;
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tokio_rustls::{client::TlsStream, rustls::pki_types};
 
 static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
@@ -313,17 +316,30 @@ impl<'a> ServiceType<'a> {
                         );
 
                         match *req.method() {
-                            Method::CONNECT => match config.forward_bypass.as_ref() {
-                                Some(forward_bypass_config) => {
-                                    let result = proxy_handler
-                                        .tunnel_proxy_bypass(req, client_socket_addr, username, forward_bypass_config)
-                                        .await;
-                                    result.map(InterceptResultAdapter::Return)
+                            Method::CONNECT => {
+                                if config.mitm_authority.is_some() {
+                                    proxy_handler
+                                        .mitm_proxy(req, client_socket_addr, username)
+                                        .map(InterceptResultAdapter::Return)
+                                } else {
+                                    match config.forward_bypass.as_ref() {
+                                        Some(forward_bypass_config) => {
+                                            let result = proxy_handler
+                                                .tunnel_proxy_bypass(
+                                                    req,
+                                                    client_socket_addr,
+                                                    username,
+                                                    forward_bypass_config,
+                                                )
+                                                .await;
+                                            result.map(InterceptResultAdapter::Return)
+                                        }
+                                        None => proxy_handler
+                                            .tunnel_proxy(req, client_socket_addr, username)
+                                            .map(InterceptResultAdapter::Return),
+                                    }
                                 }
-                                None => proxy_handler
-                                    .tunnel_proxy(req, client_socket_addr, username)
-                                    .map(InterceptResultAdapter::Return),
-                            },
+                            }
                             _ => match config.forward_bypass.as_ref() {
                                 Some(forward_bypass_config) => {
                                     let result = proxy_handler
@@ -790,6 +806,88 @@ impl ProxyHandler {
 
     /// 代理CONNECT请求
     /// HTTP/1.1 CONNECT    
+    fn mitm_proxy(
+        &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
+    ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+        let Some(addr) = host_addr(req.uri()) else {
+            warn!("CONNECT host is not socket addr: {:?}", req.uri());
+            let mut resp = Response::new(full_body("CONNECT must be to a socket address"));
+            *resp.status_mut() = http::StatusCode::BAD_REQUEST;
+            return Ok(resp);
+        };
+        let Some(mitm_authority) = self.config.mitm_authority.as_ref().cloned() else {
+            let mut resp = Response::new(full_body("MITM is not enabled"));
+            *resp.status_mut() = http::StatusCode::BAD_REQUEST;
+            return Ok(resp);
+        };
+
+        let cert_host = addr.host();
+        let target = addr.to_string();
+        let tls_config = match mitm_authority.server_config_for(&cert_host) {
+            Ok(tls_config) => tls_config,
+            Err(e) => {
+                warn!("[mitm cert error] [{}]: {}", target, e);
+                let mut resp = Response::new(full_body("Failed to generate MITM certificate"));
+                *resp.status_mut() = http::StatusCode::BAD_GATEWAY;
+                return Ok(resp);
+            }
+        };
+
+        let forward_proxy_client = self.forward_proxy_client.clone();
+        let ipv6_first = self.config.ipv6_first;
+        tokio::task::spawn(async move {
+            let access_tag = format!("{} -> {}", client_socket_addr.ip().to_canonical(), target);
+            let src_upgraded = match hyper::upgrade::on(req).await {
+                Ok(src_upgraded) => src_upgraded,
+                Err(e) => {
+                    warn!("[mitm upgrade error] [{}]: {}", access_tag, e);
+                    return;
+                }
+            };
+
+            let tls_acceptor = TlsAcceptor::from(tls_config);
+            let tls_stream = match tls_acceptor.accept(TokioIo::new(src_upgraded)).await {
+                Ok(tls_stream) => tls_stream,
+                Err(e) => {
+                    warn!("[mitm tls accept error] [{}]: {}", access_tag, e);
+                    return;
+                }
+            };
+
+            let service = service_fn(move |req| {
+                let forward_proxy_client = forward_proxy_client.clone();
+                let target = target.clone();
+                let username = username.clone();
+                async move {
+                    handle_mitm_request(req, forward_proxy_client, client_socket_addr, target, username, ipv6_first)
+                        .await
+                }
+            });
+
+            let result = http1::Builder::new()
+                .preserve_header_case(true)
+                .title_case_headers(true)
+                .serve_connection(TokioIo::new(tls_stream), service)
+                .with_upgrades()
+                .await;
+            if let Err(e) = result {
+                warn!("[mitm connection error] [{}]: {}", access_tag, e);
+            }
+        });
+
+        let mut response = Response::new(empty_body());
+        let max_num = 2048 / LOCAL_IP.len();
+        let count = rand::rng().random_range(1..max_num);
+        for _ in 0..count {
+            response
+                .headers_mut()
+                .append(http::header::SERVER, HeaderValue::from_static(&LOCAL_IP));
+        }
+        Ok(response)
+    }
+
+    /// 代理CONNECT请求
+    /// HTTP/1.1 CONNECT    
     fn tunnel_proxy(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
@@ -911,6 +1009,94 @@ fn mod_http1_proxy_req(req: &mut Request<Incoming>) -> io::Result<()> {
     }
     // change absoulte uri to relative uri
     origin_form(req.uri_mut())?;
+    Ok(())
+}
+
+async fn handle_mitm_request(
+    mut req: Request<Incoming>, forward_proxy_client: ForwardProxyClient<Incoming>, client_socket_addr: SocketAddr,
+    target: String, username: String, ipv6_first: Option<bool>,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+    let access_label = AccessLabel {
+        client: client_socket_addr.ip().to_canonical().to_string(),
+        target,
+        username,
+        relay_over_tls: Some(true),
+    };
+    let is_websocket = is_websocket_upgrade(&req);
+    mod_mitm_proxy_req(&mut req, &access_label.target)?;
+
+    info!(
+        "[mitm] {:^35} ==> {} {:?} {:?}",
+        SocketAddrFormat(&client_socket_addr).to_string(),
+        req.method(),
+        req.uri(),
+        req.version(),
+    );
+
+    if is_websocket {
+        return handle_mitm_websocket_upgrade(req, forward_proxy_client, access_label, ipv6_first).await;
+    }
+
+    let resp = forward_proxy_client
+        .send_request(req, &access_label, ipv6_first, |stream: EitherTlsStream, access_label: AccessLabel| {
+            CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+        })
+        .await?;
+
+    Ok(resp.map(|body| {
+        body.map_err(|e| {
+            let e = e;
+            io::Error::new(ErrorKind::InvalidData, e)
+        })
+        .boxed()
+    }))
+}
+
+async fn handle_mitm_websocket_upgrade(
+    mut req: Request<Incoming>, forward_proxy_client: ForwardProxyClient<Incoming>, access_label: AccessLabel,
+    ipv6_first: Option<bool>,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+    debug!("[mitm] WebSocket upgrade request to {}", &access_label.target);
+    let client_upgrade = hyper::upgrade::on(&mut req);
+    let mut upstream_response = forward_proxy_client
+        .send_request(req, &access_label, ipv6_first, |stream: EitherTlsStream, access_label: AccessLabel| {
+            CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+        })
+        .await?;
+
+    if upstream_response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        warn!("[mitm] WebSocket upgrade failed, upstream returned: {}", upstream_response.status());
+        return Ok(upstream_response.map(|body| {
+            body.map_err(|e| {
+                let e = e;
+                io::Error::new(ErrorKind::InvalidData, e)
+            })
+            .boxed()
+        }));
+    }
+
+    let upstream_upgrade = hyper::upgrade::on(&mut upstream_response);
+    spawn_websocket_tunnel(client_upgrade, upstream_upgrade, None, "mitm");
+    Ok(upstream_response.map(|body| {
+        body.map_err(|e| {
+            let e = e;
+            io::Error::new(ErrorKind::InvalidData, e)
+        })
+        .boxed()
+    }))
+}
+
+fn mod_mitm_proxy_req(req: &mut Request<Incoming>, target_authority: &str) -> io::Result<()> {
+    req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
+    req.headers_mut().remove("Proxy-Connection");
+    if !req.headers().contains_key(HOST) {
+        let host_header =
+            HeaderValue::from_str(target_authority).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        req.headers_mut().insert(HOST, host_header);
+    }
+    if req.uri().scheme().is_some() || req.uri().authority().is_some() {
+        origin_form(req.uri_mut())?;
+    }
     Ok(())
 }
 
