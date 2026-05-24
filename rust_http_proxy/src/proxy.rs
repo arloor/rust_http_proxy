@@ -27,7 +27,7 @@ use axum::extract::Request;
 use axum_bootstrap::InterceptResult;
 use http::{
     Uri,
-    header::{HOST, LOCATION},
+    header::{CONTENT_LENGTH, CONTENT_TYPE, HOST, LOCATION},
 };
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
@@ -1058,6 +1058,11 @@ async fn handle_mitm_request(
         req.version(),
     );
 
+    if is_knowhub_access_token_validate_request(&req, &access_label.target) {
+        info!("[mitm stub] returning fixed access-token validation response for {access_label}");
+        return build_knowhub_access_token_validate_response();
+    }
+
     if is_websocket {
         return handle_mitm_websocket_upgrade(req, mitm_proxy_client, access_label, ipv6_first, dump_plaintext).await;
     }
@@ -1073,6 +1078,61 @@ async fn handle_mitm_request(
     }
 
     Ok(map_mitm_response_body(resp, access_label, dump_plaintext))
+}
+
+const KNOWHUB_VALIDATE_TARGET: &str = "adminmaxapi.knowhub.cloud:443";
+const KNOWHUB_VALIDATE_PATH: &str = "/access-tokens/validate";
+const KNOWHUB_VALIDATE_RESPONSE_BODY: &str = r#"{"ok":true,"status":"enabled","owner":"mitm","expire_at":0,"user_ok":true,"user_status":"free","user_expire_at":0}"#;
+
+fn is_knowhub_access_token_validate_request<B>(req: &Request<B>, target_authority: &str) -> bool {
+    target_authority.trim().trim_end_matches('.').to_ascii_lowercase() == KNOWHUB_VALIDATE_TARGET
+        && req.uri().path() == KNOWHUB_VALIDATE_PATH
+        && req.uri().query().is_none()
+}
+
+fn build_knowhub_access_token_validate_response() -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+    Response::builder()
+        .status(http::StatusCode::OK)
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .header(
+            CONTENT_LENGTH,
+            HeaderValue::from_str(&KNOWHUB_VALIDATE_RESPONSE_BODY.len().to_string())
+                .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+        )
+        .body(full_body(KNOWHUB_VALIDATE_RESPONSE_BODY))
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(uri: &str) -> Request<()> {
+        match Request::builder().uri(uri).body(()) {
+            Ok(req) => req,
+            Err(err) => panic!("failed to build test request for {uri}: {err}"),
+        }
+    }
+
+    #[test]
+    fn knowhub_validate_request_matches_exact_https_target_and_path() {
+        let req = request("/access-tokens/validate");
+
+        assert!(is_knowhub_access_token_validate_request(&req, "AdminMaxApi.KnowHub.Cloud:443."));
+    }
+
+    #[test]
+    fn knowhub_validate_request_rejects_query_path_or_target_changes() {
+        assert!(!is_knowhub_access_token_validate_request(
+            &request("/access-tokens/validate?x=1"),
+            KNOWHUB_VALIDATE_TARGET
+        ));
+        assert!(!is_knowhub_access_token_validate_request(&request("/access-tokens/other"), KNOWHUB_VALIDATE_TARGET));
+        assert!(!is_knowhub_access_token_validate_request(
+            &request("/access-tokens/validate"),
+            "adminmaxapi.knowhub.cloud:444"
+        ));
+    }
 }
 
 async fn handle_mitm_websocket_upgrade(
