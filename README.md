@@ -151,6 +151,7 @@ Options:
 #### 生成自签名证书（测试用）
 
 ```bash
+mkdir -p /usr/share/rust_http_proxy
 openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
   -keyout /usr/share/rust_http_proxy/privkey.pem \
   -out /usr/share/rust_http_proxy/cert.pem \
