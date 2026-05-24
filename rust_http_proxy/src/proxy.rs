@@ -162,12 +162,15 @@ impl<'a> ServiceType<'a> {
                             })
                             .boxed()
                     });
+                    let upstream_req_method = upstream_req.method().clone();
+                    let upstream_req_uri = upstream_req.uri().clone();
+                    let upstream_req_version = upstream_req.version();
                     info!(
-                        "[reverse] {:^35} ==> {} {:?} {:?} <== [{}{}]",
+                        "[reverse response] {:^35} ==> {} {:?} {:?} <== [{}{}]",
                         SocketAddrFormat(&client_socket_addr).to_string(),
-                        upstream_req.method(),
-                        &upstream_req.uri(),
-                        upstream_req.version(),
+                        upstream_req_method,
+                        upstream_req_uri,
+                        upstream_req_version,
                         original_scheme_host_port,
                         location,
                     );
@@ -178,6 +181,16 @@ impl<'a> ServiceType<'a> {
                                 normalize302(original_scheme_host_port, resp.headers_mut(), config)?;
                                 //修改302的location
                             }
+                            info!(
+                                "[reverse] {:^35} ==> {} {:?} {:?} <== {} [{}{}]",
+                                SocketAddrFormat(&client_socket_addr).to_string(),
+                                upstream_req_method,
+                                upstream_req_uri,
+                                upstream_req_version,
+                                resp.status(),
+                                original_scheme_host_port,
+                                location,
+                            );
 
                             Ok(resp.map(|body| {
                                 // 使用 CounterBody 包装 body 来统计响应流量
