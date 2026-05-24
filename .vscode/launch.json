@@ -1,69 +1,76 @@
 {
-    // 使用 IntelliSense 了解相关属性。 
-    // 悬停以查看现有属性的描述。
-    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug rust_http_proxy",
-            "cwd": "${workspaceFolder}",
-            "terminal": "integrated",
-            // https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md#rust-language-support
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=rust_http_proxy",
-                    "--package=rust_http_proxy",
-                    // "--features",
-                    // "bpf",
-                    // "--features",
-                    // "jemalloc",
-                    // "--no-default-features",
-                    // "--features","aws_lc_rs",
-                    // "--features","pnet",
-                ],
-                "env": {
-                    "RUST_BACKTRACE": "1",
-                },
-                "problemMatcher": "$rustc", // Problem matcher(s) to apply to cargo output.
-                "filter": {
-                    "kind": "bin",
-                    "name": "rust_http_proxy"
-                }
-            },
-            "sourceLanguages": [
-                "rust"
-            ],
-            // https://code.visualstudio.com/docs/editor/variables-reference
-            // "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
-            // "preLaunchTask": "rust: cargo build",
-            "args": [
-                "-p",
-                "7788",
-                "-c",
-                "cert.pem",
-                "-k",
-                "privkey.pem",
-                "-u",
-                "username:password",
-                // "-w",
-                // ".",
-                "-o",
-                "--never-ask-for-auth",
-                // "--allow-serving-network=192.168.5.0/24",
-                // "--allow-serving-network=127.0.0.1/32",
-                "-r=arloor",
-                // "--location-config-file=.vscode/location.yaml",
-                // "--enable-github-proxy",
-                "--append-upstream-url=https://cdnjs.cloudflare.com",
-                // "--append-upstream-url=https://ip.im/info",
-                // "--ipv6-first",
-            ],
-            "env": {
-                "HOSTNAME": "test"
-            },
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "rust_http_proxy: MITM",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--package",
+          "rust_http_proxy",
+          "--bin",
+          "rust_http_proxy"
+        ],
+        "filter": {
+          "name": "rust_http_proxy",
+          "kind": "bin"
         }
-    ]
+      },
+      "args": [
+        "-p",
+        "7788",
+        "--enable-mitm",
+        "--mitm-ca-cert",
+        "${workspaceFolder}/certs/mitm-ca-cert.pem",
+        "--mitm-ca-key",
+        "${workspaceFolder}/certs/mitm-ca-key.pem",
+        "--log-dir",
+        "${workspaceFolder}/target",
+        "--log-file",
+        "proxy.log"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "info"
+      },
+      "sourceLanguages": [
+        "rust"
+      ]
+    },
+    {
+      "name": "rust_http_proxy: normal",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--package",
+          "rust_http_proxy",
+          "--bin",
+          "rust_http_proxy"
+        ],
+        "filter": {
+          "name": "rust_http_proxy",
+          "kind": "bin"
+        }
+      },
+      "args": [
+        "-p",
+        "7788",
+        "--log-dir",
+        "${workspaceFolder}/target",
+        "--log-file",
+        "proxy.log"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "info"
+      },
+      "sourceLanguages": [
+        "rust"
+      ]
+    }
+  ]
 }
