@@ -498,7 +498,7 @@ impl ProxyHandler {
                 req,
                 &traffic_label,
                 self.config.ipv6_first,
-                |stream: EitherTlsStream, access_label: AccessLabel| {
+                |stream: HttpClientStream, access_label: AccessLabel| {
                     CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
                 },
             )
@@ -563,7 +563,7 @@ impl ProxyHandler {
                 req,
                 &access_label,
                 self.config.ipv6_first,
-                |stream: EitherTlsStream, access_label: AccessLabel| {
+                |stream: HttpClientStream, access_label: AccessLabel| {
                     CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
                 },
             )
@@ -633,7 +633,7 @@ impl ProxyHandler {
                 req,
                 &access_label,
                 forward_bypass_config.ipv6_first,
-                |stream: EitherTlsStream, access_label: AccessLabel| {
+                |stream: HttpClientStream, access_label: AccessLabel| {
                     CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
                 },
             )
@@ -850,6 +850,7 @@ impl ProxyHandler {
         let mitm_proxy_client = self.mitm_proxy_client.clone();
         let mitm_request_context = MitmRequestContext {
             ipv6_first: self.config.ipv6_first,
+            forward_bypass: self.config.forward_bypass.clone(),
             stub_specs: self.config.mitm_stub_specs.clone(),
             dump_plaintext: self.config.mitm_dump_plaintext,
         };
@@ -1012,6 +1013,7 @@ impl ProxyHandler {
 #[derive(Clone)]
 struct MitmRequestContext {
     ipv6_first: Option<bool>,
+    forward_bypass: Option<ForwardBypassConfig>,
     stub_specs: MitmStubSpecs,
     dump_plaintext: bool,
 }
@@ -1075,22 +1077,45 @@ async fn handle_mitm_request(
     }
 
     if is_websocket {
+        let client_ip = get_client_ip(&req, client_socket_addr);
         return handle_mitm_websocket_upgrade(
             req,
             mitm_proxy_client,
             access_label,
             context.ipv6_first,
+            context.forward_bypass.as_ref(),
+            client_ip,
             context.dump_plaintext,
         )
         .await;
     }
 
+    let client_ip = get_client_ip(&req, client_socket_addr);
     let req = map_mitm_request_body(req, access_label.clone(), context.dump_plaintext);
-    let resp = mitm_proxy_client
-        .send_request(req, &access_label, context.ipv6_first, |stream: EitherTlsStream, access_label: AccessLabel| {
-            CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-        })
-        .await?;
+    let resp = if let Some(forward_bypass) = context.forward_bypass.as_ref() {
+        mitm_proxy_client
+            .send_request_via_forward_bypass(
+                req,
+                &access_label,
+                forward_bypass,
+                &client_ip,
+                |stream: HttpClientStream, access_label: AccessLabel| {
+                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+                },
+            )
+            .await?
+    } else {
+        mitm_proxy_client
+            .send_request(
+                req,
+                &access_label,
+                context.ipv6_first,
+                |stream: HttpClientStream, access_label: AccessLabel| {
+                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+                },
+            )
+            .await?
+    };
     if context.dump_plaintext {
         log_mitm_response_head(&resp, &access_label);
     }
@@ -1124,7 +1149,8 @@ fn build_mitm_stub_response(
 
 async fn handle_mitm_websocket_upgrade(
     mut req: Request<Incoming>, mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
-    access_label: AccessLabel, ipv6_first: Option<bool>, dump_plaintext: bool,
+    access_label: AccessLabel, ipv6_first: Option<bool>, forward_bypass: Option<&ForwardBypassConfig>,
+    client_ip: String, dump_plaintext: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     debug!("[mitm] WebSocket upgrade request to {}", &access_label.target);
     if dump_plaintext {
@@ -1132,11 +1158,25 @@ async fn handle_mitm_websocket_upgrade(
     }
     let client_upgrade = hyper::upgrade::on(&mut req);
     let req = map_mitm_request_body(req, access_label.clone(), dump_plaintext);
-    let mut upstream_response = mitm_proxy_client
-        .send_request(req, &access_label, ipv6_first, |stream: EitherTlsStream, access_label: AccessLabel| {
-            CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-        })
-        .await?;
+    let mut upstream_response = if let Some(forward_bypass) = forward_bypass {
+        mitm_proxy_client
+            .send_request_via_forward_bypass(
+                req,
+                &access_label,
+                forward_bypass,
+                &client_ip,
+                |stream: HttpClientStream, access_label: AccessLabel| {
+                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+                },
+            )
+            .await?
+    } else {
+        mitm_proxy_client
+            .send_request(req, &access_label, ipv6_first, |stream: HttpClientStream, access_label: AccessLabel| {
+                CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+            })
+            .await?
+    };
     if dump_plaintext {
         log_mitm_response_head(&upstream_response, &access_label);
     }
@@ -1855,6 +1895,52 @@ pin_project_lite::pin_project! {
     pub(crate) enum EitherTlsStream {
         Tcp { #[pin] stream: TcpStream },
         Tls { #[pin] stream: TlsStream<TcpStream> },
+    }
+}
+
+pin_project_lite::pin_project! {
+    #[project = HttpClientStreamProj]
+    pub(crate) enum HttpClientStream {
+        Direct { #[pin] stream: EitherTlsStream },
+        TlsOverProxy { #[pin] stream: TlsStream<EitherTlsStream> },
+    }
+}
+
+impl tokio::io::AsyncRead for HttpClientStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match self.project() {
+            HttpClientStreamProj::Direct { stream } => stream.poll_read(cx, buf),
+            HttpClientStreamProj::TlsOverProxy { stream } => stream.poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for HttpClientStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        match self.project() {
+            HttpClientStreamProj::Direct { stream } => stream.poll_write(cx, buf),
+            HttpClientStreamProj::TlsOverProxy { stream } => stream.poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
+        match self.project() {
+            HttpClientStreamProj::Direct { stream } => stream.poll_flush(cx),
+            HttpClientStreamProj::TlsOverProxy { stream } => stream.poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match self.project() {
+            HttpClientStreamProj::Direct { stream } => stream.poll_shutdown(cx),
+            HttpClientStreamProj::TlsOverProxy { stream } => stream.poll_shutdown(cx),
+        }
     }
 }
 

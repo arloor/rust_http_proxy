@@ -130,6 +130,7 @@ pub(crate) struct Config {
     pub(crate) mitm_stub_specs: MitmStubSpecs,
 }
 
+#[derive(Clone)]
 pub(crate) struct ForwardBypassConfig {
     pub(crate) host: String,
     pub(crate) port: u16,

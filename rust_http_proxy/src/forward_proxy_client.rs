@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::Engine as _;
 use http::{HeaderMap, HeaderValue, Version, header};
 use hyper::{
     Request, Response,
@@ -20,10 +21,14 @@ use io_x::{CounterIO, TimeoutIO};
 use log::{debug, error, info, trace, warn};
 use lru_time_cache::LruCache;
 use prom_label::LabelImpl;
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
 use tokio::sync::Mutex;
 use tokio_rustls::rustls::pki_types;
 
-use crate::proxy::{AccessLabel, EitherTlsStream, build_tls_connector};
+use crate::{
+    config::ForwardBypassConfig,
+    proxy::{AccessLabel, EitherTlsStream, HttpClientStream, build_tls_connector},
+};
 
 pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
 /// 清理任务的执行间隔
@@ -111,7 +116,7 @@ where
     #[inline]
     pub async fn send_request(
         &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
         if let Some(c) = self.get_cached_connection(access_label).await {
@@ -127,6 +132,42 @@ where
             Ok(c) => c,
             Err(err) => {
                 error!("failed to connect to host: {}, error: {}", &access_label.target, err);
+                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+            }
+        };
+
+        self.send_request_conn(access_label, c, req)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    pub async fn send_request_via_forward_bypass(
+        &self, req: Request<B>, access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig,
+        client_ip: &str,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> Result<Response<body::Incoming>, std::io::Error> {
+        if let Some(c) = self.get_cached_connection(access_label).await {
+            debug!("HTTP client via forward bypass for host: {} taken from cache", &access_label);
+            match self.send_request_conn(access_label, c, req).await {
+                Ok(o) => return Ok(o),
+                Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
+            }
+        }
+
+        let c = match HttpConnection::connect_via_forward_bypass(
+            access_label,
+            forward_bypass_config,
+            client_ip,
+            stream_map_func,
+        )
+        .await
+        {
+            Ok(c) => c,
+            Err(err) => {
+                error!(
+                    "failed to connect to host: {} via forward bypass {}, error: {}",
+                    &access_label.target, forward_bypass_config, err
+                );
                 return Err(io::Error::new(io::ErrorKind::InvalidData, err));
             }
         };
@@ -254,7 +295,7 @@ where
 {
     pub(crate) async fn connect(
         access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(EitherTlsStream, AccessLabel) -> CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = crate::proxy::connect_with_preference(&access_label.target, ipv6_first).await?;
         let stream = if let Some(true) = access_label.relay_over_tls {
@@ -282,13 +323,86 @@ where
             EitherTlsStream::Tcp { stream }
         };
 
-        let stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>> = stream_map_func(stream, access_label.clone());
+        let stream = stream_map_func(HttpClientStream::Direct { stream }, access_label.clone());
 
         HttpConnection::connect_http_http1(access_label, stream).await
     }
 
+    pub(crate) async fn connect_via_forward_bypass(
+        access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig, client_ip: &str,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> io::Result<HttpConnection<B>> {
+        let bypass_host = format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port);
+        let tcp_stream = crate::proxy::connect_with_preference(&bypass_host, forward_bypass_config.ipv6_first).await?;
+        let mut parent_stream = if forward_bypass_config.is_https {
+            let connector = build_tls_connector();
+            let server_name = pki_types::ServerName::try_from(forward_bypass_config.host.as_str())
+                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
+                .to_owned();
+            match connector.connect(server_name, tcp_stream).await {
+                Ok(tls_stream) => EitherTlsStream::Tls { stream: tls_stream },
+                Err(e) => {
+                    warn!("[forward_bypass TLS handshake error] [{}]: {}", bypass_host, e);
+                    return Err(e);
+                }
+            }
+        } else {
+            EitherTlsStream::Tcp { stream: tcp_stream }
+        };
+
+        let mut connect_request = format!(
+            "CONNECT {} HTTP/1.1\r\nHost: {}\r\nX-Forwarded-For: {}\r\n",
+            access_label.target, access_label.target, client_ip
+        );
+        if let (Some(username), Some(password)) = (&forward_bypass_config.username, &forward_bypass_config.password) {
+            let credentials = format!("{username}:{password}");
+            let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
+            connect_request.push_str(&format!("Proxy-Authorization: Basic {encoded}\r\n"));
+        }
+        connect_request.push_str("\r\n");
+
+        parent_stream.write_all(connect_request.as_bytes()).await?;
+        let mut reader = tokio::io::BufReader::new(parent_stream);
+        let mut response_line = String::new();
+        reader.read_line(&mut response_line).await?;
+        let status_code = response_line.split_whitespace().nth(1).unwrap_or("");
+        if status_code != "200" {
+            return Err(io::Error::other(format!(
+                "unexpected response from forward bypass: {}",
+                response_line.trim_end()
+            )));
+        }
+        loop {
+            let mut header_line = String::new();
+            reader.read_line(&mut header_line).await?;
+            if header_line == "\r\n" || header_line == "\n" {
+                break;
+            }
+        }
+        let parent_stream = reader.into_inner();
+
+        let stream = if let Some(true) = access_label.relay_over_tls {
+            let connector = build_tls_connector();
+            let host = access_label
+                .target
+                .split(':')
+                .next()
+                .ok_or(io::Error::other("invalid host"))?;
+            let server_name = pki_types::ServerName::try_from(host)
+                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
+                .to_owned();
+            let stream = connector.connect(server_name, parent_stream).await?;
+            HttpClientStream::TlsOverProxy { stream }
+        } else {
+            HttpClientStream::Direct { stream: parent_stream }
+        };
+
+        let stream = stream_map_func(stream, access_label.clone());
+        HttpConnection::connect_http_http1(access_label, stream).await
+    }
+
     async fn connect_http_http1(
-        access_label: &AccessLabel, stream: CounterIO<EitherTlsStream, LabelImpl<AccessLabel>>,
+        access_label: &AccessLabel, stream: CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
 

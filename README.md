@@ -140,7 +140,7 @@ Options:
           例如：--append-upstream-url=https://cdnjs.cloudflare.com
           则访问 https://your_domain/https://cdnjs.cloudflare.com 会被代理到 https://cdnjs.cloudflare.com
       --forward-bypass-url <https://username:password@example.com:123>
-          指定上游代理服务器
+          指定上游代理服务器。正向代理、非 MITM CONNECT 隧道、MITM 解密后的上游 HTTPS/WSS 请求均会经该父代理转发
       --ipv6-first <IPV6_FIRST>
           优先使用 IPv6 进行连接。true表示IPv6优先，false表示IPv4优先，不设置则保持DNS原始顺序 [possible values: true, false]
       --mitm-domain-suffix <SUFFIX>

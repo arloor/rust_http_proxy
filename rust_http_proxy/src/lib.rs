@@ -7,8 +7,12 @@ mod axum_handler;
 mod cgroup_stats;
 pub mod config;
 mod dns_resolver;
+#[cfg(test)]
+mod e2e_test_support;
 #[cfg(all(target_os = "linux", feature = "bpf"))]
 mod ebpf;
+#[cfg(test)]
+mod forward_bypass_e2e_tests;
 mod forward_proxy_client;
 mod hyper_x;
 mod ip_x;
