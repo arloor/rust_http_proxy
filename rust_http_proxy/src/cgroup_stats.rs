@@ -270,13 +270,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_collect_cgroup_stats_for_pid_384125() {
-        // Test collecting cgroup stats for PID 384125
-        let pid = 384125;
-
-        match collect_cgroup_stats_for_pid(pid) {
+    fn test_collect_cgroup_stats() {
+        match collect_cgroup_stats() {
             Ok(stats) => {
-                println!("\n=== Cgroup Stats for PID {} ===", pid);
                 println!("Cgroup Version: {:?}", stats.cgroup_version);
 
                 println!("\nCPU Usage:");
@@ -334,7 +330,7 @@ mod tests {
                 }
             }
             Err(e) => {
-                eprintln!("Failed to collect cgroup stats for PID {}: {}", pid, e);
+                eprintln!("Failed to collect cgroup stats, {}", e);
                 panic!("Could not collect stats - process may not exist or insufficient permissions");
             }
         }

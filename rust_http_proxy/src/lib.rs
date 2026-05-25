@@ -21,6 +21,8 @@ mod metrics;
 mod mitm;
 mod proxy;
 mod static_serve;
+#[cfg(test)]
+mod websocket_e2e_tests;
 
 pub use metrics::METRICS;
 use tokio::sync::broadcast::{self, Receiver};
