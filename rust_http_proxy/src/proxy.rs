@@ -1071,7 +1071,7 @@ async fn handle_mitm_request(
 
     if let Some(stub_response) = context.stub_specs.find(&access_label.target, req.uri().path()) {
         info!("[mitm stub] returning configured response for {access_label}{}", req.uri().path());
-        return build_mitm_stub_response(stub_response);
+        return build_mitm_stub_response(stub_response, access_label);
     }
 
     if is_websocket {
@@ -1098,7 +1098,9 @@ async fn handle_mitm_request(
     Ok(map_mitm_response_body(resp, access_label, context.dump_plaintext))
 }
 
-fn build_mitm_stub_response(stub_response: MitmStubResponse) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+fn build_mitm_stub_response(
+    stub_response: MitmStubResponse, access_label: AccessLabel,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     let mut builder = Response::builder().status(stub_response.status);
     let headers = builder
         .headers_mut()
@@ -1112,8 +1114,11 @@ fn build_mitm_stub_response(stub_response: MitmStubResponse) -> Result<Response<
         HeaderValue::from_str(&stub_response.body.len().to_string())
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
     );
+    let body =
+        CounterBody::new(full_body(stub_response.body), METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+            .boxed();
     builder
-        .body(full_body(stub_response.body))
+        .body(body)
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
 }
 
