@@ -1,13 +1,19 @@
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::Parser as _;
+use http_body_util::Full;
+use hyper::body::{Bytes, Incoming};
+use hyper::{Request, Response, StatusCode, service::service_fn};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::pin;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use tokio_rustls::rustls::{ClientConfig, RootCertStore, ServerConfig};
@@ -95,6 +101,10 @@ pub(crate) async fn start_tls_http_server() -> Result<TestServer, DynError> {
         if !request_head.starts_with("GET /plain HTTP/1.1\r\n") {
             return Err(io::Error::new(ErrorKind::InvalidData, request_head).into());
         }
+        let lower_request_head = request_head.to_ascii_lowercase();
+        if lower_request_head.contains("\r\nte: trailers\r\n") || lower_request_head.contains("\r\nhttp2-settings:") {
+            return Err(io::Error::new(ErrorKind::InvalidData, request_head).into());
+        }
         stream
             .write_all(
                 b"HTTP/1.1 200 OK\r\n\
@@ -104,6 +114,71 @@ Connection: close\r\n\
 hello-via-bypass",
             )
             .await?;
+        Ok(())
+    });
+    Ok(TestServer { addr, task })
+}
+
+pub(crate) async fn start_tls_h2_http_server() -> Result<TestServer, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let mut tls_config = test_server_tls_config()?;
+    tls_config.alpn_protocols = vec![b"h2".to_vec()];
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    let task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let tls_stream = acceptor.accept(stream).await?;
+        if tls_stream.get_ref().1.alpn_protocol() != Some(b"h2") {
+            return Err(io::Error::new(ErrorKind::InvalidData, "expected h2 ALPN").into());
+        }
+
+        let (done_tx, done_rx) = oneshot::channel();
+        let done_tx = Arc::new(Mutex::new(Some(done_tx)));
+        let service = service_fn(move |req: Request<Incoming>| {
+            let done_tx = done_tx.clone();
+            async move {
+                let headers_are_sanitized = !req.headers().contains_key(hyper::header::CONNECTION)
+                    && !req.headers().contains_key(hyper::header::TRANSFER_ENCODING)
+                    && !req.headers().contains_key(hyper::header::UPGRADE)
+                    && !req.headers().contains_key("x-remove-for-h2");
+                let mut response =
+                    if req.version() == hyper::Version::HTTP_2 && req.uri().path() == "/plain" && headers_are_sanitized
+                    {
+                        Response::new(Full::new(Bytes::from_static(b"hello-via-bypass")))
+                    } else {
+                        let mut response = Response::new(Full::new(Bytes::from_static(b"bad h2 request")));
+                        *response.status_mut() = StatusCode::BAD_REQUEST;
+                        response
+                    };
+                response
+                    .headers_mut()
+                    .insert(hyper::header::CONTENT_LENGTH, hyper::header::HeaderValue::from_static("16"));
+                let maybe_done_tx = done_tx
+                    .lock()
+                    .map_err(|_| io::Error::other("h2 test done mutex poisoned"))?
+                    .take();
+                if let Some(done_tx) = maybe_done_tx {
+                    let _ = done_tx.send(());
+                }
+                Ok::<_, io::Error>(response)
+            }
+        });
+
+        let builder = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+        let connection = builder.serve_connection(TokioIo::new(tls_stream), service);
+        pin!(connection);
+        let result = tokio::select! {
+            result = &mut connection => result,
+            _ = done_rx => {
+                connection.as_mut().graceful_shutdown();
+                connection.await
+            }
+        };
+        if let Err(err) = result {
+            if !is_tls_unexpected_eof(&err) {
+                return Err(err.into());
+            }
+        }
         Ok(())
     });
     Ok(TestServer { addr, task })
@@ -295,6 +370,18 @@ pub(crate) fn write_test_ca(base_dir: &Path) -> Result<TestCa, DynError> {
 pub(crate) async fn connect_to_mitm_target(
     proxy_port: u16, upstream_port: u16, ca_cert_der: Vec<u8>,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>, DynError> {
+    connect_to_mitm_target_with_alpn(proxy_port, upstream_port, ca_cert_der, Vec::new()).await
+}
+
+pub(crate) async fn connect_to_mitm_target_h2(
+    proxy_port: u16, upstream_port: u16, ca_cert_der: Vec<u8>,
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>, DynError> {
+    connect_to_mitm_target_with_alpn(proxy_port, upstream_port, ca_cert_der, vec![b"h2".to_vec()]).await
+}
+
+async fn connect_to_mitm_target_with_alpn(
+    proxy_port: u16, upstream_port: u16, ca_cert_der: Vec<u8>, alpn_protocols: Vec<Vec<u8>>,
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>, DynError> {
     let mut stream = TcpStream::connect(("127.0.0.1", proxy_port)).await?;
     let connect_request = format!(
         "\
@@ -305,7 +392,7 @@ Host: localhost:{upstream_port}\r\n\
     stream.write_all(connect_request.as_bytes()).await?;
     assert_ok(&timeout_step("CONNECT response", read_http_head(&mut stream)).await?)?;
 
-    let connector = tls_connector_with_root(ca_cert_der)?;
+    let connector = tls_connector_with_root_and_alpn(ca_cert_der, alpn_protocols)?;
     let server_name = ServerName::try_from("localhost")?.to_owned();
     timeout_step("MITM TLS handshake", connector.connect(server_name, stream))
         .await
@@ -484,12 +571,28 @@ fn test_server_tls_config() -> Result<ServerConfig, DynError> {
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e).into())
 }
 
-fn tls_connector_with_root(root_der: Vec<u8>) -> Result<TlsConnector, DynError> {
+fn is_tls_unexpected_eof(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(err);
+    while let Some(err) = current {
+        if err
+            .downcast_ref::<io::Error>()
+            .is_some_and(|err| err.kind() == ErrorKind::UnexpectedEof)
+            || err.to_string().contains("close_notify")
+        {
+            return true;
+        }
+        current = err.source();
+    }
+    false
+}
+
+fn tls_connector_with_root_and_alpn(root_der: Vec<u8>, alpn_protocols: Vec<Vec<u8>>) -> Result<TlsConnector, DynError> {
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from(root_der))?;
-    let config = ClientConfig::builder()
+    let mut config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
+    config.alpn_protocols = alpn_protocols;
     Ok(TlsConnector::from(Arc::new(config)))
 }
 

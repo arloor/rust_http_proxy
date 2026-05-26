@@ -100,12 +100,12 @@ pub fn create_futures(
 ) -> Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Sender<()>), DynError> {
     let config = Arc::new(load_config(param)?);
     let ports = config.port.clone();
-    let proxy_handler = Arc::new(ProxyHandler::new(config.clone())?);
+    let (shutdown_tx, _) = broadcast::channel(1);
+    let proxy_handler = Arc::new(ProxyHandler::new(config.clone(), shutdown_tx.clone())?);
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();
     #[cfg(target_os = "linux")]
     crate::linux_monitor::init_once();
-    let (shutdown_tx, _) = broadcast::channel(1);
 
     let main_futures = ports
         .into_iter()

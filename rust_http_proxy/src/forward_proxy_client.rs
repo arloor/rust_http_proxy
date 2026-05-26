@@ -10,13 +10,16 @@ use std::{
 };
 
 use base64::Engine as _;
-use http::{HeaderMap, HeaderValue, Version, header};
+use http::{
+    HeaderMap, HeaderValue, Uri, Version, header,
+    header::{CONNECTION, HOST, TE, TRANSFER_ENCODING, UPGRADE},
+};
 use hyper::{
     Request, Response,
     body::{self, Body},
-    client::conn::http1::{self},
+    client::conn::{http1, http2},
 };
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use io_x::{CounterIO, TimeoutIO};
 use log::{debug, error, info, trace, warn};
 use lru_time_cache::LruCache;
@@ -27,7 +30,7 @@ use tokio_rustls::rustls::pki_types;
 
 use crate::{
     config::ForwardBypassConfig,
-    proxy::{AccessLabel, EitherTlsStream, HttpClientStream, build_tls_connector},
+    proxy::{AccessLabel, EitherTlsStream, HttpClientStream, build_tls_connector, build_tls_connector_with_http_alpn},
 };
 
 pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -208,8 +211,23 @@ where
     ) -> hyper::Result<Response<body::Incoming>> {
         trace!("HTTP making request to host: {access_label}, request: {req:?}");
         let url = req.uri().clone();
-        let response = c.send_request(req).await?;
+
+        if let Some(cacheable_conn) = c.clone_for_multiplexed_cache() {
+            debug!("HTTP/2 connection for host: {access_label} {url} remains cached for multiplexing");
+            self.cache_conn
+                .lock()
+                .await
+                .entry(access_label.clone())
+                .or_insert_with(VecDeque::new)
+                .push_back((cacheable_conn, Instant::now()));
+        }
+
+        let response = c.send_request(req, access_label).await?;
         trace!("HTTP received response from host: {access_label}, response: {response:?}");
+
+        if c.is_multiplexed() {
+            return Ok(response);
+        }
 
         // Check keep-alive
         if check_keep_alive(response.version(), response.headers(), false) {
@@ -285,6 +303,7 @@ fn get_keep_alive_val(values: header::GetAll<HeaderValue>) -> Option<bool> {
 #[allow(dead_code)]
 pub(crate) enum HttpConnection<B> {
     Http1(http1::SendRequest<B>),
+    Http2(http2::SendRequest<B>),
 }
 
 impl<B> HttpConnection<B>
@@ -298,9 +317,9 @@ where
         stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = crate::proxy::connect_with_preference(&access_label.target, ipv6_first).await?;
-        let stream = if let Some(true) = access_label.relay_over_tls {
+        let (stream, use_http2) = if let Some(true) = access_label.relay_over_tls {
             // 建立 TLS 连接
-            let connector = build_tls_connector();
+            let connector = build_tls_connector_with_http_alpn();
 
             let host = &access_label
                 .target
@@ -312,7 +331,10 @@ where
                 .to_owned();
 
             match connector.connect(server_name, stream).await {
-                Ok(tls_stream) => EitherTlsStream::Tls { stream: tls_stream },
+                Ok(tls_stream) => {
+                    let use_http2 = tls_stream.get_ref().1.alpn_protocol() == Some(b"h2");
+                    (EitherTlsStream::Tls { stream: tls_stream }, use_http2)
+                }
                 Err(e) => {
                     warn!("[forward_bypass TLS handshake error] [{}]: {}", access_label, e);
                     return Err(e);
@@ -320,12 +342,12 @@ where
             }
         } else {
             // 使用普通 TCP 连接
-            EitherTlsStream::Tcp { stream }
+            (EitherTlsStream::Tcp { stream }, false)
         };
 
         let stream = stream_map_func(HttpClientStream::Direct { stream }, access_label.clone());
 
-        HttpConnection::connect_http_http1(access_label, stream).await
+        HttpConnection::connect_http(access_label, stream, use_http2).await
     }
 
     pub(crate) async fn connect_via_forward_bypass(
@@ -381,8 +403,8 @@ where
         }
         let parent_stream = reader.into_inner();
 
-        let stream = if let Some(true) = access_label.relay_over_tls {
-            let connector = build_tls_connector();
+        let (stream, use_http2) = if let Some(true) = access_label.relay_over_tls {
+            let connector = build_tls_connector_with_http_alpn();
             let host = access_label
                 .target
                 .split(':')
@@ -392,13 +414,25 @@ where
                 .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
                 .to_owned();
             let stream = connector.connect(server_name, parent_stream).await?;
-            HttpClientStream::TlsOverProxy { stream }
+            let use_http2 = stream.get_ref().1.alpn_protocol() == Some(b"h2");
+            (HttpClientStream::TlsOverProxy { stream }, use_http2)
         } else {
-            HttpClientStream::Direct { stream: parent_stream }
+            (HttpClientStream::Direct { stream: parent_stream }, false)
         };
 
         let stream = stream_map_func(stream, access_label.clone());
-        HttpConnection::connect_http_http1(access_label, stream).await
+        HttpConnection::connect_http(access_label, stream, use_http2).await
+    }
+
+    async fn connect_http(
+        access_label: &AccessLabel, stream: CounterIO<HttpClientStream, LabelImpl<AccessLabel>>, use_http2: bool,
+    ) -> io::Result<HttpConnection<B>> {
+        if use_http2 {
+            debug!("HTTP/2 selected by ALPN for host: {access_label}");
+            Self::connect_http2(access_label, stream).await
+        } else {
+            Self::connect_http_http1(access_label, stream).await
+        }
     }
 
     async fn connect_http_http1(
@@ -420,49 +454,183 @@ where
         let access_label = access_label.clone();
         tokio::spawn(async move {
             if let Err(err) = connection.with_upgrades().await {
-                handle_http1_connection_error(err, access_label);
+                handle_http_connection_error("HTTP/1.1", err, access_label);
             }
         });
         Ok(HttpConnection::Http1(send_request))
     }
 
+    async fn connect_http2(
+        access_label: &AccessLabel, stream: CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> io::Result<HttpConnection<B>> {
+        let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
+
+        let (send_request, connection) = match http2::Builder::new(TokioExecutor::new())
+            .handshake(Box::pin(TokioIo::new(stream)))
+            .await
+        {
+            Ok(s) => s,
+            Err(err) => return Err(io::Error::other(err)),
+        };
+
+        let access_label = access_label.clone();
+        tokio::spawn(async move {
+            if let Err(err) = connection.await {
+                handle_http_connection_error("HTTP/2", err, access_label);
+            }
+        });
+        Ok(HttpConnection::Http2(send_request))
+    }
+
     #[inline]
-    pub async fn send_request(&mut self, req: Request<B>) -> hyper::Result<Response<body::Incoming>> {
+    pub async fn send_request(
+        &mut self, mut req: Request<B>, access_label: &AccessLabel,
+    ) -> hyper::Result<Response<body::Incoming>> {
         match self {
-            HttpConnection::Http1(r) => r.send_request(req).await,
+            HttpConnection::Http1(r) => {
+                *req.version_mut() = Version::HTTP_11;
+                prepare_http1_request_for_connection_target(&mut req, access_label);
+                sanitize_http1_request_headers(req.headers_mut());
+                r.send_request(req).await
+            }
+            HttpConnection::Http2(r) => {
+                *req.version_mut() = Version::HTTP_2;
+                ensure_http2_uri(&mut req, access_label);
+                sanitize_http2_request_headers(req.headers_mut());
+                r.send_request(req).await
+            }
         }
     }
 
     pub fn is_closed(&self) -> bool {
         match self {
             HttpConnection::Http1(r) => r.is_closed(),
+            HttpConnection::Http2(r) => r.is_closed(),
         }
     }
 
     pub fn is_ready(&self) -> bool {
         match self {
             HttpConnection::Http1(r) => r.is_ready(),
+            HttpConnection::Http2(r) => r.is_ready(),
         }
     }
 
     pub async fn ready(&mut self) -> Result<(), hyper::Error> {
         match self {
             HttpConnection::Http1(r) => r.ready().await,
+            HttpConnection::Http2(r) => r.ready().await,
+        }
+    }
+
+    fn is_multiplexed(&self) -> bool {
+        matches!(self, HttpConnection::Http2(_))
+    }
+
+    fn clone_for_multiplexed_cache(&self) -> Option<Self> {
+        match self {
+            HttpConnection::Http1(_) => None,
+            HttpConnection::Http2(r) => Some(HttpConnection::Http2(r.clone())),
         }
     }
 }
 
-fn handle_http1_connection_error(err: hyper::Error, access_label: AccessLabel) {
+fn ensure_http2_uri<B>(req: &mut Request<B>, access_label: &AccessLabel) {
+    if req.uri().scheme().is_some() && req.uri().authority().is_some() {
+        return;
+    }
+
+    let path = req.uri().path_and_query().map(|path| path.as_str()).unwrap_or("/");
+    if let Ok(uri) = format!("https://{}{path}", access_label.target).parse() {
+        *req.uri_mut() = uri;
+    }
+}
+
+fn prepare_http1_request_for_connection_target<B>(req: &mut Request<B>, access_label: &AccessLabel) {
+    if !req.headers().contains_key(HOST) {
+        let host = req
+            .uri()
+            .authority()
+            .map(|authority| authority.as_str())
+            .unwrap_or(&access_label.target);
+        if let Ok(host) = HeaderValue::from_str(host) {
+            req.headers_mut().insert(HOST, host);
+        }
+    }
+
+    // Direct origin connections must use origin-form ("/path?query"), while
+    // parent forward proxies must receive absolute-form ("http://host/path").
+    if uri_targets_current_connection(req.uri(), access_label) {
+        let path = req.uri().path_and_query().cloned();
+        *req.uri_mut() = path
+            .and_then(|path| {
+                let mut parts = http::uri::Parts::default();
+                parts.path_and_query = Some(path);
+                Uri::from_parts(parts).ok()
+            })
+            .unwrap_or_else(|| Uri::from_static("/"));
+    }
+}
+
+fn uri_targets_current_connection(uri: &Uri, access_label: &AccessLabel) -> bool {
+    uri.authority()
+        .map(|authority| authority.as_str().eq_ignore_ascii_case(&access_label.target))
+        .unwrap_or_default()
+}
+
+fn sanitize_http2_request_headers(headers: &mut HeaderMap) {
+    let connection_header_values = headers
+        .get_all(CONNECTION)
+        .iter()
+        .flat_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    headers.remove(CONNECTION);
+    for header_name in connection_header_values {
+        headers.remove(header_name);
+    }
+
+    headers.remove("keep-alive");
+    headers.remove("proxy-connection");
+    headers.remove(TRANSFER_ENCODING);
+    headers.remove(UPGRADE);
+
+    let keep_te = headers
+        .get(TE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("trailers"));
+    if !keep_te {
+        headers.remove(TE);
+    }
+}
+
+fn sanitize_http1_request_headers(headers: &mut HeaderMap) {
+    let remove_te = headers
+        .get(TE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("trailers"));
+    if remove_te {
+        headers.remove(TE);
+    }
+
+    headers.remove("http2-settings");
+}
+
+fn handle_http_connection_error(protocol: &str, err: hyper::Error, access_label: AccessLabel) {
     if let Some(io_err) = err.source().and_then(|s| s.downcast_ref::<io::Error>()) {
         if io_err.kind() == ErrorKind::TimedOut {
             // 由于超时导致的连接关闭（TimeoutIO）
-            info!("[legacy proxy connection io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
+            info!("[legacy proxy {protocol} connection io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
         } else {
-            warn!("[legacy proxy io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
+            warn!("[legacy proxy {protocol} io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
         }
     } else if let Some(source) = err.source() {
-        warn!("[legacy proxy io error]: [{source}] to {access_label}");
+        warn!("[legacy proxy {protocol} io error]: [{source}] to {access_label}");
     } else {
-        warn!("[legacy proxy io error] [{err}] to {access_label}");
+        warn!("[legacy proxy {protocol} io error] [{err}] to {access_label}");
     }
 }

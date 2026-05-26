@@ -33,19 +33,20 @@ use http::{
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
 use hyper::{
-    Method, Response, Version, body::Bytes, header::HeaderValue, http, server::conn::http1, service::service_fn,
-    upgrade::Upgraded,
+    Method, Response, Version, body::Bytes, header::HeaderValue, http, service::service_fn, upgrade::Upgraded,
 };
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
+use hyper_util::server::conn::auto;
 use log::{debug, info, warn};
 use percent_encoding::percent_decode_str;
 use prometheus_client::encoding::EncodeLabelSet;
 use rand::RngExt;
 use std::sync::Arc;
 
+use tokio::sync::broadcast;
 use tokio::{net::TcpStream, pin};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tokio_rustls::{client::TlsStream, rustls::pki_types};
@@ -384,6 +385,7 @@ impl From<InterceptResultAdapter> for InterceptResult<AppProxyError> {
 
 pub struct ProxyHandler {
     config: Arc<Config>,
+    shutdown_tx: broadcast::Sender<()>,
     forward_proxy_client: ForwardProxyClient<Incoming>,
     mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
     reverse_proxy_client: legacy::Client<
@@ -406,13 +408,14 @@ fn reverse_proxy_label_fn(uri: &Uri) -> prom_label::LabelImpl<AccessLabel> {
 
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
-    pub fn new(config: Arc<Config>) -> Result<Self, crate::DynError> {
+    pub fn new(config: Arc<Config>, shutdown_tx: broadcast::Sender<()>) -> Result<Self, crate::DynError> {
         let reverse_client = build_hyper_legacy_client(config.ipv6_first);
         let http1_client = ForwardProxyClient::<Incoming>::new();
         let mitm_client = ForwardProxyClient::<BoxBody<Bytes, io::Error>>::new();
 
         Ok(ProxyHandler {
             config,
+            shutdown_tx,
             reverse_proxy_client: reverse_client,
             forward_proxy_client: http1_client,
             mitm_proxy_client: mitm_client,
@@ -848,6 +851,7 @@ impl ProxyHandler {
         };
 
         let mitm_proxy_client = self.mitm_proxy_client.clone();
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
         let mitm_request_context = MitmRequestContext {
             ipv6_first: self.config.ipv6_first,
             forward_bypass: self.config.forward_bypass.clone(),
@@ -891,12 +895,25 @@ impl ProxyHandler {
                 }
             });
 
-            let result = http1::Builder::new()
+            let mitm_server = auto::Builder::new(TokioExecutor::new())
                 .preserve_header_case(true)
-                .title_case_headers(true)
-                .serve_connection(TokioIo::new(tls_stream), service)
-                .with_upgrades()
-                .await;
+                .title_case_headers(true);
+            let connection = mitm_server.serve_connection_with_upgrades(TokioIo::new(tls_stream), service);
+            pin!(connection);
+            let result = tokio::select! {
+                result = &mut connection => result,
+                _ = shutdown_rx.recv() => {
+                    info!("[mitm graceful shutdown] [{}]", access_tag);
+                    connection.as_mut().graceful_shutdown();
+                    match tokio::time::timeout(crate::IDLE_TIMEOUT, &mut connection).await {
+                        Ok(result) => result,
+                        Err(_) => {
+                            warn!("[mitm graceful shutdown timeout] [{}]", access_tag);
+                            return;
+                        }
+                    }
+                }
+            };
             if let Err(e) = result {
                 warn!("[mitm connection error] [{}]: {}", access_tag, e);
             }
@@ -1624,15 +1641,24 @@ pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: Option<bool>
 /// Debug 模式：不验证证书（方便测试）
 /// Release 模式：使用平台证书验证器
 pub(crate) fn build_tls_connector() -> TlsConnector {
+    build_tls_connector_with_alpn(Vec::new())
+}
+
+pub(crate) fn build_tls_connector_with_http_alpn() -> TlsConnector {
+    build_tls_connector_with_alpn(vec![b"h2".to_vec(), b"http/1.1".to_vec()])
+}
+
+fn build_tls_connector_with_alpn(alpn_protocols: Vec<Vec<u8>>) -> TlsConnector {
     #[cfg(debug_assertions)]
     {
         use tokio_rustls::rustls::ClientConfig;
 
         warn!("⚠️  DEBUG MODE: TLS certificate verification is DISABLED");
-        let config = ClientConfig::builder()
+        let mut config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerifier))
             .with_no_client_auth();
+        config.alpn_protocols = alpn_protocols;
         TlsConnector::from(Arc::new(config))
     }
 
@@ -1644,6 +1670,8 @@ pub(crate) fn build_tls_connector() -> TlsConnector {
             .try_with_platform_verifier()
             .expect("Failed to create platform verifier")
             .with_no_client_auth();
+        let mut config = config;
+        config.alpn_protocols = alpn_protocols;
         TlsConnector::from(Arc::new(config))
     }
 }

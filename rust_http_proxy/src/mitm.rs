@@ -61,10 +61,12 @@ impl MitmAuthority {
 
         let cert = params.signed_by(&key_pair, &self.ca_issuer).map_err(to_io_error)?;
         let key_der = PrivatePkcs8KeyDer::from(key_pair.serialize_der());
-        ServerConfig::builder()
+        let mut config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(vec![CertificateDer::from(cert.der().to_vec())], PrivateKeyDer::Pkcs8(key_der))
-            .map_err(to_io_error)
+            .map_err(to_io_error)?;
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Ok(config)
     }
 }
 
@@ -217,6 +219,40 @@ AdminMaxApi.KnowHub.Cloud:443:
         assert_eq!(response.body, Bytes::from_static(br#"{"ok":true}"#));
         assert_eq!(response.headers.len(), 1);
         assert!(specs.find("adminmaxapi.knowhub.cloud:443", "/other").is_none());
+
+        fs::remove_dir_all(base_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn generated_mitm_server_config_advertises_h2_and_http1() -> Result<(), crate::DynError> {
+        let base_dir = std::env::temp_dir().join(format!(
+            "rust_http_proxy_mitm_alpn_test_{}_{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        fs::create_dir_all(&base_dir)?;
+        let cert_path = base_dir.join("ca.pem");
+        let key_path = base_dir.join("ca-key.pem");
+
+        let mut params = CertificateParams::new(Vec::new())?;
+        params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "rust-http-proxy-test-ca");
+        params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::CrlSign,
+        ];
+        let key_pair = KeyPair::generate()?;
+        let cert = params.self_signed(&key_pair)?;
+        fs::write(&cert_path, cert.pem())?;
+        fs::write(&key_path, key_pair.serialize_pem())?;
+
+        let authority = MitmAuthority::load(&cert_path.to_string_lossy(), &key_path.to_string_lossy())?;
+        let config = authority.server_config_for("example.com")?;
+        assert_eq!(config.alpn_protocols, vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
 
         fs::remove_dir_all(base_dir)?;
         Ok(())
