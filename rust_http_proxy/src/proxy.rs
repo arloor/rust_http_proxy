@@ -1075,15 +1075,17 @@ async fn handle_mitm_request(
         relay_over_tls: Some(true),
     };
     let is_websocket = is_websocket_upgrade(&req);
+    let request_authority = request_authority_for_log(&req, &access_label).into_owned();
     mod_mitm_proxy_req(&mut req, &access_label.target)?;
     if context.dump_plaintext {
         log_mitm_request_head(&req, &access_label);
     }
 
     info!(
-        "[mitm] {:^35} ==> {} {:?} {:?}",
+        "[mitm] {:^35} ==> {} authority={} {:?} {:?}",
         SocketAddrFormat(&client_socket_addr).to_string(),
         req.method(),
+        request_authority,
         req.uri(),
         req.version(),
     );
@@ -1253,7 +1255,11 @@ fn map_mitm_response_body(
 }
 
 fn log_mitm_request_head(req: &Request<Incoming>, access_label: &AccessLabel) {
-    info!("[mitm plaintext request curl] {access_label}\n{}", format_request_as_curl(req, access_label));
+    info!(
+        "[mitm plaintext request curl] {access_label} {}\n{}",
+        http_version_label(req.version()),
+        format_request_as_curl(req, access_label),
+    );
 }
 
 fn log_mitm_response_head(resp: &Response<Incoming>, access_label: &AccessLabel) {
@@ -1276,7 +1282,7 @@ fn format_headers(headers: &http::HeaderMap) -> String {
     output
 }
 
-fn format_request_as_curl(req: &Request<Incoming>, access_label: &AccessLabel) -> String {
+fn format_request_as_curl<B>(req: &Request<B>, access_label: &AccessLabel) -> String {
     let url = match req.uri().scheme() {
         Some(_) => req.uri().to_string(),
         None => {
@@ -1285,7 +1291,12 @@ fn format_request_as_curl(req: &Request<Incoming>, access_label: &AccessLabel) -
         }
     };
 
-    let mut output = format!("curl --http1.1 -X {} \\\n  {}", req.method(), shell_quote(&url));
+    let mut output = String::from("curl");
+    if let Some(flag) = curl_http_version_flag(req.version()) {
+        output.push(' ');
+        output.push_str(flag);
+    }
+    output.push_str(&format!(" -X {} \\\n  {}", req.method(), shell_quote(&url)));
     for (name, value) in req.headers() {
         let header = format!("{}: {}", name.as_str(), String::from_utf8_lossy(value.as_bytes()));
         output.push_str(" \\\n  -H ");
@@ -1294,8 +1305,117 @@ fn format_request_as_curl(req: &Request<Incoming>, access_label: &AccessLabel) -
     output
 }
 
+fn request_authority_for_log<'a, B>(req: &'a Request<B>, access_label: &'a AccessLabel) -> Cow<'a, str> {
+    req.uri()
+        .authority()
+        .map(|authority| Cow::Borrowed(authority.as_str()))
+        .or_else(|| {
+            req.headers()
+                .get(HOST)
+                .and_then(|host| host.to_str().ok())
+                .filter(|host| !host.is_empty())
+                .map(Cow::Borrowed)
+        })
+        .unwrap_or_else(|| Cow::Borrowed(&access_label.target))
+}
+
+fn curl_http_version_flag(version: Version) -> Option<&'static str> {
+    match version {
+        Version::HTTP_10 => Some("--http1.0"),
+        Version::HTTP_11 => Some("--http1.1"),
+        Version::HTTP_2 => Some("--http2"),
+        Version::HTTP_3 => Some("--http3"),
+        _ => None,
+    }
+}
+
+fn http_version_label(version: Version) -> &'static str {
+    match version {
+        Version::HTTP_09 => "HTTP/0.9",
+        Version::HTTP_10 => "HTTP/1.0",
+        Version::HTTP_11 => "HTTP/1.1",
+        Version::HTTP_2 => "HTTP/2",
+        Version::HTTP_3 => "HTTP/3",
+        _ => "HTTP/unknown",
+    }
+}
+
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_access_label() -> AccessLabel {
+        AccessLabel {
+            client: "127.0.0.1".to_owned(),
+            target: "example.com".to_owned(),
+            username: "test".to_owned(),
+            relay_over_tls: Some(true),
+        }
+    }
+
+    #[test]
+    fn format_request_as_curl_uses_http1_version_flag() -> Result<(), http::Error> {
+        let req = Request::builder()
+            .version(Version::HTTP_11)
+            .method(Method::GET)
+            .uri("/plain?x=1")
+            .header(HOST, "example.com")
+            .body(())?;
+
+        let curl = format_request_as_curl(&req, &test_access_label());
+
+        assert!(curl.starts_with("curl --http1.1 -X GET"));
+        assert!(curl.contains("'https://example.com/plain?x=1'"));
+        assert!(curl.contains("-H 'host: example.com'"));
+        Ok(())
+    }
+
+    #[test]
+    fn format_request_as_curl_uses_http2_version_flag() -> Result<(), http::Error> {
+        let req = Request::builder()
+            .version(Version::HTTP_2)
+            .method(Method::POST)
+            .uri("https://example.com/h2")
+            .body(())?;
+
+        let curl = format_request_as_curl(&req, &test_access_label());
+
+        assert!(curl.starts_with("curl --http2 -X POST"));
+        assert!(curl.contains("'https://example.com/h2'"));
+        Ok(())
+    }
+
+    #[test]
+    fn http_version_label_formats_request_version_for_log_head() {
+        assert_eq!(http_version_label(Version::HTTP_10), "HTTP/1.0");
+        assert_eq!(http_version_label(Version::HTTP_11), "HTTP/1.1");
+        assert_eq!(http_version_label(Version::HTTP_2), "HTTP/2");
+    }
+
+    #[test]
+    fn request_authority_for_log_prefers_uri_authority() -> Result<(), http::Error> {
+        let req = Request::builder()
+            .uri("https://uri.example/path")
+            .header(HOST, "host.example")
+            .body(())?;
+
+        assert_eq!(request_authority_for_log(&req, &test_access_label()), "uri.example");
+        Ok(())
+    }
+
+    #[test]
+    fn request_authority_for_log_uses_host_then_target() -> Result<(), http::Error> {
+        let req_with_host = Request::builder().uri("/path").header(HOST, "host.example").body(())?;
+        assert_eq!(request_authority_for_log(&req_with_host, &test_access_label()), "host.example",);
+
+        let req_without_host = Request::builder().uri("/path").body(())?;
+        assert_eq!(request_authority_for_log(&req_without_host, &test_access_label()), "example.com",);
+        Ok(())
+    }
 }
 
 fn log_mitm_body_chunk(
