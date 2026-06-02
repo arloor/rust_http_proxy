@@ -23,6 +23,7 @@ use crate::config::Param;
 use crate::{DynError, create_futures};
 
 pub(crate) const WS_PAYLOAD: &[u8] = b"hello-through-proxy";
+pub(crate) const SSH_BANNER: &[u8] = b"SSH-2.0-rust-http-proxy-test\r\n";
 
 pub(crate) struct RunningProxy {
     pub(crate) port: u16,
@@ -192,6 +193,17 @@ pub(crate) async fn start_tcp_echo_server() -> Result<TestServer, DynError> {
         let mut buf = vec![0u8; WS_PAYLOAD.len()];
         stream.read_exact(&mut buf).await?;
         stream.write_all(&buf).await?;
+        Ok(())
+    });
+    Ok(TestServer { addr, task })
+}
+
+pub(crate) async fn start_tcp_banner_server() -> Result<TestServer, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        stream.write_all(SSH_BANNER).await?;
         Ok(())
     });
     Ok(TestServer { addr, task })

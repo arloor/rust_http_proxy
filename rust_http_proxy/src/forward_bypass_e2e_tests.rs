@@ -8,11 +8,12 @@ use tokio::net::TcpStream;
 
 use crate::DynError;
 use crate::e2e_test_support::{
-    WS_PAYLOAD, assert_ok, assert_switching_protocols, connect_to_mitm_target, connect_to_mitm_target_h2,
+    SSH_BANNER, WS_PAYLOAD, assert_ok, assert_switching_protocols, connect_to_mitm_target, connect_to_mitm_target_h2,
     read_exact_bytes, read_http_head, read_ws_frame_payload, recv_connect_target, recv_forward_request_target,
     start_forward_bypass_proxy, start_forward_request_proxy, start_plain_http_server, start_proxy,
-    start_tcp_echo_server, start_tls_h2_http_server, start_tls_http_server, start_tls_websocket_echo_server,
-    start_websocket_echo_server, timeout_step, unique_temp_dir, write_masked_text_frame, write_test_ca,
+    start_tcp_banner_server, start_tcp_echo_server, start_tls_h2_http_server, start_tls_http_server,
+    start_tls_websocket_echo_server, start_websocket_echo_server, timeout_step, unique_temp_dir,
+    write_masked_text_frame, write_test_ca,
 };
 
 #[tokio::test]
@@ -170,6 +171,51 @@ Connection: close\r\n\
     assert_eq!(connect_target, format!("localhost:{}", upstream.addr.port()));
 
     drop(tls_stream);
+    upstream.task.await??;
+    forward_bypass.task.await??;
+    proxy.shutdown().await?;
+    tokio::fs::remove_dir_all(temp_dir).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn mitm_connect_falls_back_to_tunnel_for_non_http_payload() -> Result<(), DynError> {
+    let upstream = start_tcp_banner_server().await?;
+    let mut forward_bypass = start_forward_bypass_proxy().await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_mitm_non_http")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let proxy = start_proxy(vec![
+        "--forward-bypass-url".to_owned(),
+        format!("http://127.0.0.1:{}", forward_bypass.addr.port()),
+        "--mitm-domain-suffix".to_owned(),
+        "localhost".to_owned(),
+        "--mitm-ca-cert".to_owned(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".to_owned(),
+        ca.key_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    let mut stream = TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+    let connect_request = format!(
+        "\
+CONNECT localhost:{} HTTP/1.1\r\n\
+Host: localhost:{}\r\n\
+\r\n",
+        upstream.addr.port(),
+        upstream.addr.port()
+    );
+    stream.write_all(connect_request.as_bytes()).await?;
+    assert_ok(&timeout_step("MITM non-HTTP CONNECT response", read_http_head(&mut stream)).await?)?;
+
+    let banner = timeout_step("MITM non-HTTP tunneled banner", read_exact_bytes(&mut stream, SSH_BANNER.len())).await?;
+    assert_eq!(banner, SSH_BANNER);
+
+    let connect_target =
+        timeout_step("forward bypass CONNECT target", recv_connect_target(&mut forward_bypass)).await?;
+    assert_eq!(connect_target, format!("localhost:{}", upstream.addr.port()));
+
+    drop(stream);
     upstream.task.await??;
     forward_bypass.task.await??;
     proxy.shutdown().await?;
