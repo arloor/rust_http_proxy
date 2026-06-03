@@ -1289,6 +1289,9 @@ async fn handle_mitm_request(
 
     if let Some(stub_response) = context.stub_specs.find(&access_label.target, req.uri().path()) {
         info!("[mitm stub] returning configured response for {access_label}{}", req.uri().path());
+        if context.dump_plaintext {
+            dump_mitm_request_body(req.body_mut(), &access_label).await?;
+        }
         return build_mitm_stub_response(stub_response, access_label);
     }
 
@@ -1433,6 +1436,18 @@ fn map_mitm_request_body(
             body.boxed()
         }
     })
+}
+
+async fn dump_mitm_request_body(body: &mut Incoming, access_label: &AccessLabel) -> io::Result<()> {
+    let mut bytes_seen = 0usize;
+    let mut truncated = false;
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        if let Some(data) = frame.data_ref() {
+            log_mitm_body_chunk(access_label, "request", data, &mut bytes_seen, &mut truncated);
+        }
+    }
+    Ok(())
 }
 
 fn map_mitm_response_body(
