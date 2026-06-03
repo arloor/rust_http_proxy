@@ -58,7 +58,7 @@ jobs:
             cc -v
             ${{ matrix.env_setup }}
           args: -p rust_http_proxy ${{ matrix.build_args }}
-          apt_mirror: mirrors.mit.edu
+          # apt_mirror: mirrors.mit.edu
           debug: false
 
       # 复制并重命名二进制文件
