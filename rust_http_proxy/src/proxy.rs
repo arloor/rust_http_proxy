@@ -28,7 +28,7 @@ use axum::extract::Request;
 use axum_bootstrap::InterceptResult;
 use http::{
     Uri,
-    header::{CONTENT_LENGTH, HOST, LOCATION, TRANSFER_ENCODING},
+    header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HOST, LOCATION, TRANSFER_ENCODING},
 };
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::body::Incoming;
@@ -1438,9 +1438,17 @@ fn map_mitm_request_body(
 fn map_mitm_response_body(
     resp: Response<Incoming>, access_label: AccessLabel, dump_plaintext: bool,
 ) -> Response<BoxBody<Bytes, io::Error>> {
+    let unreadable_reason = if dump_plaintext {
+        mitm_response_body_unreadable_reason(resp.headers())
+    } else {
+        None
+    };
     resp.map(|body| {
         let body = body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-        if dump_plaintext {
+        if let Some(reason) = unreadable_reason {
+            info!("[mitm plaintext response body] {access_label} skipped: body is not human-readable ({reason})");
+            body.boxed()
+        } else if dump_plaintext {
             let mut bytes_seen = 0usize;
             let mut truncated = false;
             body.map_frame(move |frame| {
@@ -1454,6 +1462,56 @@ fn map_mitm_response_body(
             body.boxed()
         }
     })
+}
+
+fn mitm_response_body_unreadable_reason(headers: &http::HeaderMap) -> Option<String> {
+    if let Some(encoding) = non_identity_content_encoding(headers) {
+        return Some(format!("content-encoding: {encoding}"));
+    }
+
+    let content_type = headers.get(CONTENT_TYPE)?;
+    let content_type = content_type.to_str().ok()?;
+    let media_type = content_type
+        .split_once(';')
+        .map_or(content_type, |(media_type, _)| media_type)
+        .trim()
+        .to_ascii_lowercase();
+
+    if is_human_readable_media_type(&media_type) {
+        None
+    } else {
+        Some(format!("content-type: {media_type}"))
+    }
+}
+
+fn non_identity_content_encoding(headers: &http::HeaderMap) -> Option<String> {
+    headers.get_all(CONTENT_ENCODING).iter().find_map(|value| {
+        let value = value.to_str().ok()?;
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|encoding| !encoding.is_empty())
+            .find(|encoding| !encoding.eq_ignore_ascii_case("identity"))
+            .map(str::to_owned)
+    })
+}
+
+fn is_human_readable_media_type(media_type: &str) -> bool {
+    media_type.starts_with("text/")
+        || matches!(
+            media_type,
+            "application/ecmascript"
+                | "application/graphql"
+                | "application/javascript"
+                | "application/json"
+                | "application/x-javascript"
+                | "application/x-www-form-urlencoded"
+                | "application/xhtml+xml"
+                | "application/xml"
+                | "image/svg+xml"
+        )
+        || media_type.ends_with("+json")
+        || media_type.ends_with("+xml")
 }
 
 fn log_mitm_request_head(req: &Request<Incoming>, access_label: &AccessLabel) {
@@ -1641,6 +1699,46 @@ mod tests {
 
         assert!(!is_websocket_upgrade(&req));
         Ok(())
+    }
+
+    #[test]
+    fn mitm_response_body_skips_compressed_body() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        assert_eq!(mitm_response_body_unreadable_reason(&headers).as_deref(), Some("content-encoding: gzip"));
+    }
+
+    #[test]
+    fn mitm_response_body_skips_non_text_content_type() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
+
+        assert_eq!(mitm_response_body_unreadable_reason(&headers).as_deref(), Some("content-type: image/png"));
+    }
+
+    #[test]
+    fn mitm_response_body_allows_text_content_types() {
+        for content_type in [
+            "text/plain; charset=utf-8",
+            "application/json",
+            "application/problem+json",
+            "application/xml",
+            "image/svg+xml",
+        ] {
+            let mut headers = http::HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+
+            assert_eq!(mitm_response_body_unreadable_reason(&headers), None);
+        }
+    }
+
+    #[test]
+    fn mitm_response_body_allows_missing_content_type() {
+        let headers = http::HeaderMap::new();
+
+        assert_eq!(mitm_response_body_unreadable_reason(&headers), None);
     }
 }
 
