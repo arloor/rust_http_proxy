@@ -231,6 +231,23 @@ pub(crate) async fn start_tls_websocket_echo_server() -> Result<TestServer, DynE
     Ok(TestServer { addr, task })
 }
 
+pub(crate) async fn start_tls_websocket_echo_server_with_h2_alpn() -> Result<TestServer, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let mut config = test_server_tls_config()?;
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    let acceptor = TlsAcceptor::from(Arc::new(config));
+    let task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut stream = acceptor.accept(stream).await?;
+        if stream.get_ref().1.alpn_protocol() == Some(b"h2") {
+            return Err(io::Error::new(ErrorKind::InvalidData, "websocket upstream selected h2").into());
+        }
+        serve_websocket_echo(&mut stream).await
+    });
+    Ok(TestServer { addr, task })
+}
+
 pub(crate) struct ForwardBypassProxy {
     pub(crate) addr: SocketAddr,
     connect_rx: tokio::sync::mpsc::Receiver<String>,

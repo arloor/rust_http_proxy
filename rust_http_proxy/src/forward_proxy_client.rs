@@ -30,7 +30,10 @@ use tokio_rustls::rustls::pki_types;
 
 use crate::{
     config::ForwardBypassConfig,
-    proxy::{AccessLabel, EitherTlsStream, HttpClientStream, build_tls_connector, build_tls_connector_with_http_alpn},
+    proxy::{
+        AccessLabel, EitherTlsStream, HttpClientStream, build_tls_connector, build_tls_connector_with_http_alpn,
+        build_tls_connector_with_http1_alpn,
+    },
 };
 
 pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -144,6 +147,24 @@ where
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
+    pub async fn send_request_http1_only(
+        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> Result<Response<body::Incoming>, std::io::Error> {
+        let mut c = match HttpConnection::connect_http1_only(access_label, ipv6_first, stream_map_func).await {
+            Ok(c) => c,
+            Err(err) => {
+                error!("failed to connect to host with HTTP/1.1 only: {}, error: {}", &access_label.target, err);
+                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+            }
+        };
+
+        trace!("HTTP/1.1-only making request to host: {access_label}, request: {req:?}");
+        c.send_request(req, access_label)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
     pub async fn send_request_via_forward_bypass(
         &self, req: Request<B>, access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig,
         client_ip: &str,
@@ -176,6 +197,35 @@ where
         };
 
         self.send_request_conn(access_label, c, req)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    pub async fn send_request_via_forward_bypass_http1_only(
+        &self, req: Request<B>, access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig,
+        client_ip: &str,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> Result<Response<body::Incoming>, std::io::Error> {
+        let mut c = match HttpConnection::connect_via_forward_bypass_http1_only(
+            access_label,
+            forward_bypass_config,
+            client_ip,
+            stream_map_func,
+        )
+        .await
+        {
+            Ok(c) => c,
+            Err(err) => {
+                error!(
+                    "failed to connect to host with HTTP/1.1 only: {} via forward bypass {}, error: {}",
+                    &access_label.target, forward_bypass_config, err
+                );
+                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+            }
+        };
+
+        trace!("HTTP/1.1-only making request via forward bypass to host: {access_label}, request: {req:?}");
+        c.send_request(req, access_label)
             .await
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
@@ -316,10 +366,28 @@ where
         access_label: &AccessLabel, ipv6_first: Option<bool>,
         stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
+        Self::connect_with_http2_preference(access_label, ipv6_first, true, stream_map_func).await
+    }
+
+    pub(crate) async fn connect_http1_only(
+        access_label: &AccessLabel, ipv6_first: Option<bool>,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> io::Result<HttpConnection<B>> {
+        Self::connect_with_http2_preference(access_label, ipv6_first, false, stream_map_func).await
+    }
+
+    async fn connect_with_http2_preference(
+        access_label: &AccessLabel, ipv6_first: Option<bool>, allow_http2: bool,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> io::Result<HttpConnection<B>> {
         let stream = crate::proxy::connect_with_preference(&access_label.target, ipv6_first).await?;
         let (stream, use_http2) = if let Some(true) = access_label.relay_over_tls {
             // 建立 TLS 连接
-            let connector = build_tls_connector_with_http_alpn();
+            let connector = if allow_http2 {
+                build_tls_connector_with_http_alpn()
+            } else {
+                build_tls_connector_with_http1_alpn()
+            };
 
             let host = &access_label
                 .target
@@ -332,7 +400,7 @@ where
 
             match connector.connect(server_name, stream).await {
                 Ok(tls_stream) => {
-                    let use_http2 = tls_stream.get_ref().1.alpn_protocol() == Some(b"h2");
+                    let use_http2 = allow_http2 && tls_stream.get_ref().1.alpn_protocol() == Some(b"h2");
                     (EitherTlsStream::Tls { stream: tls_stream }, use_http2)
                 }
                 Err(e) => {
@@ -352,6 +420,34 @@ where
 
     pub(crate) async fn connect_via_forward_bypass(
         access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig, client_ip: &str,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> io::Result<HttpConnection<B>> {
+        Self::connect_via_forward_bypass_with_http2_preference(
+            access_label,
+            forward_bypass_config,
+            client_ip,
+            true,
+            stream_map_func,
+        )
+        .await
+    }
+
+    pub(crate) async fn connect_via_forward_bypass_http1_only(
+        access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig, client_ip: &str,
+        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+    ) -> io::Result<HttpConnection<B>> {
+        Self::connect_via_forward_bypass_with_http2_preference(
+            access_label,
+            forward_bypass_config,
+            client_ip,
+            false,
+            stream_map_func,
+        )
+        .await
+    }
+
+    async fn connect_via_forward_bypass_with_http2_preference(
+        access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig, client_ip: &str, allow_http2: bool,
         stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let bypass_host = format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port);
@@ -404,7 +500,11 @@ where
         let parent_stream = reader.into_inner();
 
         let (stream, use_http2) = if let Some(true) = access_label.relay_over_tls {
-            let connector = build_tls_connector_with_http_alpn();
+            let connector = if allow_http2 {
+                build_tls_connector_with_http_alpn()
+            } else {
+                build_tls_connector_with_http1_alpn()
+            };
             let host = access_label
                 .target
                 .split(':')
@@ -414,7 +514,7 @@ where
                 .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
                 .to_owned();
             let stream = connector.connect(server_name, parent_stream).await?;
-            let use_http2 = stream.get_ref().1.alpn_protocol() == Some(b"h2");
+            let use_http2 = allow_http2 && stream.get_ref().1.alpn_protocol() == Some(b"h2");
             (HttpClientStream::TlsOverProxy { stream }, use_http2)
         } else {
             (HttpClientStream::Direct { stream: parent_stream }, false)

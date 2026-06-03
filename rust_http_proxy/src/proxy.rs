@@ -500,7 +500,7 @@ impl ProxyHandler {
         // 使用 send_request_no_cache 发送请求
         let mut upstream_response = self
             .forward_proxy_client
-            .send_request(
+            .send_request_http1_only(
                 req,
                 &traffic_label,
                 self.config.ipv6_first,
@@ -1376,7 +1376,7 @@ async fn handle_mitm_websocket_upgrade(
     let req = map_mitm_request_body(req, access_label.clone(), dump_plaintext);
     let mut upstream_response = if let Some(forward_bypass) = forward_bypass {
         mitm_proxy_client
-            .send_request_via_forward_bypass(
+            .send_request_via_forward_bypass_http1_only(
                 req,
                 &access_label,
                 forward_bypass,
@@ -1388,9 +1388,14 @@ async fn handle_mitm_websocket_upgrade(
             .await?
     } else {
         mitm_proxy_client
-            .send_request(req, &access_label, ipv6_first, |stream: HttpClientStream, access_label: AccessLabel| {
-                CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-            })
+            .send_request_http1_only(
+                req,
+                &access_label,
+                ipv6_first,
+                |stream: HttpClientStream, access_label: AccessLabel| {
+                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
+                },
+            )
             .await?
     };
     if dump_plaintext {
@@ -1611,6 +1616,30 @@ mod tests {
 
         let req_without_host = Request::builder().uri("/path").body(())?;
         assert_eq!(request_authority_for_log(&req_without_host, &test_access_label()), "example.com",);
+        Ok(())
+    }
+
+    #[test]
+    fn websocket_upgrade_requires_connection_upgrade_token() -> Result<(), http::Error> {
+        let req = Request::builder()
+            .uri("/ws")
+            .header(http::header::CONNECTION, "keep-alive, Upgrade")
+            .header(http::header::UPGRADE, "websocket")
+            .body(())?;
+
+        assert!(is_websocket_upgrade(&req));
+        Ok(())
+    }
+
+    #[test]
+    fn websocket_upgrade_ignores_upgrade_header_without_connection_token() -> Result<(), http::Error> {
+        let req = Request::builder()
+            .uri("/plain")
+            .header(http::header::CONNECTION, "close, x-remove-for-h2")
+            .header(http::header::UPGRADE, "websocket")
+            .body(())?;
+
+        assert!(!is_websocket_upgrade(&req));
         Ok(())
     }
 }
@@ -1965,6 +1994,10 @@ pub(crate) fn build_tls_connector_with_http_alpn() -> TlsConnector {
     build_tls_connector_with_alpn(vec![b"h2".to_vec(), b"http/1.1".to_vec()])
 }
 
+pub(crate) fn build_tls_connector_with_http1_alpn() -> TlsConnector {
+    build_tls_connector_with_alpn(vec![b"http/1.1".to_vec()])
+}
+
 fn build_tls_connector_with_alpn(alpn_protocols: Vec<Vec<u8>>) -> TlsConnector {
     #[cfg(debug_assertions)]
     {
@@ -2084,7 +2117,19 @@ fn get_client_ip(req: &Request<Incoming>, client_socket_addr: SocketAddr) -> Str
 }
 
 /// 检测请求是否为 WebSocket 升级请求
-fn is_websocket_upgrade(req: &Request<Incoming>) -> bool {
+fn is_websocket_upgrade<B>(req: &Request<B>) -> bool {
+    let has_upgrade_token = req
+        .headers()
+        .get_all(http::header::CONNECTION)
+        .iter()
+        .flat_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .any(|v| v.eq_ignore_ascii_case("upgrade"));
+    if !has_upgrade_token {
+        return false;
+    }
+
     req.headers()
         .get(http::header::UPGRADE)
         .and_then(|v| v.to_str().ok())

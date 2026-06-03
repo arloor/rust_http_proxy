@@ -4,8 +4,8 @@ use tokio::net::TcpStream;
 use crate::DynError;
 use crate::e2e_test_support::{
     WS_PAYLOAD, assert_switching_protocols, connect_to_mitm_target, read_http_head, read_ws_frame_payload, start_proxy,
-    start_tls_websocket_echo_server, start_websocket_echo_server, timeout_step, unique_temp_dir,
-    write_masked_text_frame, write_test_ca,
+    start_tls_websocket_echo_server, start_tls_websocket_echo_server_with_h2_alpn, start_websocket_echo_server,
+    timeout_step, unique_temp_dir, write_masked_text_frame, write_test_ca,
 };
 
 #[tokio::test]
@@ -121,6 +121,48 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
 
     write_masked_text_frame(&mut tls_stream, WS_PAYLOAD).await?;
     let echoed = timeout_step("MITM websocket echo", read_ws_frame_payload(&mut tls_stream)).await?;
+    assert_eq!(echoed, WS_PAYLOAD);
+
+    upstream.task.await??;
+    proxy.shutdown().await?;
+    tokio::fs::remove_dir_all(temp_dir).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn mitm_websocket_upgrade_uses_http1_when_upstream_supports_h2() -> Result<(), DynError> {
+    let upstream = start_tls_websocket_echo_server_with_h2_alpn().await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_ws_mitm_h2_upstream")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let proxy = start_proxy(vec![
+        "--mitm-domain-suffix".to_owned(),
+        "localhost".to_owned(),
+        "--mitm-ca-cert".to_owned(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".to_owned(),
+        ca.key_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    let mut tls_stream = connect_to_mitm_target(proxy.port, upstream.addr.port(), ca.cert_der).await?;
+    let request = format!(
+        "\
+GET /ws HTTP/1.1\r\n\
+Host: localhost:{}\r\n\
+Connection: Upgrade\r\n\
+Upgrade: websocket\r\n\
+Sec-WebSocket-Version: 13\r\n\
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+\r\n",
+        upstream.addr.port()
+    );
+    tls_stream.write_all(request.as_bytes()).await?;
+    assert_switching_protocols(
+        &timeout_step("MITM h2 upstream websocket response", read_http_head(&mut tls_stream)).await?,
+    )?;
+
+    write_masked_text_frame(&mut tls_stream, WS_PAYLOAD).await?;
+    let echoed = timeout_step("MITM h2 upstream websocket echo", read_ws_frame_payload(&mut tls_stream)).await?;
     assert_eq!(echoed, WS_PAYLOAD);
 
     upstream.task.await??;
