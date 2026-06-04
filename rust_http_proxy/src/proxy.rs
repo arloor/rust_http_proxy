@@ -15,7 +15,7 @@ use crate::{
     dns_resolver::CustomGaiDNSResolver,
     forward_proxy_client::ForwardProxyClient,
     hyper_x::CounterBody,
-    ip_x::{SocketAddrFormat, local_ip},
+    ip_x::SocketAddrFormat,
     location::{
         DEFAULT_HOST, LocationConfig, Upstream, build_upstream_req, handle_websocket_upgrade_reverse, normalize302,
     },
@@ -27,7 +27,7 @@ use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
 use axum::extract::Request;
 use axum_bootstrap::InterceptResult;
 use http::{
-    Uri,
+    HeaderMap, HeaderName, Uri,
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HOST, LOCATION, TRANSFER_ENCODING},
 };
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
@@ -52,9 +52,14 @@ use tokio::{net::TcpStream, pin};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tokio_rustls::{client::TlsStream, rustls::pki_types};
 
-static LOCAL_IP: LazyLock<String> = LazyLock::new(|| local_ip().unwrap_or("0.0.0.0".to_string()));
 const MITM_PROTOCOL_PEEK_TIMEOUT: Duration = Duration::from_millis(500);
 const MITM_PROTOCOL_PEEK_MAX: usize = 5;
+const RANDOM_PADDING_HEADER_MAX_VALUE_BYTES: usize = 2048;
+const RANDOM_PADDING_HEADER_NAME_SUFFIX_LEN: usize = 8;
+const RANDOM_PADDING_HEADER_VALUE_MIN_LEN: usize = 8;
+const RANDOM_PADDING_HEADER_VALUE_MAX_LEN: usize = 64;
+const RANDOM_PADDING_HEADER_NAME_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+const RANDOM_PADDING_HEADER_VALUE_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 static ALL_REVERSE_PROXY_REQ: LazyLock<LabelImpl<ReverseProxyReqLabel>> = LazyLock::new(|| {
     LabelImpl::new(ReverseProxyReqLabel {
         client: "all".to_string(),
@@ -86,6 +91,41 @@ enum ServiceType<'a> {
     /// 正向代理
     ForwardProxy,
     NonMatch,
+}
+
+fn append_random_padding_headers(headers: &mut HeaderMap) {
+    let mut rng = rand::rng();
+    let mut remaining_value_bytes = rng.random_range(1..=RANDOM_PADDING_HEADER_MAX_VALUE_BYTES);
+
+    while remaining_value_bytes > 0 {
+        let value_len = if remaining_value_bytes < RANDOM_PADDING_HEADER_VALUE_MIN_LEN {
+            remaining_value_bytes
+        } else {
+            let max_len = remaining_value_bytes.min(RANDOM_PADDING_HEADER_VALUE_MAX_LEN);
+            rng.random_range(RANDOM_PADDING_HEADER_VALUE_MIN_LEN..=max_len)
+        };
+
+        let name = format!(
+            "x-pad-{}",
+            random_ascii(&mut rng, RANDOM_PADDING_HEADER_NAME_CHARS, RANDOM_PADDING_HEADER_NAME_SUFFIX_LEN)
+        );
+        let value = random_ascii(&mut rng, RANDOM_PADDING_HEADER_VALUE_CHARS, value_len);
+
+        if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(&value)) {
+            headers.append(name, value);
+        }
+
+        remaining_value_bytes -= value_len;
+    }
+}
+
+fn random_ascii<R: rand::RngExt + ?Sized>(rng: &mut R, alphabet: &[u8], len: usize) -> String {
+    let mut output = String::with_capacity(len);
+    for _ in 0..len {
+        let idx = rng.random_range(0..alphabet.len());
+        output.push(alphabet[idx] as char);
+    }
+    output
 }
 
 impl<'a> ServiceType<'a> {
@@ -811,14 +851,7 @@ impl ProxyHandler {
                     Ok(())
                 });
                 let mut response = Response::new(empty_body());
-                // 添加随机长度的padding
-                let max_num = 2048 / LOCAL_IP.len();
-                let count = rand::rng().random_range(1..max_num);
-                for _ in 0..count {
-                    response
-                        .headers_mut()
-                        .append(http::header::SERVER, HeaderValue::from_static(&LOCAL_IP));
-                }
+                append_random_padding_headers(response.headers_mut());
                 Ok(response)
             }
         }
@@ -953,13 +986,7 @@ impl ProxyHandler {
         });
 
         let mut response = Response::new(empty_body());
-        let max_num = 2048 / LOCAL_IP.len();
-        let count = rand::rng().random_range(1..max_num);
-        for _ in 0..count {
-            response
-                .headers_mut()
-                .append(http::header::SERVER, HeaderValue::from_static(&LOCAL_IP));
-        }
+        append_random_padding_headers(response.headers_mut());
         Ok(response)
     }
 
@@ -1041,14 +1068,8 @@ impl ProxyHandler {
                 }
             });
             let mut response = Response::new(empty_body());
-            // 针对connect请求中，在响应中增加随机长度的padding，防止每次建连时tcp数据长度特征过于敏感
-            let max_num = 2048 / LOCAL_IP.len();
-            let count = rand::rng().random_range(1..max_num);
-            for _ in 0..count {
-                response
-                    .headers_mut()
-                    .append(http::header::SERVER, HeaderValue::from_static(&LOCAL_IP));
-            }
+            // 针对connect请求增加随机padding，防止每次建连时tcp数据长度特征过于敏感。
+            append_random_padding_headers(response.headers_mut());
             Ok(response)
         } else {
             warn!("CONNECT host is not socket addr: {:?}", req.uri());
@@ -1714,6 +1735,40 @@ mod tests {
 
         assert!(!is_websocket_upgrade(&req));
         Ok(())
+    }
+
+    #[test]
+    fn random_padding_headers_are_http_safe() {
+        for _ in 0..16 {
+            let mut headers = HeaderMap::new();
+
+            append_random_padding_headers(&mut headers);
+
+            assert!(!headers.is_empty());
+            assert!(!headers.contains_key(http::header::SERVER));
+
+            let total_value_bytes: usize = headers.iter().map(|(_, value)| value.as_bytes().len()).sum();
+            assert!((1..=RANDOM_PADDING_HEADER_MAX_VALUE_BYTES).contains(&total_value_bytes));
+
+            for (name, value) in &headers {
+                let name = name.as_str();
+                assert!(name.starts_with("x-pad-"));
+                assert_eq!(name.len(), "x-pad-".len() + RANDOM_PADDING_HEADER_NAME_SUFFIX_LEN);
+                assert!(
+                    name.bytes()
+                        .skip("x-pad-".len())
+                        .all(|byte| RANDOM_PADDING_HEADER_NAME_CHARS.contains(&byte))
+                );
+
+                assert!(!value.as_bytes().is_empty());
+                assert!(
+                    value
+                        .as_bytes()
+                        .iter()
+                        .all(|byte| RANDOM_PADDING_HEADER_VALUE_CHARS.contains(byte))
+                );
+            }
+        }
     }
 
     #[test]
