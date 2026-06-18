@@ -5,6 +5,7 @@ use http::Uri;
 use ipnetwork::IpNetwork;
 use log::{info, warn};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -28,6 +29,12 @@ pub struct Param {
         help = "可以多次指定来实现多端口\n"
     )]
     port: Vec<u16>,
+    #[arg(
+        long,
+        value_name = "IP",
+        help = "指定监听 IP，例如 127.0.0.1、0.0.0.0、::1。未指定时默认监听 [::]"
+    )]
+    host: Option<IpAddr>,
     #[arg(short, long, value_name = "CERT", default_value = "cert.pem")]
     cert: String,
     #[arg(short, long, value_name = "KEY", default_value = "privkey.pem")]
@@ -121,6 +128,7 @@ pub(crate) struct Config {
     pub(crate) allow_cidrs: AllowCIRRS,
     pub(crate) over_tls: bool,
     pub(crate) port: Vec<u16>,
+    pub(crate) host: Option<IpAddr>,
     pub(crate) location_specs: LocationSpecs,
     pub(crate) forward_bypass: Option<ForwardBypassConfig>,
     pub(crate) ipv6_first: Option<bool>,
@@ -265,6 +273,7 @@ impl TryFrom<Param> for Config {
             allow_cidrs: AllowCIRRS(allowed_networks),
             over_tls: param.over_tls,
             port: param.port,
+            host: param.host,
             location_specs,
             forward_bypass,
             ipv6_first: param.ipv6_first,
@@ -326,6 +335,9 @@ fn log_config(config: &Config) {
     }
     if !config.mitm_stub_specs.is_empty() {
         info!("MITM stubs are enabled");
+    }
+    if let Some(host) = config.host {
+        info!("listen host is {host}");
     }
     info!("basic auth is {:?}", config.basic_auth);
     if !config.location_specs.locations.is_empty() {

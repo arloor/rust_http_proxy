@@ -107,6 +107,8 @@ Options:
   -p, --port <PORT>
           可以多次指定来实现多端口
            [default: 3128]
+      --host <IP>
+          指定监听 IP，例如 127.0.0.1、0.0.0.0、::1。未指定时默认监听 [::]
   -c, --cert <CERT>
           [default: cert.pem]
   -k, --key <KEY>

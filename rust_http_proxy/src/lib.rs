@@ -79,6 +79,11 @@ fn create_future(
 
     let router = build_router(AppState { basic_auth });
     let server = axum_bootstrap::new_server(port, router, shutdown_rx);
+    let server = if let Some(host) = config.host {
+        server.with_listen_ip(host)
+    } else {
+        server
+    };
 
     let server = server
         .with_timeout(IDLE_TIMEOUT)
