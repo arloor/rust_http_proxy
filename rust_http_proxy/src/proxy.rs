@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::HashMap,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
     net::SocketAddr,
@@ -88,6 +89,8 @@ enum ServiceType<'a> {
     LocationStaticServing {
         location: &'a String,
         static_dir: &'a String,
+        basic_auth: &'a HashMap<String, String>,
+        basic_auth_path_prefixes: &'a [String],
     },
     /// 正向代理
     ForwardProxy,
@@ -279,7 +282,12 @@ impl<'a> ServiceType<'a> {
                     },
                 }
             }
-            ServiceType::LocationStaticServing { static_dir, location } => {
+            ServiceType::LocationStaticServing {
+                static_dir,
+                location,
+                basic_auth,
+                basic_auth_path_prefixes,
+            } => {
                 let res = async {
                     config.allow_cidrs.check_serving_control(client_socket_addr)?;
 
@@ -288,19 +296,36 @@ impl<'a> ServiceType<'a> {
                     }
 
                     // 创建流量统计标签
+                    let raw_path = req.uri().path();
+                    let request_path = percent_decode_str(raw_path)
+                        .decode_utf8()
+                        .unwrap_or(Cow::from(raw_path));
+                    let username = match check_static_basic_auth(
+                        req.headers(),
+                        request_path.as_ref(),
+                        basic_auth,
+                        basic_auth_path_prefixes,
+                    ) {
+                        Ok(username) => username.unwrap_or_else(|| "static_serving".to_owned()),
+                        Err(e) => {
+                            warn!(
+                                "static basic auth failed from {} for {}: {}",
+                                SocketAddrFormat(&client_socket_addr),
+                                request_path,
+                                e
+                            );
+                            return Ok(build_authenticate_resp(false));
+                        }
+                    };
                     let traffic_label = AccessLabel {
                         client: client_socket_addr.ip().to_canonical().to_string(),
                         target: static_dir.to_string(),
-                        username: "static_serving".to_owned(),
+                        username,
                         relay_over_tls: None,
                     };
 
-                    let raw_path = req.uri().path();
-                    let path = percent_decode_str(raw_path)
-                        .decode_utf8()
-                        .unwrap_or(Cow::from(raw_path));
                     #[allow(clippy::expect_used)]
-                    let path = path
+                    let path = request_path
                         .strip_prefix(location.as_str())
                         .expect("should start with location");
                     let path = "/".to_string() + path;
@@ -525,9 +550,18 @@ impl ProxyHandler {
                         location,
                         upstream,
                     }),
-                    Some(LocationConfig::Serving { static_dir, location }) => {
-                        Ok(ServiceType::LocationStaticServing { location, static_dir })
-                    }
+                    Some(LocationConfig::Serving {
+                        static_dir,
+                        location,
+                        basic_auth,
+                        basic_auth_path_prefixes,
+                        ..
+                    }) => Ok(ServiceType::LocationStaticServing {
+                        location,
+                        static_dir,
+                        basic_auth,
+                        basic_auth_path_prefixes,
+                    }),
                     None => Ok(ServiceType::NonMatch),
                 }
             }
@@ -2434,6 +2468,19 @@ impl Display for AccessLabel {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} -> {}", self.client, self.target)
     }
+}
+
+fn check_static_basic_auth(
+    headers: &HeaderMap, request_path: &str, basic_auth: &HashMap<String, String>, basic_auth_path_prefixes: &[String],
+) -> Result<Option<String>, io::Error> {
+    if basic_auth_path_prefixes
+        .iter()
+        .any(|path_prefix| request_path.starts_with(path_prefix))
+    {
+        return axum_handler::check_auth(headers, http::header::AUTHORIZATION, basic_auth);
+    }
+
+    Ok(None)
 }
 
 pub(crate) fn build_authenticate_resp(for_proxy: bool) -> Response<BoxBody<Bytes, io::Error>> {

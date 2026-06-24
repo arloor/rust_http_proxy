@@ -51,6 +51,21 @@ pub struct Param {
     #[arg(short, long, value_name = "WEB_CONTENT_PATH", help = "静态文件托管的根目录")]
     web_content_path: Option<String>,
     #[arg(
+        long,
+        value_name = "USER",
+        help = "--web-content-path 默认静态资源受保护路径的 Basic 认证用户，独立于 --users。\n\
+    格式为 'username:password'\n\
+    可以多次指定来实现多用户。不指定 --static-auth-path-prefix 时保护整个默认静态目录"
+    )]
+    static_auth_users: Vec<String>,
+    #[arg(
+        long,
+        value_name = "PATH_PREFIX",
+        help = "静态资源需要 Basic 认证的 URL 路径前缀，例如 /private 或 /downloads/secret\n\
+        可以多次指定，命中任意前缀都会要求认证。需要配合 --static-auth-users 使用"
+    )]
+    static_auth_path_prefix: Vec<String>,
+    #[arg(
         short,
         long,
         value_name = "REFERER",
@@ -219,19 +234,23 @@ impl TryFrom<Param> for Config {
                 ipv6_first: param.ipv6_first,
             }
         });
-        let mut basic_auth = HashMap::new();
-        for raw_user in param.users {
-            let mut user = raw_user.split(':');
-            let username = user.next().unwrap_or("").to_string();
-            let password = user.next().unwrap_or("").to_string();
-            if !username.is_empty() && !password.is_empty() {
-                let base64 = general_purpose::STANDARD.encode(raw_user);
-                basic_auth.insert(format!("Basic {base64}"), username);
-            }
+        let basic_auth = parse_basic_auth_users(param.users);
+        let static_basic_auth = parse_basic_auth_users(param.static_auth_users.clone());
+        if !param.static_auth_path_prefix.is_empty() && static_basic_auth.is_empty() {
+            return Err(
+                "--static-auth-path-prefix requires at least one valid --static-auth-users username:password".into()
+            );
+        }
+        if (!param.static_auth_users.is_empty() || !param.static_auth_path_prefix.is_empty())
+            && param.web_content_path.is_none()
+        {
+            return Err("--static-auth-users/--static-auth-path-prefix only apply to --web-content-path".into());
         }
         let location_specs = parse_location_specs(
             &param.location_config_file,
             &param.web_content_path,
+            param.static_auth_users,
+            param.static_auth_path_prefix,
             &mut param.append_upstream_url,
             param.enable_github_proxy,
         )?;
@@ -283,6 +302,40 @@ impl TryFrom<Param> for Config {
             mitm_stub_specs,
         })
     }
+}
+
+pub(crate) fn parse_basic_auth_users(raw_users: Vec<String>) -> HashMap<String, String> {
+    let mut basic_auth = HashMap::new();
+    for raw_user in raw_users {
+        let mut user = raw_user.split(':');
+        let username = user.next().unwrap_or("").to_string();
+        let password = user.next().unwrap_or("").to_string();
+        if !username.is_empty() && !password.is_empty() {
+            let base64 = general_purpose::STANDARD.encode(raw_user);
+            basic_auth.insert(format!("Basic {base64}"), username);
+        }
+    }
+    basic_auth
+}
+
+pub(crate) fn normalize_static_auth_path_prefixes(path_prefixes: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for raw_path_prefix in path_prefixes {
+        let raw_path_prefix = raw_path_prefix.trim();
+        if raw_path_prefix.is_empty() {
+            warn!("skip empty static auth path prefix");
+            continue;
+        }
+        let path_prefix = if raw_path_prefix.starts_with('/') {
+            raw_path_prefix.to_string()
+        } else {
+            format!("/{raw_path_prefix}")
+        };
+        if !normalized.contains(&path_prefix) {
+            normalized.push(path_prefix);
+        }
+    }
+    normalized
 }
 
 fn normalize_mitm_domain_suffixes(suffixes: Vec<String>) -> Vec<String> {
@@ -353,7 +406,9 @@ fn log_config(config: &Config) {
                         upstream.url_base,
                     );
                 }
-                crate::location::LocationConfig::Serving { location, static_dir } => {
+                crate::location::LocationConfig::Serving {
+                    location, static_dir, ..
+                } => {
                     info!(
                         "    {:<70} -> static_dir: {}",
                         format!("http(s)://{}:port{}**", reverse_proxy_config.0, location),

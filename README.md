@@ -119,6 +119,13 @@ Options:
           可以多次指定来实现多用户
   -w, --web-content-path <WEB_CONTENT_PATH>
           静态文件托管的根目录
+      --static-auth-users <USER>
+          --web-content-path 默认静态资源受保护路径的 Basic 认证用户，独立于 --users。
+          格式为 'username:password'
+          可以多次指定来实现多用户。不指定 --static-auth-path-prefix 时保护整个默认静态目录
+      --static-auth-path-prefix <PATH_PREFIX>
+          静态资源需要 Basic 认证的 URL 路径前缀，例如 /private 或 /downloads/secret
+          可以多次指定，命中任意前缀都会要求认证。需要配合 --static-auth-users 使用
   -r, --referer-keywords-to-self <REFERER>
           Http Referer请求头处理
           1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值
@@ -239,22 +246,58 @@ adminmaxapi.knowhub.cloud:443:
 rust_http_proxy -p 7788 --web-content-path /var/www/html
 ```
 
+#### 静态资源路径 Basic 认证
+
+使用 `--static-auth-users` 指定静态资源专用账号。命令行参数只作用于 `--web-content-path` 生成的默认静态托管 location；如果不指定 `--static-auth-path-prefix`，会保护整个默认静态目录：
+
+```bash
+rust_http_proxy -p 7788 \
+  --web-content-path /var/www/html \
+  --static-auth-users alice:alice_password \
+  --static-auth-users bob:bob_password
+```
+
+也可以使用 `--static-auth-path-prefix` 只保护部分 URL 路径前缀：
+
+```bash
+rust_http_proxy -p 7788 \
+  --web-content-path /var/www/html \
+  --static-auth-path-prefix /private \
+  --static-auth-path-prefix /downloads/secret \
+  --static-auth-users alice:alice_password \
+  --static-auth-users bob:bob_password
+```
+
+浏览器访问受保护前缀时会自动弹出 Basic 认证框。`--static-auth-users` 与正向代理、`/metrics` 等使用的 `--users` 相互独立。
+
 #### 高级配置（基于域名和路径）
 
 使用 `--location-config-file` 指定 YAML 配置文件，支持按域名、路径分别配置：
+
+静态托管 location 中的 `basic_auth_users` 和 `basic_auth_path_prefixes` 都是可选字段。配置 `basic_auth_users` 但不配置 `basic_auth_path_prefixes` 时，会保护整个 location；配置 `basic_auth_path_prefixes` 时，仅保护这些相对当前 location 的路径前缀。`basic_auth_path_prefixes` 需要配合 `basic_auth_users` 使用。
 
 ```yaml
 # 针对特定域名的配置
 example.com:
   - location: / # URL 路径前缀，默认 /
     static_dir: /usr/share/nginx/html # 静态资源目录
+  - location: /private/
+    static_dir: /srv/private
+    basic_auth_users: # 可选；不配置 basic_auth_path_prefixes 时保护整个 /private/ location
+      - alice:alice_password
+      - bob:bob_password
 
 # 对所有域名生效的配置
 default_host:
-  - location: /static
+  - location: /static/
     static_dir: /var/www/static
-  - location: /downloads
+  - location: /downloads/
     static_dir: /var/www/downloads
+    basic_auth_users: # 可选
+      - download:download_password
+    basic_auth_path_prefixes: # 可选；相对当前 location，仅保护 /downloads/secret 和 /downloads/internal
+      - /secret
+      - /internal
 ```
 
 ### 🔄 反向代理配置

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::io::{self, ErrorKind};
 use std::str::FromStr;
 
-use crate::config::{Config, Param};
+use crate::config::{Config, Param, normalize_static_auth_path_prefixes, parse_basic_auth_users};
 use crate::dns_resolver::CustomGaiDNSResolver;
 use crate::proxy::AccessLabel;
 use crate::proxy::SchemeHostPort;
@@ -48,6 +48,12 @@ pub(crate) enum LocationConfig {
         #[serde(default = "root")]
         location: String,
         static_dir: String,
+        #[serde(default, skip_serializing)]
+        basic_auth_users: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        basic_auth_path_prefixes: Vec<String>,
+        #[serde(skip)]
+        basic_auth: HashMap<String, String>,
     },
 }
 
@@ -290,8 +296,8 @@ fn truncate_string(s: &str, n: usize) -> &str {
 }
 
 pub(crate) fn parse_location_specs(
-    location_config_file: &Option<String>, default_static_dir: &Option<String>, append_upstream_url: &mut Vec<String>,
-    enable_github_proxy: bool,
+    location_config_file: &Option<String>, default_static_dir: &Option<String>, default_basic_auth_users: Vec<String>,
+    default_basic_auth_path_prefixes: Vec<String>, append_upstream_url: &mut Vec<String>, enable_github_proxy: bool,
 ) -> Result<LocationSpecs, <Config as TryFrom<Param>>::Error> {
     let mut locations: HashMap<String, Vec<LocationConfig>> = match location_config_file {
         Some(path) => {
@@ -325,6 +331,9 @@ pub(crate) fn parse_location_specs(
             vec.push(crate::location::LocationConfig::Serving {
                 location: "/".to_string(),
                 static_dir: static_dir.clone(),
+                basic_auth_users: default_basic_auth_users.clone(),
+                basic_auth_path_prefixes: default_basic_auth_path_prefixes.clone(),
+                basic_auth: HashMap::new(),
             });
         }
     }
@@ -379,9 +388,44 @@ pub(crate) fn parse_location_specs(
                 return Err("location should start with '/'".into());
             }
             // 对于 Serving 配置，验证 location以 / 结束
-            if let LocationConfig::Serving { location, .. } = location_config {
+            if let LocationConfig::Serving {
+                location,
+                basic_auth_users,
+                basic_auth_path_prefixes,
+                basic_auth,
+                ..
+            } = location_config
+            {
                 if !location.ends_with('/') {
                     return Err(format!("serving location should end with '/': {}", location).into());
+                }
+                let parsed_basic_auth = parse_basic_auth_users(basic_auth_users.clone());
+                let normalized_path_prefixes =
+                    normalize_static_auth_path_prefixes(std::mem::take(basic_auth_path_prefixes));
+                if !basic_auth_users.is_empty() && parsed_basic_auth.is_empty() {
+                    return Err(format!(
+                        "serving location {} requires valid basic_auth_users username:password",
+                        location
+                    )
+                    .into());
+                }
+                if parsed_basic_auth.is_empty() && !normalized_path_prefixes.is_empty() {
+                    return Err(format!(
+                        "serving location {} basic_auth_path_prefixes requires basic_auth_users",
+                        location
+                    )
+                    .into());
+                }
+                if !parsed_basic_auth.is_empty() {
+                    *basic_auth = parsed_basic_auth;
+                    if normalized_path_prefixes.is_empty() {
+                        basic_auth_path_prefixes.push(location.clone());
+                    } else {
+                        *basic_auth_path_prefixes = normalized_path_prefixes
+                            .iter()
+                            .map(|path_prefix| join_location_auth_path_prefix(location, path_prefix))
+                            .collect();
+                    }
                 }
             }
 
@@ -443,4 +487,172 @@ pub(crate) fn parse_location_specs(
         locations,
         redirect_bachpaths,
     })
+}
+
+fn join_location_auth_path_prefix(location: &str, path_prefix: &str) -> String {
+    if path_prefix == "/" {
+        return location.to_string();
+    }
+    if location == "/" {
+        path_prefix.to_string()
+    } else {
+        format!("{}{}", location.trim_end_matches('/'), path_prefix)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn parses_serving_location_basic_auth() -> Result<(), crate::DynError> {
+        let config_path = temp_config_path("location-basic-auth.yaml");
+        std::fs::write(
+            &config_path,
+            r#"
+default_host:
+  - location: /private/
+    static_dir: /srv/private
+    basic_auth_users:
+      - alice:secret
+  - location: /downloads/
+    static_dir: /srv/downloads
+    basic_auth_users:
+      - bob:secret
+    basic_auth_path_prefixes:
+      - /secret
+"#,
+        )?;
+
+        let mut append_upstream_url = Vec::new();
+        let specs = parse_location_specs(
+            &Some(config_path.to_string_lossy().into_owned()),
+            &None,
+            Vec::new(),
+            Vec::new(),
+            &mut append_upstream_url,
+            false,
+        )?;
+        std::fs::remove_file(&config_path)?;
+
+        let locations = specs
+            .locations
+            .get(DEFAULT_HOST)
+            .ok_or("default_host locations not found")?;
+        let private = locations
+            .iter()
+            .find(|location| location.location() == "/private/")
+            .ok_or("private location not found")?;
+        let downloads = locations
+            .iter()
+            .find(|location| location.location() == "/downloads/")
+            .ok_or("downloads location not found")?;
+
+        match private {
+            LocationConfig::Serving {
+                basic_auth,
+                basic_auth_path_prefixes,
+                ..
+            } => {
+                let encoded = general_purpose::STANDARD.encode("alice:secret");
+                assert_eq!(basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
+                assert_eq!(basic_auth_path_prefixes, &vec!["/private/".to_string()]);
+            }
+            _ => panic!("private should be serving"),
+        }
+
+        match downloads {
+            LocationConfig::Serving {
+                basic_auth_path_prefixes,
+                ..
+            } => {
+                assert_eq!(basic_auth_path_prefixes, &vec!["/downloads/secret".to_string()]);
+            }
+            _ => panic!("downloads should be serving"),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn applies_cli_static_basic_auth_to_default_serving_location() -> Result<(), crate::DynError> {
+        let mut append_upstream_url = Vec::new();
+        let specs = parse_location_specs(
+            &None,
+            &Some("/srv/www".to_string()),
+            vec!["alice:secret".to_string()],
+            vec!["/private".to_string()],
+            &mut append_upstream_url,
+            false,
+        )?;
+
+        let locations = specs
+            .locations
+            .get(DEFAULT_HOST)
+            .ok_or("default_host locations not found")?;
+        let default_location = locations
+            .iter()
+            .find(|location| location.location() == "/")
+            .ok_or("default serving location not found")?;
+
+        match default_location {
+            LocationConfig::Serving {
+                basic_auth,
+                basic_auth_path_prefixes,
+                ..
+            } => {
+                let encoded = general_purpose::STANDARD.encode("alice:secret");
+                assert_eq!(basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
+                assert_eq!(basic_auth_path_prefixes, &vec!["/private".to_string()]);
+            }
+            _ => panic!("default location should be serving"),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn cli_static_basic_auth_without_prefix_protects_default_serving_location() -> Result<(), crate::DynError> {
+        let mut append_upstream_url = Vec::new();
+        let specs = parse_location_specs(
+            &None,
+            &Some("/srv/www".to_string()),
+            vec!["alice:secret".to_string()],
+            Vec::new(),
+            &mut append_upstream_url,
+            false,
+        )?;
+
+        let locations = specs
+            .locations
+            .get(DEFAULT_HOST)
+            .ok_or("default_host locations not found")?;
+        let default_location = locations
+            .iter()
+            .find(|location| location.location() == "/")
+            .ok_or("default serving location not found")?;
+
+        match default_location {
+            LocationConfig::Serving {
+                basic_auth_path_prefixes,
+                ..
+            } => {
+                assert_eq!(basic_auth_path_prefixes, &vec!["/".to_string()]);
+            }
+            _ => panic!("default location should be serving"),
+        }
+
+        Ok(())
+    }
+
+    fn temp_config_path(file_name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("rust_http_proxy-{nanos}-{file_name}"))
+    }
 }
