@@ -308,6 +308,10 @@ default_host:
 # 针对特定域名
 api.example.com:
   - location: /api
+    basic_auth_users: # 可选；不配置 basic_auth_path_prefixes 时保护整个 /api
+      - alice:alice_password
+    basic_auth_path_prefixes: # 可选；相对当前 location 的路径前缀
+      - /private
     upstream:
       url_base: "https://backend.internal.com" # 上游服务器 URL
       version: "AUTO" # HTTP 版本: H1/H2/AUTO
@@ -315,6 +319,8 @@ api.example.com:
         Host: "#{host}" # #{host} 变量代表原始请求的 Host
         X-Custom-Header: "custom_value"
 ```
+
+反向代理 location 的 `basic_auth_users` 和 `basic_auth_path_prefixes` 语义与静态托管一致。认证使用客户端请求的 `Authorization: Basic ...`；对于命中受保护路径的请求，该请求头在认证后会被移除，不会透传给 upstream。未启用认证或未命中受保护路径时，保持原有请求头透传行为。
 
 反向代理到上游的请求url构建方式如下：
 

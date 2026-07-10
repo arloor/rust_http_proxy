@@ -399,7 +399,7 @@ fn log_config(config: &Config) {
     config.location_specs.locations.iter().for_each(|reverse_proxy_config| {
         for ele in reverse_proxy_config.1 {
             match ele {
-                crate::location::LocationConfig::ReverseProxy { location, upstream } => {
+                crate::location::LocationConfig::ReverseProxy { location, upstream, .. } => {
                     info!(
                         "    {:<70} -> {}**",
                         format!("http(s)://{}:port{}**", reverse_proxy_config.0, location),

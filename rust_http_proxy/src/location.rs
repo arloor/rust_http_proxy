@@ -43,6 +43,12 @@ pub(crate) enum LocationConfig {
         #[serde(default = "root")]
         location: String,
         upstream: Upstream,
+        #[serde(default, skip_serializing)]
+        basic_auth_users: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        basic_auth_path_prefixes: Vec<String>,
+        #[serde(skip)]
+        basic_auth: HashMap<String, String>,
     },
     Serving {
         #[serde(default = "root")]
@@ -369,6 +375,9 @@ pub(crate) fn parse_location_specs(
                                 version: crate::location::Version::Auto,
                                 headers: None,
                             },
+                            basic_auth_users: Vec::new(),
+                            basic_auth_path_prefixes: Vec::new(),
+                            basic_auth: HashMap::new(),
                         });
                     }
                     Err(err) => {
@@ -387,50 +396,60 @@ pub(crate) fn parse_location_specs(
             if !location_config.location().starts_with('/') {
                 return Err("location should start with '/'".into());
             }
-            // 对于 Serving 配置，验证 location以 / 结束
-            if let LocationConfig::Serving {
-                location,
-                basic_auth_users,
-                basic_auth_path_prefixes,
-                basic_auth,
-                ..
-            } = location_config
-            {
-                if !location.ends_with('/') {
-                    return Err(format!("serving location should end with '/': {}", location).into());
+            // 验证并解析 location 级 Basic 认证。
+            match location_config {
+                LocationConfig::Serving {
+                    location,
+                    basic_auth_users,
+                    basic_auth_path_prefixes,
+                    basic_auth,
+                    ..
                 }
-                let parsed_basic_auth = parse_basic_auth_users(basic_auth_users.clone());
-                let normalized_path_prefixes =
-                    normalize_static_auth_path_prefixes(std::mem::take(basic_auth_path_prefixes));
-                if !basic_auth_users.is_empty() && parsed_basic_auth.is_empty() {
-                    return Err(format!(
-                        "serving location {} requires valid basic_auth_users username:password",
-                        location
-                    )
-                    .into());
-                }
-                if parsed_basic_auth.is_empty() && !normalized_path_prefixes.is_empty() {
-                    return Err(format!(
-                        "serving location {} basic_auth_path_prefixes requires basic_auth_users",
-                        location
-                    )
-                    .into());
-                }
-                if !parsed_basic_auth.is_empty() {
-                    *basic_auth = parsed_basic_auth;
-                    if normalized_path_prefixes.is_empty() {
-                        basic_auth_path_prefixes.push(location.clone());
-                    } else {
-                        *basic_auth_path_prefixes = normalized_path_prefixes
-                            .iter()
-                            .map(|path_prefix| join_location_auth_path_prefix(location, path_prefix))
-                            .collect();
+                | LocationConfig::ReverseProxy {
+                    location,
+                    basic_auth_users,
+                    basic_auth_path_prefixes,
+                    basic_auth,
+                    ..
+                } => {
+                    let parsed_basic_auth = parse_basic_auth_users(basic_auth_users.clone());
+                    let normalized_path_prefixes =
+                        normalize_static_auth_path_prefixes(std::mem::take(basic_auth_path_prefixes));
+                    if !basic_auth_users.is_empty() && parsed_basic_auth.is_empty() {
+                        return Err(
+                            format!("location {} requires valid basic_auth_users username:password", location).into()
+                        );
+                    }
+                    if parsed_basic_auth.is_empty() && !normalized_path_prefixes.is_empty() {
+                        return Err(format!(
+                            "location {} basic_auth_path_prefixes requires basic_auth_users",
+                            location
+                        )
+                        .into());
+                    }
+                    if !parsed_basic_auth.is_empty() {
+                        *basic_auth = parsed_basic_auth;
+                        if normalized_path_prefixes.is_empty() {
+                            basic_auth_path_prefixes.push(location.clone());
+                        } else {
+                            *basic_auth_path_prefixes = normalized_path_prefixes
+                                .iter()
+                                .map(|path_prefix| join_location_auth_path_prefix(location, path_prefix))
+                                .collect();
+                        }
                     }
                 }
             }
 
+            // 对于 Serving 配置，验证 location以 / 结束
+            if let LocationConfig::Serving { location, .. } = location_config {
+                if !location.ends_with('/') {
+                    return Err(format!("serving location should end with '/': {}", location).into());
+                }
+            }
+
             // 对于反向代理配置，验证 upstream
-            if let LocationConfig::ReverseProxy { location, upstream } = location_config {
+            if let LocationConfig::ReverseProxy { location, upstream, .. } = location_config {
                 match upstream.url_base.parse::<Uri>() {
                     Ok(upstream_url_base) => {
                         if upstream_url_base.scheme().is_none() {
@@ -469,7 +488,7 @@ pub(crate) fn parse_location_specs(
     for (host, location_configs) in &locations {
         for location_config in location_configs {
             // 只为反向代理配置构造重定向路径
-            if let LocationConfig::ReverseProxy { location, upstream } = location_config {
+            if let LocationConfig::ReverseProxy { location, upstream, .. } = location_config {
                 redirect_bachpaths.push(RedirectBackpaths {
                     redirect_url: upstream.url_base.clone(),
                     host: host.clone(),
@@ -572,6 +591,75 @@ default_host:
                 assert_eq!(basic_auth_path_prefixes, &vec!["/downloads/secret".to_string()]);
             }
             _ => panic!("downloads should be serving"),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn parses_reverse_proxy_location_basic_auth() -> Result<(), crate::DynError> {
+        let config_path = temp_config_path("reverse-location-basic-auth.yaml");
+        std::fs::write(
+            &config_path,
+            r#"
+default_host:
+  - location: /api
+    upstream:
+      url_base: https://backend.example
+    basic_auth_users:
+      - alice:secret
+  - location: /service
+    upstream:
+      url_base: https://service.example
+    basic_auth_users:
+      - bob:secret
+    basic_auth_path_prefixes:
+      - /private
+"#,
+        )?;
+
+        let mut append_upstream_url = Vec::new();
+        let specs = parse_location_specs(
+            &Some(config_path.to_string_lossy().into_owned()),
+            &None,
+            Vec::new(),
+            Vec::new(),
+            &mut append_upstream_url,
+            false,
+        )?;
+        std::fs::remove_file(&config_path)?;
+
+        let locations = specs
+            .locations
+            .get(DEFAULT_HOST)
+            .ok_or("default_host locations not found")?;
+        let api = locations
+            .iter()
+            .find(|location| location.location() == "/api")
+            .ok_or("api location not found")?;
+        let service = locations
+            .iter()
+            .find(|location| location.location() == "/service")
+            .ok_or("service location not found")?;
+
+        match api {
+            LocationConfig::ReverseProxy {
+                basic_auth,
+                basic_auth_path_prefixes,
+                ..
+            } => {
+                let encoded = general_purpose::STANDARD.encode("alice:secret");
+                assert_eq!(basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
+                assert_eq!(basic_auth_path_prefixes, &vec!["/api".to_string()]);
+            }
+            _ => panic!("api should be reverse proxy"),
+        }
+        match service {
+            LocationConfig::ReverseProxy {
+                basic_auth_path_prefixes,
+                ..
+            } => assert_eq!(basic_auth_path_prefixes, &vec!["/service/private".to_string()]),
+            _ => panic!("service should be reverse proxy"),
         }
 
         Ok(())

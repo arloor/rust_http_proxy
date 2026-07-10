@@ -84,6 +84,8 @@ enum ServiceType<'a> {
         original_scheme_host_port: SchemeHostPort,
         location: &'a String,
         upstream: &'a Upstream,
+        basic_auth: &'a HashMap<String, String>,
+        basic_auth_path_prefixes: &'a [String],
     },
     /// Location配置的静态文件托管
     LocationStaticServing {
@@ -159,19 +161,42 @@ impl<'a> ServiceType<'a> {
                 original_scheme_host_port,
                 location,
                 upstream,
+                basic_auth,
+                basic_auth_path_prefixes,
             } => {
                 let res = async {
                     config.allow_cidrs.check_serving_control(client_socket_addr)?;
+                    let mut request = req;
+                    let authenticated_username = match check_static_basic_auth(
+                        request.headers(),
+                        request.uri().path(),
+                        basic_auth,
+                        basic_auth_path_prefixes,
+                    ) {
+                        Ok(username) => username,
+                        Err(e) => {
+                            warn!(
+                                "reverse proxy basic auth failed from {} for {}: {}",
+                                SocketAddrFormat(&client_socket_addr),
+                                request.uri().path(),
+                                e
+                            );
+                            return Ok(build_authenticate_resp(false));
+                        }
+                    };
+                    // 只在当前路径实际使用了入口认证时移除凭据；未受保护路径保持原有透传行为。
+                    if authenticated_username.is_some() {
+                        request.headers_mut().remove(http::header::AUTHORIZATION);
+                    }
                     // 创建流量统计标签
                     let traffic_label = AccessLabel {
                         client: client_socket_addr.ip().to_canonical().to_string(),
                         target: upstream.url_base.clone(),
-                        username: "reverse_proxy".to_owned(),
+                        username: authenticated_username.unwrap_or_else(|| "reverse_proxy".to_owned()),
                         relay_over_tls: None,
                     };
 
                     // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
-                    let mut request = req;
                     let is_websocket = is_websocket_upgrade(&request);
 
                     // 记录指标
@@ -545,10 +570,18 @@ impl ProxyHandler {
                         .iter()
                         .find(|&ele| req.uri().path().starts_with(ele.location()))
                 }) {
-                    Some(LocationConfig::ReverseProxy { location, upstream }) => Ok(ServiceType::ReverseProxy {
+                    Some(LocationConfig::ReverseProxy {
+                        location,
+                        upstream,
+                        basic_auth,
+                        basic_auth_path_prefixes,
+                        ..
+                    }) => Ok(ServiceType::ReverseProxy {
                         original_scheme_host_port,
                         location,
                         upstream,
+                        basic_auth,
+                        basic_auth_path_prefixes,
                     }),
                     Some(LocationConfig::Serving {
                         static_dir,
