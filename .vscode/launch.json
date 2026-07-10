@@ -64,7 +64,8 @@
         "--log-dir",
         "${workspaceFolder}/target",
         "--log-file",
-        "proxy.log"
+        "proxy.log",
+        "--location-config-file=.vscode/location.yaml"
       ],
       "cwd": "${workspaceFolder}",
       "env": {
