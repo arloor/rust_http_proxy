@@ -1,268 +1,421 @@
 use log::debug;
 use serde::Serialize;
 use std::fs;
-use std::io::{self, BufRead, BufReader};
+use std::io;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize)]
-pub struct CgroupStats {
-    pub cpu_total_ns: u64,
-    pub cpu_user_ns: u64,
-    pub cpu_system_ns: u64,
-    pub memory_current_bytes: u64,
-    pub memory_peak_bytes: Option<u64>,
-    pub memory_max_bytes: Option<u64>,
-    pub memory_rss_bytes: u64,
-    pub memory_cache_bytes: u64,
-    pub memory_inactive_file_bytes: u64,
-    pub memory_working_set_bytes: u64,
-    pub cgroup_version: CgroupVersion,
-}
+const V1_UNLIMITED_THRESHOLD: u64 = i64::MAX as u64 - 1024 * 1024;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum CgroupVersion {
     V1,
     V2,
 }
 
-pub fn collect_cgroup_stats() -> io::Result<CgroupStats> {
-    let pid = std::process::id();
-    collect_cgroup_stats_for_pid(pid)
+#[derive(Debug, Clone)]
+struct ControllerPath {
+    version: CgroupVersion,
+    directory: PathBuf,
 }
 
-pub fn collect_cgroup_stats_for_pid(pid: u32) -> io::Result<CgroupStats> {
-    // Check if process exists
-    let proc_path = format!("/proc/{}", pid);
-    if !fs::metadata(&proc_path)?.is_dir() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, format!("Process {} does not exist", pid)));
+#[derive(Debug, Clone)]
+pub struct CgroupPaths {
+    cpu: Option<ControllerPath>,
+    memory: Option<ControllerPath>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CgroupCpuStats {
+    pub total_ns: u64,
+    pub user_ns: u64,
+    pub system_ns: u64,
+    pub cgroup_version: CgroupVersion,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CgroupMemoryStats {
+    pub current_bytes: u64,
+    pub peak_bytes: Option<u64>,
+    pub limit_bytes: Option<u64>,
+    pub anon_bytes: u64,
+    pub active_file_bytes: u64,
+    pub inactive_file_bytes: u64,
+    pub kernel_bytes: Option<u64>,
+    pub working_set_bytes: u64,
+    pub cgroup_version: CgroupVersion,
+}
+
+#[derive(Debug)]
+struct CgroupMount {
+    version: CgroupVersion,
+    root: PathBuf,
+    mount_point: PathBuf,
+    controllers: Vec<String>,
+}
+
+#[derive(Debug)]
+struct CgroupMembership {
+    controllers: Vec<String>,
+    path: PathBuf,
+}
+
+pub fn discover_cgroup_paths() -> io::Result<CgroupPaths> {
+    discover_cgroup_paths_for_pid(std::process::id())
+}
+
+pub fn discover_cgroup_paths_for_pid(pid: u32) -> io::Result<CgroupPaths> {
+    let cgroup_content = fs::read_to_string(format!("/proc/{pid}/cgroup"))?;
+    let mountinfo_content = fs::read_to_string("/proc/self/mountinfo")?;
+    discover_cgroup_paths_from(&cgroup_content, &mountinfo_content)
+}
+
+pub fn collect_cgroup_cpu_stats(paths: &CgroupPaths) -> io::Result<CgroupCpuStats> {
+    let controller = paths
+        .cpu
+        .as_ref()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "CPU cgroup controller is not mounted"))?;
+
+    debug!("Collecting cgroup {:?} CPU stats from {}", controller.version, controller.directory.display());
+    match controller.version {
+        CgroupVersion::V1 => collect_cgroup_v1_cpu_stats(&controller.directory),
+        CgroupVersion::V2 => collect_cgroup_v2_cpu_stats(&controller.directory),
+    }
+}
+
+pub fn collect_cgroup_memory_stats(paths: &CgroupPaths) -> io::Result<CgroupMemoryStats> {
+    let controller = paths
+        .memory
+        .as_ref()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "memory cgroup controller is not mounted"))?;
+
+    debug!("Collecting cgroup {:?} memory stats from {}", controller.version, controller.directory.display());
+    match controller.version {
+        CgroupVersion::V1 => collect_cgroup_v1_memory_stats(&controller.directory),
+        CgroupVersion::V2 => collect_cgroup_v2_memory_stats(&controller.directory),
+    }
+}
+
+fn discover_cgroup_paths_from(cgroup_content: &str, mountinfo_content: &str) -> io::Result<CgroupPaths> {
+    let memberships = parse_cgroup_memberships(cgroup_content)?;
+    let mounts = parse_cgroup_mounts(mountinfo_content)?;
+
+    let unified = memberships
+        .iter()
+        .find(|entry| entry.controllers.is_empty())
+        .and_then(|membership| {
+            mounts
+                .iter()
+                .find(|mount| mount.version == CgroupVersion::V2)
+                .map(|mount| ControllerPath {
+                    version: CgroupVersion::V2,
+                    directory: resolve_cgroup_directory(mount, &membership.path),
+                })
+        });
+
+    // A hybrid host can put a controller on v1 while retaining a v2 unified
+    // hierarchy for other controllers. Resolve CPU and memory independently.
+    let cpu = resolve_v1_controller("cpuacct", &memberships, &mounts).or_else(|| unified.clone());
+    let memory = resolve_v1_controller("memory", &memberships, &mounts).or(unified);
+    if cpu.is_none() && memory.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "No usable cgroup v1 or v2 mounts found in /proc/self/mountinfo",
+        ));
     }
 
-    // Detect cgroup version
-    if is_cgroup_v1() {
-        collect_cgroup_v1_stats(pid)
+    Ok(CgroupPaths { cpu, memory })
+}
+
+fn resolve_v1_controller(
+    controller_name: &str, memberships: &[CgroupMembership], mounts: &[CgroupMount],
+) -> Option<ControllerPath> {
+    let membership = memberships
+        .iter()
+        .find(|entry| entry.controllers.iter().any(|controller| controller == controller_name))?;
+    let mount = mounts.iter().find(|mount| {
+        mount.version == CgroupVersion::V1 && mount.controllers.iter().any(|controller| controller == controller_name)
+    })?;
+
+    Some(ControllerPath {
+        version: CgroupVersion::V1,
+        directory: resolve_cgroup_directory(mount, &membership.path),
+    })
+}
+
+fn resolve_cgroup_directory(mount: &CgroupMount, membership_path: &Path) -> PathBuf {
+    let relative = if mount.root == Path::new("/") {
+        membership_path.strip_prefix("/").unwrap_or(membership_path)
+    } else if let Ok(relative) = membership_path.strip_prefix(&mount.root) {
+        relative
     } else {
-        collect_cgroup_v2_stats(pid)
+        // In a cgroup namespace, /proc/<pid>/cgroup is relative to the namespace
+        // root while mountinfo still reports the underlying cgroup mount root.
+        membership_path.strip_prefix("/").unwrap_or(membership_path)
+    };
+    mount.mount_point.join(relative)
+}
+
+fn parse_cgroup_memberships(content: &str) -> io::Result<Vec<CgroupMembership>> {
+    let mut memberships = Vec::new();
+    for line in content.lines().filter(|line| !line.trim().is_empty()) {
+        let mut parts = line.splitn(3, ':');
+        let _hierarchy_id = parts.next();
+        let controllers = parts
+            .next()
+            .ok_or_else(|| invalid_data(format!("Invalid /proc/<pid>/cgroup line: {line}")))?;
+        let path = parts
+            .next()
+            .ok_or_else(|| invalid_data(format!("Invalid /proc/<pid>/cgroup line: {line}")))?;
+        memberships.push(CgroupMembership {
+            controllers: controllers
+                .split(',')
+                .filter(|controller| !controller.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            path: PathBuf::from(path),
+        });
     }
+
+    if memberships.is_empty() {
+        return Err(invalid_data("/proc/<pid>/cgroup contains no cgroup memberships"));
+    }
+    Ok(memberships)
 }
 
-fn is_cgroup_v1() -> bool {
-    fs::metadata("/sys/fs/cgroup/cpu").is_ok() && fs::metadata("/sys/fs/cgroup/memory").is_ok()
+fn parse_cgroup_mounts(content: &str) -> io::Result<Vec<CgroupMount>> {
+    let mut mounts = Vec::new();
+    for line in content.lines() {
+        let Some((mount_fields, filesystem_fields)) = line.split_once(" - ") else {
+            continue;
+        };
+        let mount_fields: Vec<&str> = mount_fields.split_whitespace().collect();
+        let filesystem_fields: Vec<&str> = filesystem_fields.split_whitespace().collect();
+        if mount_fields.len() < 5 || filesystem_fields.len() < 3 {
+            continue;
+        }
+
+        let version = match filesystem_fields[0] {
+            "cgroup" => CgroupVersion::V1,
+            "cgroup2" => CgroupVersion::V2,
+            _ => continue,
+        };
+        let controllers = if version == CgroupVersion::V1 {
+            filesystem_fields[2].split(',').map(str::to_owned).collect()
+        } else {
+            Vec::new()
+        };
+        mounts.push(CgroupMount {
+            version,
+            root: PathBuf::from(unescape_mountinfo_path(mount_fields[3])),
+            mount_point: PathBuf::from(unescape_mountinfo_path(mount_fields[4])),
+            controllers,
+        });
+    }
+
+    Ok(mounts)
 }
 
-fn collect_cgroup_v1_stats(pid: u32) -> io::Result<CgroupStats> {
-    debug!("Using cgroup v1 for pid {}", pid);
+fn unescape_mountinfo_path(path: &str) -> String {
+    path.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+}
 
-    let cgroup_content = fs::read_to_string(format!("/proc/{}/cgroup", pid))?;
-
-    // Get CPU path
-    let cpu_path = extract_cgroup_path(&cgroup_content, "cpu")?;
-    let memory_path = extract_cgroup_path(&cgroup_content, "memory")?;
-
-    // Read CPU stats
-    let cpu_usage_path = format!("/sys/fs/cgroup/cpu{}/cpuacct.usage", cpu_path);
-    let cpu_total_ns = fs::read_to_string(&cpu_usage_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", cpu_usage_path, e)))?
-        .trim()
-        .parse::<u64>()
-        .unwrap_or(0);
-
-    // Read CPU user/system stats
-    let cpu_stat_path = format!("/sys/fs/cgroup/cpu{}/cpuacct.stat", cpu_path);
-    let (cpu_user_ns, cpu_system_ns) = parse_cpu_stat_v1(&cpu_stat_path)?;
-
-    // Read memory stats
-    let memory_current_path = format!("/sys/fs/cgroup/memory{}/memory.usage_in_bytes", memory_path);
-    let memory_current_bytes = fs::read_to_string(&memory_current_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", memory_current_path, e)))?
-        .trim()
-        .parse::<u64>()
-        .unwrap_or(0);
-
-    let memory_max_path = format!("/sys/fs/cgroup/memory{}/memory.max_usage_in_bytes", memory_path);
-    let memory_max_bytes = fs::read_to_string(&memory_max_path)
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok());
-
-    // Parse memory.stat for RSS, cache and inactive_file
-    let memory_stat_path = format!("/sys/fs/cgroup/memory{}/memory.stat", memory_path);
-    let (memory_rss_bytes, memory_cache_bytes, memory_inactive_file_bytes) = parse_memory_stat_v1(&memory_stat_path)?;
-
-    // Calculate working set: usage_in_bytes - total_inactive_file
-    let memory_working_set_bytes = memory_current_bytes.saturating_sub(memory_inactive_file_bytes);
-
-    Ok(CgroupStats {
-        cpu_total_ns,
-        cpu_user_ns,
-        cpu_system_ns,
-        memory_current_bytes,
-        memory_peak_bytes: memory_max_bytes,
-        memory_max_bytes,
-        memory_rss_bytes,
-        memory_cache_bytes,
-        memory_inactive_file_bytes,
-        memory_working_set_bytes,
+fn collect_cgroup_v1_cpu_stats(directory: &Path) -> io::Result<CgroupCpuStats> {
+    let total_ns = read_required_u64(&directory.join("cpuacct.usage"))?;
+    let (user_ns, system_ns) = parse_cpu_stat_v1(&directory.join("cpuacct.stat"))?;
+    Ok(CgroupCpuStats {
+        total_ns,
+        user_ns,
+        system_ns,
         cgroup_version: CgroupVersion::V1,
     })
 }
 
-fn collect_cgroup_v2_stats(pid: u32) -> io::Result<CgroupStats> {
-    debug!("Using cgroup v2 for pid {}", pid);
-
-    let cgroup_content = fs::read_to_string(format!("/proc/{}/cgroup", pid))?;
-
-    // Get cgroup path for v2 (format: 0::path)
-    let cgroup_path = cgroup_content
-        .lines()
-        .find(|line| line.starts_with("0::"))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No cgroup v2 entry found"))?
-        .splitn(3, ':')
-        .nth(2)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid cgroup v2 format"))?;
-
-    // Read CPU stats
-    let cpu_stat_path = format!("/sys/fs/cgroup{}/cpu.stat", cgroup_path);
-    let (cpu_total_ns, cpu_user_ns, cpu_system_ns) = parse_cpu_stat_v2(&cpu_stat_path)?;
-
-    // Read memory stats
-    let memory_current_path = format!("/sys/fs/cgroup{}/memory.current", cgroup_path);
-    let memory_current_bytes = fs::read_to_string(&memory_current_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", memory_current_path, e)))?
-        .trim()
-        .parse::<u64>()
-        .unwrap_or(0);
-
-    let memory_peak_path = format!("/sys/fs/cgroup{}/memory.peak", cgroup_path);
-    let memory_peak_bytes = fs::read_to_string(&memory_peak_path)
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok());
-
-    // Parse memory.stat for anon, file, inactive_file, etc.
-    let memory_stat_path = format!("/sys/fs/cgroup{}/memory.stat", cgroup_path);
-    let (memory_rss_bytes, memory_cache_bytes, memory_inactive_file_bytes) = parse_memory_stat_v2(&memory_stat_path)?;
-
-    // Calculate working set: memory.current - inactive_file
-    let memory_working_set_bytes = memory_current_bytes.saturating_sub(memory_inactive_file_bytes);
-
-    Ok(CgroupStats {
-        cpu_total_ns,
-        cpu_user_ns,
-        cpu_system_ns,
-        memory_current_bytes,
-        memory_peak_bytes,
-        memory_max_bytes: memory_peak_bytes,
-        memory_rss_bytes,
-        memory_cache_bytes,
-        memory_inactive_file_bytes,
-        memory_working_set_bytes,
+fn collect_cgroup_v2_cpu_stats(directory: &Path) -> io::Result<CgroupCpuStats> {
+    let (total_ns, user_ns, system_ns) = parse_cpu_stat_v2(&directory.join("cpu.stat"))?;
+    Ok(CgroupCpuStats {
+        total_ns,
+        user_ns,
+        system_ns,
         cgroup_version: CgroupVersion::V2,
     })
 }
 
-fn extract_cgroup_path(cgroup_content: &str, subsystem: &str) -> io::Result<String> {
-    for line in cgroup_content.lines() {
-        if line.contains(&format!(":{},", subsystem)) || line.contains(&format!(":{}", subsystem)) {
-            let parts: Vec<&str> = line.splitn(3, ':').collect();
-            if parts.len() == 3 {
-                return Ok(parts[2].to_string());
-            }
-        }
-    }
-    Err(io::Error::new(io::ErrorKind::NotFound, format!("No cgroup path found for subsystem: {}", subsystem)))
+fn collect_cgroup_v1_memory_stats(directory: &Path) -> io::Result<CgroupMemoryStats> {
+    let current_bytes = read_required_u64(&directory.join("memory.usage_in_bytes"))?;
+    let peak_bytes = read_optional_u64(&directory.join("memory.max_usage_in_bytes"))?;
+    let limit_bytes = read_required_u64(&directory.join("memory.limit_in_bytes"))?;
+    let limit_bytes = (limit_bytes < V1_UNLIMITED_THRESHOLD).then_some(limit_bytes);
+    let hierarchy_enabled = read_optional_u64(&directory.join("memory.use_hierarchy"))?.map(|value| value != 0);
+    let (anon_bytes, active_file_bytes, inactive_file_bytes) =
+        parse_memory_stat_v1(&directory.join("memory.stat"), hierarchy_enabled)?;
+    let kernel_bytes = read_optional_u64(&directory.join("memory.kmem.usage_in_bytes"))?;
+
+    Ok(CgroupMemoryStats {
+        current_bytes,
+        peak_bytes,
+        limit_bytes,
+        anon_bytes,
+        active_file_bytes,
+        inactive_file_bytes,
+        kernel_bytes,
+        working_set_bytes: current_bytes.saturating_sub(inactive_file_bytes),
+        cgroup_version: CgroupVersion::V1,
+    })
 }
 
-fn parse_cpu_stat_v1(cpu_stat_path: &str) -> io::Result<(u64, u64)> {
-    let content = fs::read_to_string(cpu_stat_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", cpu_stat_path, e)))?;
+fn collect_cgroup_v2_memory_stats(directory: &Path) -> io::Result<CgroupMemoryStats> {
+    let current_bytes = read_required_u64(&directory.join("memory.current"))?;
+    let peak_bytes = read_optional_u64(&directory.join("memory.peak"))?;
+    let limit_bytes = read_memory_limit_v2(&directory.join("memory.max"))?;
+    let (anon_bytes, active_file_bytes, inactive_file_bytes, kernel_bytes) =
+        parse_memory_stat_v2(&directory.join("memory.stat"))?;
 
-    let mut user_ns = 0u64;
-    let mut system_ns = 0u64;
+    Ok(CgroupMemoryStats {
+        current_bytes,
+        peak_bytes,
+        limit_bytes,
+        anon_bytes,
+        active_file_bytes,
+        inactive_file_bytes,
+        kernel_bytes,
+        working_set_bytes: current_bytes.saturating_sub(inactive_file_bytes),
+        cgroup_version: CgroupVersion::V2,
+    })
+}
 
-    for line in content.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            match parts[0] {
-                "user" => user_ns = parts[1].parse::<u64>().unwrap_or(0) * 10_000_000, // Convert from USER_HZ to nanoseconds
-                "system" => system_ns = parts[1].parse::<u64>().unwrap_or(0) * 10_000_000, // Convert from USER_HZ to nanoseconds
-                _ => {}
-            }
-        }
+fn read_required_u64(path: &Path) -> io::Result<u64> {
+    let content = fs::read_to_string(path).map_err(|error| contextual_io_error(path, error))?;
+    parse_u64(content.trim(), &path.display().to_string())
+}
+
+fn read_optional_u64(path: &Path) -> io::Result<Option<u64>> {
+    match fs::read_to_string(path) {
+        Ok(content) => parse_u64(content.trim(), &path.display().to_string()).map(Some),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(contextual_io_error(path, error)),
     }
+}
 
+fn read_memory_limit_v2(path: &Path) -> io::Result<Option<u64>> {
+    let content = fs::read_to_string(path).map_err(|error| contextual_io_error(path, error))?;
+    parse_memory_limit_v2(content.trim(), &path.display().to_string())
+}
+
+fn parse_memory_limit_v2(value: &str, source: &str) -> io::Result<Option<u64>> {
+    if value == "max" {
+        Ok(None)
+    } else {
+        parse_u64(value, source).map(Some)
+    }
+}
+
+fn parse_cpu_stat_v1(path: &Path) -> io::Result<(u64, u64)> {
+    let content = fs::read_to_string(path).map_err(|error| contextual_io_error(path, error))?;
+    let user_ticks = required_key(&content, "user", path)?;
+    let system_ticks = required_key(&content, "system", path)?;
+    let user_ns = user_ticks
+        .checked_mul(10_000_000)
+        .ok_or_else(|| invalid_data(format!("user CPU time overflows nanoseconds in {}", path.display())))?;
+    let system_ns = system_ticks
+        .checked_mul(10_000_000)
+        .ok_or_else(|| invalid_data(format!("system CPU time overflows nanoseconds in {}", path.display())))?;
     Ok((user_ns, system_ns))
 }
 
-fn parse_cpu_stat_v2(cpu_stat_path: &str) -> io::Result<(u64, u64, u64)> {
-    let content = fs::read_to_string(cpu_stat_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", cpu_stat_path, e)))?;
+fn parse_cpu_stat_v2(path: &Path) -> io::Result<(u64, u64, u64)> {
+    let content = fs::read_to_string(path).map_err(|error| contextual_io_error(path, error))?;
+    let usage_usec = required_key(&content, "usage_usec", path)?;
+    let user_usec = required_key(&content, "user_usec", path)?;
+    let system_usec = required_key(&content, "system_usec", path)?;
+    Ok((
+        usec_to_ns(usage_usec, "usage_usec", path)?,
+        usec_to_ns(user_usec, "user_usec", path)?,
+        usec_to_ns(system_usec, "system_usec", path)?,
+    ))
+}
 
-    let mut usage_usec = 0u64;
-    let mut user_usec = 0u64;
-    let mut system_usec = 0u64;
+fn usec_to_ns(value: u64, field: &str, path: &Path) -> io::Result<u64> {
+    value
+        .checked_mul(1000)
+        .ok_or_else(|| invalid_data(format!("{field} overflows nanoseconds in {}", path.display())))
+}
 
+fn parse_memory_stat_v1(path: &Path, hierarchy_enabled: Option<bool>) -> io::Result<(u64, u64, u64)> {
+    let content = fs::read_to_string(path).map_err(|error| contextual_io_error(path, error))?;
+    parse_memory_stat_v1_content(&content, path, hierarchy_enabled)
+}
+
+fn parse_memory_stat_v1_content(
+    content: &str, path: &Path, hierarchy_enabled: Option<bool>,
+) -> io::Result<(u64, u64, u64)> {
+    let has_hierarchical_fields = ["total_rss", "total_active_file", "total_inactive_file"]
+        .iter()
+        .all(|key| has_key(content, key));
+    let use_hierarchical_fields = hierarchy_enabled.unwrap_or(has_hierarchical_fields);
+    let prefix = if use_hierarchical_fields { "total_" } else { "" };
+
+    Ok((
+        required_key(content, &format!("{prefix}rss"), path)?,
+        required_key(content, &format!("{prefix}active_file"), path)?,
+        required_key(content, &format!("{prefix}inactive_file"), path)?,
+    ))
+}
+
+fn parse_memory_stat_v2(path: &Path) -> io::Result<(u64, u64, u64, Option<u64>)> {
+    let content = fs::read_to_string(path).map_err(|error| contextual_io_error(path, error))?;
+    Ok((
+        required_key(&content, "anon", path)?,
+        required_key(&content, "active_file", path)?,
+        required_key(&content, "inactive_file", path)?,
+        optional_key(&content, "kernel", path)?,
+    ))
+}
+
+fn has_key(content: &str, key: &str) -> bool {
+    content.lines().any(|line| line.split_whitespace().next() == Some(key))
+}
+
+fn optional_key(content: &str, key: &str, path: &Path) -> io::Result<Option<u64>> {
     for line in content.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            match parts[0] {
-                "usage_usec" => usage_usec = parts[1].parse::<u64>().unwrap_or(0),
-                "user_usec" => user_usec = parts[1].parse::<u64>().unwrap_or(0),
-                "system_usec" => system_usec = parts[1].parse::<u64>().unwrap_or(0),
-                _ => {}
-            }
+        let mut parts = line.split_whitespace();
+        if parts.next() == Some(key) {
+            let value = parts
+                .next()
+                .ok_or_else(|| invalid_data(format!("Missing value for {key} in {}", path.display())))?;
+            return parse_u64(value, &format!("{key} in {}", path.display())).map(Some);
         }
     }
-
-    // Convert microseconds to nanoseconds
-    Ok((usage_usec * 1000, user_usec * 1000, system_usec * 1000))
+    Ok(None)
 }
 
-fn parse_memory_stat_v1(memory_stat_path: &str) -> io::Result<(u64, u64, u64)> {
-    let file = fs::File::open(memory_stat_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", memory_stat_path, e)))?;
-    let reader = BufReader::new(file);
-
-    let mut rss_bytes = 0u64;
-    let mut cache_bytes = 0u64;
-    let mut inactive_file_bytes = 0u64;
-
-    for line in reader.lines() {
-        let line = line?;
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            match parts[0] {
-                "rss" => rss_bytes = parts[1].parse::<u64>().unwrap_or(0),
-                "cache" => cache_bytes = parts[1].parse::<u64>().unwrap_or(0),
-                "total_inactive_file" => inactive_file_bytes = parts[1].parse::<u64>().unwrap_or(0),
-                _ => {}
-            }
+fn required_key(content: &str, key: &str, path: &Path) -> io::Result<u64> {
+    for line in content.lines() {
+        let mut parts = line.split_whitespace();
+        if parts.next() == Some(key) {
+            let value = parts
+                .next()
+                .ok_or_else(|| invalid_data(format!("Missing value for {key} in {}", path.display())))?;
+            return parse_u64(value, &format!("{key} in {}", path.display()));
         }
     }
-
-    Ok((rss_bytes, cache_bytes, inactive_file_bytes))
+    Err(invalid_data(format!("Missing required key {key} in {}", path.display())))
 }
 
-fn parse_memory_stat_v2(memory_stat_path: &str) -> io::Result<(u64, u64, u64)> {
-    let file = fs::File::open(memory_stat_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Failed to read {}: {}", memory_stat_path, e)))?;
-    let reader = BufReader::new(file);
+fn parse_u64(value: &str, source: &str) -> io::Result<u64> {
+    value
+        .parse::<u64>()
+        .map_err(|error| invalid_data(format!("Invalid unsigned integer for {source}: {error}")))
+}
 
-    let mut anon_bytes = 0u64;
-    let mut file_bytes = 0u64;
-    let mut inactive_file_bytes = 0u64;
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
 
-    for line in reader.lines() {
-        let line = line?;
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            match parts[0] {
-                "anon" => anon_bytes = parts[1].parse::<u64>().unwrap_or(0),
-                "file" => file_bytes = parts[1].parse::<u64>().unwrap_or(0),
-                "inactive_file" => inactive_file_bytes = parts[1].parse::<u64>().unwrap_or(0),
-                _ => {}
-            }
-        }
-    }
-
-    // In cgroup v2, anon is similar to RSS, file is similar to cache
-    Ok((anon_bytes, file_bytes, inactive_file_bytes))
+fn contextual_io_error(path: &Path, error: io::Error) -> io::Error {
+    io::Error::new(error.kind(), format!("Failed to read {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -270,105 +423,111 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_collect_cgroup_stats() {
-        match collect_cgroup_stats() {
-            Ok(stats) => {
-                println!("Cgroup Version: {:?}", stats.cgroup_version);
+    fn discovers_combined_v1_controller_mounts() -> io::Result<()> {
+        let cgroup = "5:memory:/docker/abc/child\n4:cpuacct,cpu:/docker/abc/child\n";
+        let mountinfo = concat!(
+            "29 23 0:26 /docker/abc /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+            "30 23 0:27 /docker/abc /sys/fs/cgroup/cpu,cpuacct rw - cgroup cgroup rw,cpu,cpuacct\n",
+        );
 
-                println!("\nCPU Usage:");
-                println!("  Total:  {} ns ({:.2} ms)", stats.cpu_total_ns, stats.cpu_total_ns as f64 / 1_000_000.0);
-                println!("  User:   {} ns ({:.2} ms)", stats.cpu_user_ns, stats.cpu_user_ns as f64 / 1_000_000.0);
-                println!("  System: {} ns ({:.2} ms)", stats.cpu_system_ns, stats.cpu_system_ns as f64 / 1_000_000.0);
+        let paths = discover_cgroup_paths_from(cgroup, mountinfo)?;
+        assert_eq!(required_controller(&paths.cpu)?.directory, PathBuf::from("/sys/fs/cgroup/cpu,cpuacct/child"));
+        assert_eq!(required_controller(&paths.memory)?.directory, PathBuf::from("/sys/fs/cgroup/memory/child"));
+        Ok(())
+    }
 
-                println!("\nMemory Usage:");
-                println!(
-                    "  Current: {} bytes ({:.2} MB)",
-                    stats.memory_current_bytes,
-                    stats.memory_current_bytes as f64 / 1024.0 / 1024.0
-                );
-                if let Some(peak) = stats.memory_peak_bytes {
-                    println!("  Peak:    {} bytes ({:.2} MB)", peak, peak as f64 / 1024.0 / 1024.0);
-                }
-                if let Some(max) = stats.memory_max_bytes {
-                    println!("  Max:     {} bytes ({:.2} MB)", max, max as f64 / 1024.0 / 1024.0);
-                }
-                println!(
-                    "  RSS/Anon: {} bytes ({:.2} MB)",
-                    stats.memory_rss_bytes,
-                    stats.memory_rss_bytes as f64 / 1024.0 / 1024.0
-                );
-                println!(
-                    "  Cache/File: {} bytes ({:.2} MB)",
-                    stats.memory_cache_bytes,
-                    stats.memory_cache_bytes as f64 / 1024.0 / 1024.0
-                );
-                println!(
-                    "  Inactive File: {} bytes ({:.2} MB)",
-                    stats.memory_inactive_file_bytes,
-                    stats.memory_inactive_file_bytes as f64 / 1024.0 / 1024.0
-                );
-                println!(
-                    "  Working Set: {} bytes ({:.2} MB)",
-                    stats.memory_working_set_bytes,
-                    stats.memory_working_set_bytes as f64 / 1024.0 / 1024.0
-                );
+    #[test]
+    fn discovers_namespaced_v2_mount() -> io::Result<()> {
+        let cgroup = "0::/\n";
+        let mountinfo = "29 23 0:26 /docker/abc /sys/fs/cgroup rw - cgroup2 cgroup rw\n";
 
-                // Assert that we got some reasonable values
-                assert!(stats.cpu_total_ns > 0, "CPU total should be greater than 0");
-                assert!(stats.memory_current_bytes > 0, "Memory current should be greater than 0");
+        let paths = discover_cgroup_paths_from(cgroup, mountinfo)?;
+        assert_eq!(required_controller(&paths.memory)?.directory, PathBuf::from("/sys/fs/cgroup"));
+        Ok(())
+    }
 
-                // For cgroup v2, verify specific expected values based on the user's output
-                if matches!(stats.cgroup_version, CgroupVersion::V2) {
-                    // CPU usage_usec was 33612342, which is 33612342000 ns
-                    println!("\nExpected CPU total: ~33612342000 ns");
+    #[test]
+    fn resolves_hybrid_controllers_independently() -> io::Result<()> {
+        let cgroup = "5:memory:/legacy/app\n0::/unified/app\n";
+        let mountinfo = concat!(
+            "29 23 0:26 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+            "30 23 0:27 / /sys/fs/cgroup/unified rw - cgroup2 cgroup rw\n",
+        );
 
-                    // Memory current was 62234624 bytes
-                    println!("Expected Memory current: ~62234624 bytes");
+        let paths = discover_cgroup_paths_from(cgroup, mountinfo)?;
+        assert_eq!(required_controller(&paths.memory)?.version, CgroupVersion::V1);
+        assert_eq!(required_controller(&paths.cpu)?.version, CgroupVersion::V2);
+        Ok(())
+    }
 
-                    // Anon was 50327552 bytes
-                    println!("Expected Memory RSS/Anon: ~50327552 bytes");
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to collect cgroup stats, {}", e);
-                panic!("Could not collect stats - process may not exist or insufficient permissions");
-            }
+    #[test]
+    fn parses_v2_limit_and_rejects_invalid_values() -> io::Result<()> {
+        assert_eq!(parse_memory_limit_v2("max", "test")?, None);
+        assert_eq!(parse_memory_limit_v2("1048576", "test")?, Some(1_048_576));
+        assert!(parse_memory_limit_v2("not-a-number", "test").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn required_key_rejects_missing_and_invalid_values() -> io::Result<()> {
+        let path = Path::new("memory.stat");
+        assert_eq!(required_key("anon 42\n", "anon", path)?, 42);
+        assert!(required_key("file 42\n", "anon", path).is_err());
+        assert!(required_key("anon invalid\n", "anon", path).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn v1_memory_stat_respects_hierarchy_mode() -> io::Result<()> {
+        let path = Path::new("memory.stat");
+        let content = concat!(
+            "rss 10\n",
+            "active_file 20\n",
+            "inactive_file 30\n",
+            "total_rss 100\n",
+            "total_active_file 200\n",
+            "total_inactive_file 300\n",
+        );
+
+        assert_eq!(parse_memory_stat_v1_content(content, path, Some(false))?, (10, 20, 30));
+        assert_eq!(parse_memory_stat_v1_content(content, path, Some(true))?, (100, 200, 300));
+        assert_eq!(parse_memory_stat_v1_content(content, path, None)?, (100, 200, 300));
+        Ok(())
+    }
+
+    #[test]
+    fn optional_kernel_key_distinguishes_missing_from_invalid() -> io::Result<()> {
+        let path = Path::new("memory.stat");
+        assert_eq!(optional_key("kernel 42\n", "kernel", path)?, Some(42));
+        assert_eq!(optional_key("anon 42\n", "kernel", path)?, None);
+        assert!(optional_key("kernel invalid\n", "kernel", path).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn collects_current_process_memory_independently() {
+        let Ok(paths) = discover_cgroup_paths() else {
+            return;
+        };
+        let Ok(stats) = collect_cgroup_memory_stats(&paths) else {
+            return;
+        };
+
+        assert!(stats.current_bytes > 0);
+        assert!(stats.working_set_bytes <= stats.current_bytes);
+        if let Some(limit) = stats.limit_bytes {
+            assert!(limit > 0);
         }
     }
 
     #[test]
-    fn test_collect_cgroup_stats_current_process() {
-        // Test collecting cgroup stats for current process
-        let result = collect_cgroup_stats();
-
-        match result {
-            Ok(stats) => {
-                println!("\n=== Cgroup Stats for Current Process ===");
-                println!("Cgroup Version: {:?}", stats.cgroup_version);
-                println!("CPU Total: {} ns", stats.cpu_total_ns);
-                println!("Memory Current: {} bytes", stats.memory_current_bytes);
-                println!("Memory Inactive File: {} bytes", stats.memory_inactive_file_bytes);
-                println!("Memory Working Set: {} bytes", stats.memory_working_set_bytes);
-
-                // Basic sanity checks
-                assert!(stats.memory_current_bytes > 0, "Current process should have some memory usage");
-            }
-            Err(e) => {
-                eprintln!("Failed to collect cgroup stats: {}", e);
-                // This might fail in some environments, so we don't panic here
-            }
-        }
+    fn nonexistent_pid_returns_error() {
+        assert!(discover_cgroup_paths_for_pid(9_999_999).is_err());
     }
 
-    #[test]
-    fn test_nonexistent_pid() {
-        // Test with a PID that is very unlikely to exist
-        let pid = 9999999;
-        let result = collect_cgroup_stats_for_pid(pid);
-
-        assert!(result.is_err(), "Should fail for nonexistent PID");
-        if let Err(e) = result {
-            println!("Expected error for nonexistent PID: {}", e);
-        }
+    fn required_controller(controller: &Option<ControllerPath>) -> io::Result<&ControllerPath> {
+        controller
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "expected controller path in test"))
     }
 }

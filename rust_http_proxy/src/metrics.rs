@@ -10,6 +10,11 @@ use prometheus_client::registry::Registry;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
+static LAST_CGROUP_CPU_WARNING_SECONDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(target_os = "linux")]
+static LAST_CGROUP_MEMORY_WARNING_SECONDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
     let mut registry = Registry::default();
     let http_req_counter = Family::<LabelImpl<ReqLabels>, Counter>::default();
@@ -60,6 +65,30 @@ pub static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         cgroup_cpu_system_ns.clone(),
     );
     #[cfg(target_os = "linux")]
+    let cgroup_cpu_collection_success = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_cpu_collection_success",
+        "Whether the latest cgroup CPU collection succeeded (1 for success, 0 for failure)",
+        cgroup_cpu_collection_success.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_cpu_collection_errors = Counter::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_cpu_collection_errors",
+        "Total number of failed cgroup CPU collections",
+        cgroup_cpu_collection_errors.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_cpu_last_collection_timestamp_seconds = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_cpu_last_collection_timestamp_seconds",
+        "Unix timestamp of the latest successful cgroup CPU collection",
+        cgroup_cpu_last_collection_timestamp_seconds.clone(),
+    );
+    #[cfg(target_os = "linux")]
     let cgroup_memory_current_bytes = Gauge::default();
     #[cfg(target_os = "linux")]
     registry.register(
@@ -76,20 +105,44 @@ pub static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         cgroup_memory_peak_bytes.clone(),
     );
     #[cfg(target_os = "linux")]
-    let cgroup_memory_rss_bytes = Gauge::default();
+    let cgroup_memory_peak_available = Gauge::default();
     #[cfg(target_os = "linux")]
     registry.register(
-        "cgroup_memory_rss_bytes",
-        "RSS memory usage by cgroup in bytes",
-        cgroup_memory_rss_bytes.clone(),
+        "cgroup_memory_peak_available",
+        "Whether the cgroup memory peak metric is available (1 for available, 0 for unavailable)",
+        cgroup_memory_peak_available.clone(),
     );
     #[cfg(target_os = "linux")]
-    let cgroup_memory_cache_bytes = Gauge::default();
+    let cgroup_memory_limit_bytes = Gauge::default();
     #[cfg(target_os = "linux")]
     registry.register(
-        "cgroup_memory_cache_bytes",
-        "Cache memory usage by cgroup in bytes",
-        cgroup_memory_cache_bytes.clone(),
+        "cgroup_memory_limit_bytes",
+        "Configured cgroup memory hard limit in bytes",
+        cgroup_memory_limit_bytes.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_limit_enabled = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_limit_enabled",
+        "Whether a finite cgroup memory hard limit is configured (1 for enabled, 0 for unlimited)",
+        cgroup_memory_limit_enabled.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_anon_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_anon_bytes",
+        "Anonymous memory used by cgroup in bytes (v1 uses RSS as the closest equivalent)",
+        cgroup_memory_anon_bytes.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_active_file_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_active_file_bytes",
+        "Active file-backed memory used by cgroup in bytes",
+        cgroup_memory_active_file_bytes.clone(),
     );
     #[cfg(target_os = "linux")]
     let cgroup_memory_inactive_file_bytes = Gauge::default();
@@ -100,12 +153,52 @@ pub static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         cgroup_memory_inactive_file_bytes.clone(),
     );
     #[cfg(target_os = "linux")]
+    let cgroup_memory_kernel_bytes = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_kernel_bytes",
+        "Kernel memory used by cgroup in bytes",
+        cgroup_memory_kernel_bytes.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_kernel_available = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_kernel_available",
+        "Whether cgroup kernel memory accounting is available (1 for available, 0 for unavailable)",
+        cgroup_memory_kernel_available.clone(),
+    );
+    #[cfg(target_os = "linux")]
     let cgroup_memory_working_set_bytes = Gauge::default();
     #[cfg(target_os = "linux")]
     registry.register(
         "cgroup_memory_working_set_bytes",
         "Working set memory by cgroup in bytes (same as k8s dashboard)",
         cgroup_memory_working_set_bytes.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_collection_success = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_collection_success",
+        "Whether the latest cgroup memory collection succeeded (1 for success, 0 for failure)",
+        cgroup_memory_collection_success.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_collection_errors = Counter::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_collection_errors",
+        "Total number of failed cgroup memory collections",
+        cgroup_memory_collection_errors.clone(),
+    );
+    #[cfg(target_os = "linux")]
+    let cgroup_memory_last_collection_timestamp_seconds = Gauge::default();
+    #[cfg(target_os = "linux")]
+    registry.register(
+        "cgroup_memory_last_collection_timestamp_seconds",
+        "Unix timestamp of the latest successful cgroup memory collection",
+        cgroup_memory_last_collection_timestamp_seconds.clone(),
     );
 
     register_metric_cleaner(proxy_traffic.clone(), "proxy_traffic".to_owned(), 2);
@@ -130,17 +223,39 @@ pub static METRICS: LazyLock<Metrics> = LazyLock::new(|| {
         #[cfg(target_os = "linux")]
         cgroup_cpu_system_ns,
         #[cfg(target_os = "linux")]
+        cgroup_cpu_collection_success,
+        #[cfg(target_os = "linux")]
+        cgroup_cpu_collection_errors,
+        #[cfg(target_os = "linux")]
+        cgroup_cpu_last_collection_timestamp_seconds,
+        #[cfg(target_os = "linux")]
         cgroup_memory_current_bytes,
         #[cfg(target_os = "linux")]
         cgroup_memory_peak_bytes,
         #[cfg(target_os = "linux")]
-        cgroup_memory_rss_bytes,
+        cgroup_memory_peak_available,
         #[cfg(target_os = "linux")]
-        cgroup_memory_cache_bytes,
+        cgroup_memory_limit_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_limit_enabled,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_anon_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_active_file_bytes,
         #[cfg(target_os = "linux")]
         cgroup_memory_inactive_file_bytes,
         #[cfg(target_os = "linux")]
+        cgroup_memory_kernel_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_kernel_available,
+        #[cfg(target_os = "linux")]
         cgroup_memory_working_set_bytes,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_collection_success,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_collection_errors,
+        #[cfg(target_os = "linux")]
+        cgroup_memory_last_collection_timestamp_seconds,
     }
 });
 
@@ -161,57 +276,168 @@ pub struct Metrics {
     #[cfg(target_os = "linux")]
     pub cgroup_cpu_system_ns: Counter,
     #[cfg(target_os = "linux")]
+    pub cgroup_cpu_collection_success: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_cpu_collection_errors: Counter,
+    #[cfg(target_os = "linux")]
+    pub cgroup_cpu_last_collection_timestamp_seconds: Gauge,
+    #[cfg(target_os = "linux")]
     pub cgroup_memory_current_bytes: Gauge,
     #[cfg(target_os = "linux")]
     pub cgroup_memory_peak_bytes: Gauge,
     #[cfg(target_os = "linux")]
-    pub cgroup_memory_rss_bytes: Gauge,
+    pub cgroup_memory_peak_available: Gauge,
     #[cfg(target_os = "linux")]
-    pub cgroup_memory_cache_bytes: Gauge,
+    pub cgroup_memory_limit_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_limit_enabled: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_anon_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_active_file_bytes: Gauge,
     #[cfg(target_os = "linux")]
     pub cgroup_memory_inactive_file_bytes: Gauge,
     #[cfg(target_os = "linux")]
+    pub cgroup_memory_kernel_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_kernel_available: Gauge,
+    #[cfg(target_os = "linux")]
     pub cgroup_memory_working_set_bytes: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_collection_success: Gauge,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_collection_errors: Counter,
+    #[cfg(target_os = "linux")]
+    pub cgroup_memory_last_collection_timestamp_seconds: Gauge,
 }
 
 #[cfg(target_os = "linux")]
 pub(crate) fn update_cgroup_metrics() {
-    use crate::cgroup_stats::collect_cgroup_stats;
-    use log::warn;
+    use crate::cgroup_stats::{collect_cgroup_cpu_stats, collect_cgroup_memory_stats, discover_cgroup_paths};
 
-    match collect_cgroup_stats() {
+    let paths = match discover_cgroup_paths() {
+        Ok(paths) => paths,
+        Err(error) => {
+            record_cgroup_cpu_collection_error(&error);
+            record_cgroup_memory_collection_error(&error);
+            return;
+        }
+    };
+
+    match collect_cgroup_cpu_stats(&paths) {
         Ok(stats) => {
             METRICS
                 .cgroup_cpu_total_ns
                 .inner()
-                .store(stats.cpu_total_ns, std::sync::atomic::Ordering::Relaxed);
+                .store(stats.total_ns, std::sync::atomic::Ordering::Relaxed);
             METRICS
                 .cgroup_cpu_user_ns
                 .inner()
-                .store(stats.cpu_user_ns, std::sync::atomic::Ordering::Relaxed);
+                .store(stats.user_ns, std::sync::atomic::Ordering::Relaxed);
             METRICS
                 .cgroup_cpu_system_ns
                 .inner()
-                .store(stats.cpu_system_ns, std::sync::atomic::Ordering::Relaxed);
+                .store(stats.system_ns, std::sync::atomic::Ordering::Relaxed);
+            METRICS.cgroup_cpu_collection_success.set(1);
+            METRICS
+                .cgroup_cpu_last_collection_timestamp_seconds
+                .set(unix_timestamp_seconds());
+        }
+        Err(error) => record_cgroup_cpu_collection_error(&error),
+    }
+
+    match collect_cgroup_memory_stats(&paths) {
+        Ok(stats) => {
             METRICS
                 .cgroup_memory_current_bytes
-                .set(stats.memory_current_bytes as i64);
+                .set(saturating_i64(stats.current_bytes));
+            match stats.peak_bytes {
+                Some(peak_bytes) => {
+                    METRICS.cgroup_memory_peak_bytes.set(saturating_i64(peak_bytes));
+                    METRICS.cgroup_memory_peak_available.set(1);
+                }
+                None => {
+                    METRICS.cgroup_memory_peak_available.set(0);
+                }
+            }
+            match stats.limit_bytes {
+                Some(limit_bytes) => {
+                    METRICS.cgroup_memory_limit_bytes.set(saturating_i64(limit_bytes));
+                    METRICS.cgroup_memory_limit_enabled.set(1);
+                }
+                None => {
+                    METRICS.cgroup_memory_limit_enabled.set(0);
+                }
+            }
+            METRICS.cgroup_memory_anon_bytes.set(saturating_i64(stats.anon_bytes));
             METRICS
-                .cgroup_memory_peak_bytes
-                .set(stats.memory_peak_bytes.unwrap_or(0) as i64);
-            METRICS.cgroup_memory_rss_bytes.set(stats.memory_rss_bytes as i64);
-            METRICS.cgroup_memory_cache_bytes.set(stats.memory_cache_bytes as i64);
+                .cgroup_memory_active_file_bytes
+                .set(saturating_i64(stats.active_file_bytes));
             METRICS
                 .cgroup_memory_inactive_file_bytes
-                .set(stats.memory_inactive_file_bytes as i64);
+                .set(saturating_i64(stats.inactive_file_bytes));
+            match stats.kernel_bytes {
+                Some(kernel_bytes) => {
+                    METRICS.cgroup_memory_kernel_bytes.set(saturating_i64(kernel_bytes));
+                    METRICS.cgroup_memory_kernel_available.set(1);
+                }
+                None => {
+                    METRICS.cgroup_memory_kernel_available.set(0);
+                }
+            }
             METRICS
                 .cgroup_memory_working_set_bytes
-                .set(stats.memory_working_set_bytes as i64);
+                .set(saturating_i64(stats.working_set_bytes));
+            METRICS.cgroup_memory_collection_success.set(1);
+            METRICS
+                .cgroup_memory_last_collection_timestamp_seconds
+                .set(unix_timestamp_seconds());
         }
-        Err(e) => {
-            warn!("Failed to collect cgroup stats: {}", e);
-        }
+        Err(error) => record_cgroup_memory_collection_error(&error),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn record_cgroup_cpu_collection_error(error: &std::io::Error) {
+    METRICS.cgroup_cpu_collection_success.set(0);
+    METRICS.cgroup_cpu_collection_errors.inc();
+    warn_cgroup_error_rate_limited("CPU", error, &LAST_CGROUP_CPU_WARNING_SECONDS);
+}
+
+#[cfg(target_os = "linux")]
+fn record_cgroup_memory_collection_error(error: &std::io::Error) {
+    METRICS.cgroup_memory_collection_success.set(0);
+    METRICS.cgroup_memory_collection_errors.inc();
+    warn_cgroup_error_rate_limited("memory", error, &LAST_CGROUP_MEMORY_WARNING_SECONDS);
+}
+
+#[cfg(target_os = "linux")]
+fn warn_cgroup_error_rate_limited(
+    component: &str, error: &std::io::Error, last_warning: &std::sync::atomic::AtomicU64,
+) {
+    use std::sync::atomic::Ordering;
+
+    let now = unix_timestamp_seconds().max(0) as u64;
+    let previous = last_warning.load(Ordering::Relaxed);
+    if now.saturating_sub(previous) >= 60
+        && last_warning
+            .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    {
+        log::warn!("Failed to collect cgroup {component} stats: {error}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn unix_timestamp_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| saturating_i64(duration.as_secs()))
+}
+
+#[cfg(target_os = "linux")]
+fn saturating_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
 }
 
 // 每两小时清空一次，否则一直累积，光是exporter的流量就很大，观察到每天需要3.7GB。不用担心rate函数不准，promql查询会自动处理reset（数据突降）的数据。
