@@ -126,6 +126,10 @@ Options:
       --static-auth-path-prefix <PATH_PREFIX>
           静态资源需要 Basic 认证的 URL 路径前缀，例如 /private 或 /downloads/secret
           可以多次指定，命中任意前缀都会要求认证。需要配合 --static-auth-users 使用
+      --static-cache-max-age <SECONDS>
+          未被 Basic 认证保护的静态资源响应的 Cache-Control max-age 秒数。
+          被认证保护的路径始终返回 Cache-Control: private, no-store，防止 CDN 等共享缓存缓存认证内容
+          [default: 600]
   -r, --referer-keywords-to-self <REFERER>
           Http Referer请求头处理
           1. 图片资源的防盗链：针对png/jpeg/jpg等文件的请求，要求Request的Referer header要么为空，要么包含配置的值
@@ -269,6 +273,15 @@ rust_http_proxy -p 7788 \
 ```
 
 浏览器访问受保护前缀时会自动弹出 Basic 认证框。`--static-auth-users` 与正向代理、`/metrics` 等使用的 `--users` 相互独立。
+
+#### 静态资源缓存控制（Cache-Control）
+
+静态资源响应会按路径是否受 Basic 认证保护自动设置 `Cache-Control`：
+
+- 未被保护的路径：返回 `Cache-Control: public, max-age=<SECONDS>`，TTL 由 `--static-cache-max-age` 控制（默认 600 秒），便于浏览器和前置 CDN 缓存公开资源；
+- 被认证保护的路径：始终返回 `Cache-Control: private, no-store`，防止认证后的内容被 CDN 等共享缓存存储并对匿名用户泄露。
+
+`304 Not Modified` 响应同样携带对应的 `Cache-Control`。该行为对 `--location-config-file` 中配置了 `basic_auth_users`/`basic_auth_path_prefixes` 的静态托管 location 同样生效。
 
 #### 高级配置（基于域名和路径）
 

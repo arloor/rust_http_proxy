@@ -35,7 +35,15 @@ pub(crate) const SERVER_NAME: &str = "The Bad Server";
 
 pub async fn serve_http_request(
     req: &Request<impl Body>, client_socket_addr: SocketAddr, path: &str, static_dir: &str, config: &Config,
+    auth_protected: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+    // 受 Basic 认证保护的路径禁止共享缓存（CDN）存储；未保护路径给出明确的 TTL 新鲜度
+    let cache_control = if auth_protected {
+        "private, no-store".to_string()
+    } else {
+        format!("public, max-age={}", config.static_cache_max_age)
+    };
+    let cache_control = cache_control.as_str();
     let referer_keywords_to_self = &config.referer_keywords_to_self;
     let referer_header = req.headers().get(REFERER).map_or("", |h| h.to_str().unwrap_or(""));
     if (path.ends_with(".png") || path.ends_with(".jpeg") || path.ends_with(".jpg"))
@@ -86,12 +94,12 @@ pub async fn serve_http_request(
                     "".to_string()
                 },
             );
-            let r = serve_path(static_dir, path, req, can_gzip, true).await;
+            let r = serve_path(static_dir, path, req, can_gzip, true, cache_control).await;
             let is_shell = path.ends_with(".sh");
             incr_counter_if_need(&r, is_outer_view_html, is_shell, &METRICS.http_req_counter, referer_header, path);
             r
         }
-        (&Method::HEAD, path) => serve_path(static_dir, path, req, false, false).await,
+        (&Method::HEAD, path) => serve_path(static_dir, path, req, false, false, cache_control).await,
         _ => not_found(),
     };
 }
@@ -136,7 +144,7 @@ fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Er
 }
 
 async fn serve_path(
-    static_dir: &str, url_path: &str, req: &Request<impl Body>, can_gzip: bool, need_body: bool,
+    static_dir: &str, url_path: &str, req: &Request<impl Body>, can_gzip: bool, need_body: bool, cache_control: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     if String::from(url_path).contains("/..") {
         return not_found();
@@ -165,7 +173,7 @@ async fn serve_path(
         }
         Err(_) => {
             if url_path == "/favicon.ico" {
-                return serve_favico(req, need_body);
+                return serve_favico(req, need_body, cache_control);
             };
             return not_found();
         }
@@ -177,19 +185,19 @@ async fn serve_path(
     };
     let file_len = meta.len();
     let file_etag = cal_file_etag(last_modified, file_len);
-    if let Some(response) = return_304_if_not_modified(req, &file_etag, last_modified) {
+    if let Some(response) = return_304_if_not_modified(req, &file_etag, last_modified, cache_control) {
         return response;
     }
     let mime_type = from_path(&path).first_or_octet_stream();
     let content_type = mime_type.as_ref();
     let content_type = if !content_type.to_ascii_lowercase().contains("charset") && !content_type.contains("wasm") {
-        format!("{}{}", &content_type, "; charset=utf-8")
+        format!("{}{}", content_type, "; charset=utf-8")
     } else {
         String::from(content_type)
     };
     let mut builder = Response::builder()
         .header(http::header::CONTENT_TYPE, content_type.as_str())
-        // .header(http::header::CACHE_CONTROL, "max-age=600")// 这应该作为一个配置
+        .header(http::header::CACHE_CONTROL, cache_control)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::ETAG, file_etag)
         .header(http::header::ACCEPT_RANGES, "bytes")
@@ -242,14 +250,14 @@ async fn serve_path(
 }
 
 fn return_304_if_not_modified(
-    req: &Request<impl Body>, file_etag: &str, last_modified: SystemTime,
+    req: &Request<impl Body>, file_etag: &str, last_modified: SystemTime, cache_control: &str,
 ) -> Option<Result<Response<BoxBody<Bytes, io::Error>>, Error>> {
     match req.headers().get(http::header::IF_NONE_MATCH) {
         Some(if_none_match) => {
             // use if-none-match
             let if_none_match = if_none_match.to_str().ok()?;
             if if_none_match == file_etag {
-                Some(not_modified(last_modified, file_etag))
+                Some(not_modified(last_modified, file_etag, cache_control))
             } else {
                 None
             }
@@ -259,7 +267,7 @@ fn return_304_if_not_modified(
             let if_modified_since = req.headers().get(http::header::IF_MODIFIED_SINCE)?;
             let if_modified_since = if_modified_since.to_str().ok()?;
             if if_modified_since == fmt_http_date(last_modified.to_owned()).as_str() {
-                Some(not_modified(last_modified, file_etag))
+                Some(not_modified(last_modified, file_etag, cache_control))
             } else {
                 None
             }
@@ -267,11 +275,14 @@ fn return_304_if_not_modified(
     }
 }
 
-fn not_modified(last_modified: SystemTime, file_etag: &str) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+fn not_modified(
+    last_modified: SystemTime, file_etag: &str, cache_control: &str,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     Response::builder()
         .status(StatusCode::NOT_MODIFIED)
         .header(http::header::ETAG, file_etag)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
+        .header(http::header::CACHE_CONTROL, cache_control)
         .header(http::header::SERVER, SERVER_NAME)
         .body(empty_body())
 }
@@ -374,11 +385,13 @@ fn parse_range(
     Ok((start, end, builder))
 }
 
-fn serve_favico(req: &Request<impl Body>, need_body: bool) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
+fn serve_favico(
+    req: &Request<impl Body>, need_body: bool, cache_control: &str,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
     let last_modified = BOOTUP_TIME.to_owned();
     let file_len = FAV_ICO.len() as u64;
     let file_etag = cal_file_etag(last_modified, file_len);
-    if let Some(response) = return_304_if_not_modified(req, &file_etag, last_modified) {
+    if let Some(response) = return_304_if_not_modified(req, &file_etag, last_modified, cache_control) {
         return response;
     }
     Response::builder()
@@ -386,6 +399,7 @@ fn serve_favico(req: &Request<impl Body>, need_body: bool) -> Result<Response<Bo
         .header(http::header::SERVER, SERVER_NAME)
         .header(http::header::LAST_MODIFIED, fmt_http_date(last_modified))
         .header(http::header::ETAG, file_etag)
+        .header(http::header::CACHE_CONTROL, cache_control)
         .header(http::header::CONTENT_TYPE, "image/x-icon")
         .body(if need_body {
             full_body(FAV_ICO.to_vec())

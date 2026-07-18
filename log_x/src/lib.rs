@@ -46,6 +46,6 @@ fn my_format(w: &mut dyn std::io::Write, now: &mut DeferredNow, record: &Record)
         record.level(),
         record.file().unwrap_or("<unnamed>"),
         record.line().unwrap_or(0),
-        &record.args()
+        record.args()
     )
 }

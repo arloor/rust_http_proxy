@@ -331,7 +331,7 @@ impl<'a> ServiceType<'a> {
                         basic_auth,
                         basic_auth_path_prefixes,
                     ) {
-                        Ok(username) => username.unwrap_or_else(|| "static_serving".to_owned()),
+                        Ok(username) => username,
                         Err(e) => {
                             warn!(
                                 "static basic auth failed from {} for {}: {}",
@@ -342,6 +342,9 @@ impl<'a> ServiceType<'a> {
                             return Ok(build_authenticate_resp(false));
                         }
                     };
+                    // Some(username) 表示该路径命中认证前缀且已通过认证，响应需要禁止缓存
+                    let auth_protected = username.is_some();
+                    let username = username.unwrap_or_else(|| "static_serving".to_owned());
                     let traffic_label = AccessLabel {
                         client: client_socket_addr.ip().to_canonical().to_string(),
                         target: static_dir.to_string(),
@@ -354,9 +357,16 @@ impl<'a> ServiceType<'a> {
                         .strip_prefix(location.as_str())
                         .expect("should start with location");
                     let path = "/".to_string() + path;
-                    let resp = static_serve::serve_http_request(&req, client_socket_addr, &path, static_dir, config)
-                        .await
-                        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+                    let resp = static_serve::serve_http_request(
+                        &req,
+                        client_socket_addr,
+                        &path,
+                        static_dir,
+                        config,
+                        auth_protected,
+                    )
+                    .await
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
 
                     // 使用 CounterBody 包装响应 body 来统计响应流量
                     Ok(resp.map(|body| {
@@ -607,7 +617,7 @@ impl ProxyHandler {
     async fn handle_websocket_upgrade_forward(
         &self, mut req: Request<Incoming>, traffic_label: AccessLabel,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-        debug!("[forward] WebSocket upgrade request to {}", &traffic_label.target);
+        debug!("[forward] WebSocket upgrade request to {}", traffic_label.target);
 
         // 在消费 request 之前先获取客户端的 upgrade future
         let client_upgrade = hyper::upgrade::on(&mut req);
@@ -1467,7 +1477,7 @@ async fn handle_mitm_websocket_upgrade(
     access_label: AccessLabel, ipv6_first: Option<bool>, forward_bypass: Option<&ForwardBypassConfig>,
     client_ip: String, dump_plaintext: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    debug!("[mitm] WebSocket upgrade request to {}", &access_label.target);
+    debug!("[mitm] WebSocket upgrade request to {}", access_label.target);
     if dump_plaintext {
         info!("[mitm plaintext websocket] upgraded streams are tunneled without body dump: {access_label}");
     }

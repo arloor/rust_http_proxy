@@ -126,7 +126,7 @@ where
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
         if let Some(c) = self.get_cached_connection(access_label).await {
-            debug!("HTTP client for host: {} taken from cache", &access_label);
+            debug!("HTTP client for host: {} taken from cache", access_label);
             match self.send_request_conn(access_label, c, req).await {
                 Ok(o) => return Ok(o),
                 Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
@@ -137,7 +137,7 @@ where
         let c = match HttpConnection::connect(access_label, ipv6_first, stream_map_func).await {
             Ok(c) => c,
             Err(err) => {
-                error!("failed to connect to host: {}, error: {}", &access_label.target, err);
+                error!("failed to connect to host: {}, error: {}", access_label.target, err);
                 return Err(io::Error::new(io::ErrorKind::InvalidData, err));
             }
         };
@@ -154,7 +154,7 @@ where
         let mut c = match HttpConnection::connect_http1_only(access_label, ipv6_first, stream_map_func).await {
             Ok(c) => c,
             Err(err) => {
-                error!("failed to connect to host with HTTP/1.1 only: {}, error: {}", &access_label.target, err);
+                error!("failed to connect to host with HTTP/1.1 only: {}, error: {}", access_label.target, err);
                 return Err(io::Error::new(io::ErrorKind::InvalidData, err));
             }
         };
@@ -171,7 +171,7 @@ where
         stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         if let Some(c) = self.get_cached_connection(access_label).await {
-            debug!("HTTP client via forward bypass for host: {} taken from cache", &access_label);
+            debug!("HTTP client via forward bypass for host: {} taken from cache", access_label);
             match self.send_request_conn(access_label, c, req).await {
                 Ok(o) => return Ok(o),
                 Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
@@ -190,7 +190,7 @@ where
             Err(err) => {
                 error!(
                     "failed to connect to host: {} via forward bypass {}, error: {}",
-                    &access_label.target, forward_bypass_config, err
+                    access_label.target, forward_bypass_config, err
                 );
                 return Err(io::Error::new(io::ErrorKind::InvalidData, err));
             }
@@ -218,7 +218,7 @@ where
             Err(err) => {
                 error!(
                     "failed to connect to host with HTTP/1.1 only: {} via forward bypass {}, error: {}",
-                    &access_label.target, forward_bypass_config, err
+                    access_label.target, forward_bypass_config, err
                 );
                 return Err(io::Error::new(io::ErrorKind::InvalidData, err));
             }

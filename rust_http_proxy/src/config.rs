@@ -66,6 +66,14 @@ pub struct Param {
     )]
     static_auth_path_prefix: Vec<String>,
     #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value = "600",
+        help = "未被 Basic 认证保护的静态资源响应的 Cache-Control max-age 秒数。\n\
+        被认证保护的路径始终返回 Cache-Control: private, no-store，防止 CDN 等共享缓存缓存认证内容"
+    )]
+    static_cache_max_age: u32,
+    #[arg(
         short,
         long,
         value_name = "REFERER",
@@ -139,6 +147,7 @@ pub(crate) struct Config {
     pub(crate) key: String,
     pub(crate) basic_auth: HashMap<String, String>,
     pub(crate) referer_keywords_to_self: Vec<String>,
+    pub(crate) static_cache_max_age: u32,
     pub(crate) never_ask_for_auth: bool,
     pub(crate) allow_cidrs: AllowCIRRS,
     pub(crate) over_tls: bool,
@@ -288,6 +297,7 @@ impl TryFrom<Param> for Config {
             key: param.key,
             basic_auth,
             referer_keywords_to_self: param.referer_keywords_to_self,
+            static_cache_max_age: param.static_cache_max_age,
             never_ask_for_auth: param.never_ask_for_auth,
             allow_cidrs: AllowCIRRS(allowed_networks),
             over_tls: param.over_tls,
