@@ -16,23 +16,37 @@ jobs:
         build-type: [non-bpf, bpf-dyn-link, bpf-static-link]
         include:
           - build-type: non-bpf
-            build_args: 
-            extra_deps: 
+            build_args:
+            extra_deps:
             binary-name: rust_http_proxy
             docker-tag: latest
-            env_setup: ""
+            use_zigbuild: true
+            zig_glibc_version: "2.17"
+            after_install: ""
           - build-type: bpf-dyn-link
             build_args: --features bpf
             extra_deps:  zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf
             docker-tag: bpf
-            env_setup: ""
+            use_zigbuild: false
+            zig_glibc_version: ""
+            after_install: |
+              apt-get remove -y gcc
+              apt-get install -y gcc-10
+              update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
+              cc -v
           - build-type: bpf-static-link
             build_args: --features bpf_static
             extra_deps:  zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf_static
             docker-tag: bpf_static
-            env_setup: |
+            use_zigbuild: false
+            zig_glibc_version: ""
+            after_install: |
+              apt-get remove -y gcc
+              apt-get install -y gcc-10
+              update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
+              cc -v
               # find / -name libelf.a
               # find / -name libbpf.a
               # find / -name libz.a
@@ -50,13 +64,10 @@ jobs:
         uses: arloor/rust_musl_action@latest
         with:
           use_musl: false
+          use_zigbuild: ${{ matrix.use_zigbuild }}
+          zig_glibc_version: ${{ matrix.zig_glibc_version }}
           extra_deps: ${{ matrix.extra_deps }}
-          after_install: |
-            apt-get remove -y gcc
-            apt-get install -y gcc-10
-            update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
-            cc -v
-            ${{ matrix.env_setup }}
+          after_install: ${{ matrix.after_install }}
           args: -p rust_http_proxy ${{ matrix.build_args }}
           # apt_mirror: mirrors.mit.edu
           debug: false
