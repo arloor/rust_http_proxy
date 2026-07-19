@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls *)",
+      "Bash(cargo *)"
+    ]
+  },
+  "$version": 4
+}
