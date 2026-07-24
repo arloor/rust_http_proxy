@@ -28,30 +28,32 @@ jobs:
             extra_deps:  zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf
             docker-tag: bpf
-            use_zigbuild: false
-            zig_glibc_version: ""
+            use_zigbuild: true
+            zig_glibc_version: "2.17"
             after_install: |
-              apt-get remove -y gcc
-              apt-get install -y gcc-10
-              update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
-              cc -v
+              # cargo-zigbuild intentionally hides /usr/include so that Zig's
+              # glibc 2.17 headers cannot be shadowed by the build host's glibc.
+              # Copy only the third-party headers needed to build libbpf.
+              libbpf_zig_include=/tmp/libbpf-zig-include
+              install -d "$libbpf_zig_include"
+              install -m 0644 \
+                /usr/include/libelf.h \
+                /usr/include/gelf.h \
+                /usr/include/zlib.h \
+                /usr/include/zconf.h \
+                "$libbpf_zig_include/"
+              export LIBBPF_SYS_EXTRA_CFLAGS="-isystem $libbpf_zig_include"
+              export LIBBPF_SYS_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
           - build-type: bpf-static-link
-            build_args: --features bpf_static
-            extra_deps:  zlib1g-dev libelf-dev clang pkg-config make
+            # Build libelf and zlib with Zig too. The bpf_static feature would
+            # reuse host-built static archives, which may require a newer glibc.
+            build_args: --features bpf_vendored
+            extra_deps:  clang pkg-config make autoconf autopoint flex bison gawk
             binary-name: rust_http_proxy_bpf_static
             docker-tag: bpf_static
-            use_zigbuild: false
-            zig_glibc_version: ""
-            after_install: |
-              apt-get remove -y gcc
-              apt-get install -y gcc-10
-              update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-10 100
-              cc -v
-              # find / -name libelf.a
-              # find / -name libbpf.a
-              # find / -name libz.a
-              export LIBBPF_SYS_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/lib/x86_64-linux-gnu
-              echo -e "\e[31mLIBBPF_SYS_LIBRARY_PATH=$LIBBPF_SYS_LIBRARY_PATH\e[0m"
+            use_zigbuild: true
+            zig_glibc_version: "2.17"
+            after_install: ""
     steps:
       - uses: actions/checkout@v6
       - name: Set outputs
@@ -65,6 +67,7 @@ jobs:
         with:
           use_musl: false
           use_zigbuild: ${{ matrix.use_zigbuild }}
+          zig_version: "0.15.2"
           zig_glibc_version: ${{ matrix.zig_glibc_version }}
           extra_deps: ${{ matrix.extra_deps }}
           after_install: ${{ matrix.after_install }}
@@ -78,6 +81,36 @@ jobs:
           mkdir -p ${{ github.workspace }}/release_binaries
           cp ${{ steps.build.outputs.release_dir }}/rust_http_proxy ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
           ls -lh ${{ github.workspace }}/release_binaries/
+
+      - name: Verify glibc 2.17 compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
+          max_glibc=$(
+            readelf -W --version-info --dyn-syms "$binary" |
+              grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' |
+              sed 's/^GLIBC_//' |
+              sort -Vu |
+              tail -n 1
+          )
+          if [[ -z "$max_glibc" ]]; then
+            echo "::error::No GLIBC symbol versions found in $binary"
+            exit 1
+          fi
+          if [[ "$(printf '%s\n' 2.17 "$max_glibc" | sort -V | tail -n 1)" != "2.17" ]]; then
+            echo "::error::$binary requires GLIBC_$max_glibc (expected at most GLIBC_2.17)"
+            readelf -W --version-info --dyn-syms "$binary"
+            exit 1
+          fi
+          echo "$binary requires at most GLIBC_$max_glibc"
+
+          if [[ "${{ matrix.build-type }}" == "bpf-static-link" ]] &&
+             readelf -d "$binary" | grep -Eq '\[(libelf|libz)\.so'; then
+            echo "::error::Static BPF binary still has a dynamic libelf/libz dependency"
+            readelf -d "$binary"
+            exit 1
+          fi
 
       # 上传构建好的二进制文件作为构建工件
       - name: Upload artifact
