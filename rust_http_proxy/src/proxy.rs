@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     fmt::{Display, Formatter},
+    io::Write as _,
     io::{self, ErrorKind},
     net::SocketAddr,
     sync::LazyLock,
@@ -1559,39 +1560,59 @@ async fn dump_mitm_request_body(body: &mut Incoming, access_label: &AccessLabel)
 fn map_mitm_response_body(
     resp: Response<Incoming>, access_label: AccessLabel, dump_plaintext: bool,
 ) -> Response<BoxBody<Bytes, io::Error>> {
-    let unreadable_reason = if dump_plaintext {
-        mitm_response_body_unreadable_reason(resp.headers())
+    let log_mode = if dump_plaintext {
+        mitm_response_body_log_mode(resp.headers())
     } else {
-        None
+        MitmResponseBodyLogMode::Disabled
     };
     resp.map(|body| {
         let body = body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-        if let Some(reason) = unreadable_reason {
-            info!("[mitm plaintext response body] {access_label} skipped: body is not human-readable ({reason})");
-            body.boxed()
-        } else if dump_plaintext {
-            let mut bytes_seen = 0usize;
-            let mut truncated = false;
-            body.map_frame(move |frame| {
-                if let Some(data) = frame.data_ref() {
-                    log_mitm_body_chunk(&access_label, "response", data, &mut bytes_seen, &mut truncated);
-                }
-                frame
-            })
-            .boxed()
-        } else {
-            body.boxed()
+        match log_mode {
+            MitmResponseBodyLogMode::Disabled => body.boxed(),
+            MitmResponseBodyLogMode::Skip(reason) => {
+                info!("[mitm plaintext response body] {access_label} skipped: body is not human-readable ({reason})");
+                body.boxed()
+            }
+            MitmResponseBodyLogMode::Plaintext => {
+                let mut bytes_seen = 0usize;
+                let mut truncated = false;
+                body.map_frame(move |frame| {
+                    if let Some(data) = frame.data_ref() {
+                        log_mitm_body_chunk(&access_label, "response", data, &mut bytes_seen, &mut truncated);
+                    }
+                    frame
+                })
+                .boxed()
+            }
+            MitmResponseBodyLogMode::Gzip => MitmGzipLogBody::new(body, access_label).boxed(),
         }
     })
 }
 
-fn mitm_response_body_unreadable_reason(headers: &http::HeaderMap) -> Option<String> {
-    if let Some(encoding) = non_identity_content_encoding(headers) {
-        return Some(format!("content-encoding: {encoding}"));
-    }
+#[derive(Debug, PartialEq, Eq)]
+enum MitmResponseBodyLogMode {
+    Disabled,
+    Plaintext,
+    Gzip,
+    Skip(String),
+}
 
-    let content_type = headers.get(CONTENT_TYPE)?;
-    let content_type = content_type.to_str().ok()?;
+fn mitm_response_body_log_mode(headers: &http::HeaderMap) -> MitmResponseBodyLogMode {
+    let content_encoding = non_identity_content_encodings(headers);
+    let encoding_mode = match content_encoding.as_slice() {
+        [] => MitmResponseBodyLogMode::Plaintext,
+        [encoding] if encoding.eq_ignore_ascii_case("gzip") => MitmResponseBodyLogMode::Gzip,
+        _ => {
+            return MitmResponseBodyLogMode::Skip(format!("content-encoding: {}", content_encoding.join(", ")));
+        }
+    };
+
+    let Some(content_type) = headers.get(CONTENT_TYPE) else {
+        return encoding_mode;
+    };
+    let Ok(content_type) = content_type.to_str() else {
+        return encoding_mode;
+    };
     let media_type = content_type
         .split_once(';')
         .map_or(content_type, |(media_type, _)| media_type)
@@ -1599,22 +1620,162 @@ fn mitm_response_body_unreadable_reason(headers: &http::HeaderMap) -> Option<Str
         .to_ascii_lowercase();
 
     if is_human_readable_media_type(&media_type) {
-        None
+        encoding_mode
     } else {
-        Some(format!("content-type: {media_type}"))
+        MitmResponseBodyLogMode::Skip(format!("content-type: {media_type}"))
     }
 }
 
-fn non_identity_content_encoding(headers: &http::HeaderMap) -> Option<String> {
-    headers.get_all(CONTENT_ENCODING).iter().find_map(|value| {
-        let value = value.to_str().ok()?;
-        value
-            .split(',')
-            .map(str::trim)
-            .filter(|encoding| !encoding.is_empty())
-            .find(|encoding| !encoding.eq_ignore_ascii_case("identity"))
-            .map(str::to_owned)
-    })
+fn non_identity_content_encodings(headers: &http::HeaderMap) -> Vec<String> {
+    headers
+        .get_all(CONTENT_ENCODING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|encoding| !encoding.is_empty())
+                .filter(|encoding| !encoding.eq_ignore_ascii_case("identity"))
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+struct GzipBodyDecoder {
+    decoder: flate2::write::GzDecoder<Vec<u8>>,
+}
+
+impl GzipBodyDecoder {
+    fn new() -> Self {
+        Self {
+            decoder: flate2::write::GzDecoder::new(Vec::new()),
+        }
+    }
+
+    fn decode_chunk(&mut self, compressed: &[u8]) -> io::Result<Bytes> {
+        self.decoder.write_all(compressed)?;
+        Ok(Bytes::from(std::mem::take(self.decoder.get_mut())))
+    }
+
+    fn finish(&mut self) -> io::Result<Bytes> {
+        self.decoder.try_finish()?;
+        Ok(Bytes::from(std::mem::take(self.decoder.get_mut())))
+    }
+}
+
+pin_project_lite::pin_project! {
+    struct MitmGzipLogBody<B> {
+        #[pin]
+        inner: B,
+        access_label: AccessLabel,
+        decoder: Option<GzipBodyDecoder>,
+        compressed_bytes_seen: usize,
+        decoded_bytes_seen: usize,
+        truncated: bool,
+        completed: bool,
+    }
+}
+
+impl<B> MitmGzipLogBody<B> {
+    fn new(inner: B, access_label: AccessLabel) -> Self {
+        Self {
+            inner,
+            access_label,
+            decoder: Some(GzipBodyDecoder::new()),
+            compressed_bytes_seen: 0,
+            decoded_bytes_seen: 0,
+            truncated: false,
+            completed: false,
+        }
+    }
+}
+
+impl<B> http_body::Body for MitmGzipLogBody<B>
+where
+    B: http_body::Body<Data = Bytes, Error = io::Error>,
+{
+    type Data = Bytes;
+    type Error = io::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let mut this = self.project();
+        match this.inner.as_mut().poll_frame(cx) {
+            std::task::Poll::Ready(Some(Ok(frame))) => {
+                if let Some(data) = frame.data_ref() {
+                    *this.compressed_bytes_seen = this.compressed_bytes_seen.saturating_add(data.len());
+                    if let Some(decoder) = this.decoder.as_mut() {
+                        match decoder.decode_chunk(data) {
+                            Ok(decoded) => log_mitm_body_chunk(
+                                this.access_label,
+                                "response",
+                                &decoded,
+                                this.decoded_bytes_seen,
+                                this.truncated,
+                            ),
+                            Err(error) => {
+                                warn!(
+                                    "[mitm plaintext response body] {} stopped gzip decoding: {error}",
+                                    this.access_label
+                                );
+                                *this.decoder = None;
+                            }
+                        }
+                        if *this.truncated {
+                            *this.decoder = None;
+                        }
+                    }
+                }
+                std::task::Poll::Ready(Some(Ok(frame)))
+            }
+            std::task::Poll::Ready(None) => {
+                if !*this.completed {
+                    *this.completed = true;
+                    if *this.compressed_bytes_seen == 0 {
+                        info!(
+                            "[mitm plaintext response body] {} 0 bytes (empty response; no gzip payload)",
+                            this.access_label
+                        );
+                    } else if let Some(decoder) = this.decoder.as_mut() {
+                        match decoder.finish() {
+                            Ok(decoded) => {
+                                log_mitm_body_chunk(
+                                    this.access_label,
+                                    "response",
+                                    &decoded,
+                                    this.decoded_bytes_seen,
+                                    this.truncated,
+                                );
+                                if *this.decoded_bytes_seen == 0 {
+                                    info!(
+                                        "[mitm plaintext response body] {} 0 bytes (empty after decoding {} gzip bytes)",
+                                        this.access_label, this.compressed_bytes_seen
+                                    );
+                                }
+                            }
+                            Err(error) => warn!(
+                                "[mitm plaintext response body] {} failed to finish gzip decoding after {} compressed bytes: {error}",
+                                this.access_label, this.compressed_bytes_seen
+                            ),
+                        }
+                    }
+                    *this.decoder = None;
+                }
+                std::task::Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.completed
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
 }
 
 fn is_human_readable_media_type(media_type: &str) -> bool {
@@ -1864,12 +2025,24 @@ mod tests {
     }
 
     #[test]
-    fn mitm_response_body_skips_compressed_body() {
+    fn mitm_response_body_decodes_gzip_body() {
         let mut headers = http::HeaderMap::new();
         headers.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        assert_eq!(mitm_response_body_unreadable_reason(&headers).as_deref(), Some("content-encoding: gzip"));
+        assert_eq!(mitm_response_body_log_mode(&headers), MitmResponseBodyLogMode::Gzip);
+    }
+
+    #[test]
+    fn mitm_response_body_skips_unsupported_encoding() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(CONTENT_ENCODING, HeaderValue::from_static("br"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        assert_eq!(
+            mitm_response_body_log_mode(&headers),
+            MitmResponseBodyLogMode::Skip("content-encoding: br".to_owned())
+        );
     }
 
     #[test]
@@ -1877,7 +2050,10 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
 
-        assert_eq!(mitm_response_body_unreadable_reason(&headers).as_deref(), Some("content-type: image/png"));
+        assert_eq!(
+            mitm_response_body_log_mode(&headers),
+            MitmResponseBodyLogMode::Skip("content-type: image/png".to_owned())
+        );
     }
 
     #[test]
@@ -1892,7 +2068,7 @@ mod tests {
             let mut headers = http::HeaderMap::new();
             headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
 
-            assert_eq!(mitm_response_body_unreadable_reason(&headers), None);
+            assert_eq!(mitm_response_body_log_mode(&headers), MitmResponseBodyLogMode::Plaintext);
         }
     }
 
@@ -1900,7 +2076,54 @@ mod tests {
     fn mitm_response_body_allows_missing_content_type() {
         let headers = http::HeaderMap::new();
 
-        assert_eq!(mitm_response_body_unreadable_reason(&headers), None);
+        assert_eq!(mitm_response_body_log_mode(&headers), MitmResponseBodyLogMode::Plaintext);
+    }
+
+    #[test]
+    fn gzip_body_decoder_handles_fragmented_input() -> io::Result<()> {
+        let plaintext = br#"{"message":"gzip response body"}"#;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(plaintext)?;
+        let compressed = encoder.finish()?;
+        let mut decoder = GzipBodyDecoder::new();
+        let mut decoded = Vec::new();
+
+        for chunk in compressed.chunks(3) {
+            decoded.extend_from_slice(&decoder.decode_chunk(chunk)?);
+        }
+        decoded.extend_from_slice(&decoder.finish()?);
+
+        assert_eq!(decoded, plaintext);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn gzip_log_body_forwards_compressed_bytes_unchanged() -> io::Result<()> {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(b"response")?;
+        let compressed = Bytes::from(encoder.finish()?);
+        let body = Full::new(compressed.clone()).map_err(|never| match never {});
+
+        let forwarded = MitmGzipLogBody::new(body, test_access_label())
+            .collect()
+            .await?
+            .to_bytes();
+
+        assert_eq!(forwarded, compressed);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn gzip_log_body_completes_for_empty_upstream_body() -> io::Result<()> {
+        let body = Full::new(Bytes::new()).map_err(|never| match never {});
+
+        let forwarded = MitmGzipLogBody::new(body, test_access_label())
+            .collect()
+            .await?
+            .to_bytes();
+
+        assert!(forwarded.is_empty());
+        Ok(())
     }
 }
 
