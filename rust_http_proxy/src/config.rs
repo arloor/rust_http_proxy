@@ -137,7 +137,7 @@ pub struct Param {
     #[arg(
         long,
         value_name = "FILE_PATH",
-        help = "MITM stub YAML 配置文件，按 authority + path 固定返回响应"
+        help = "MITM stub YAML 配置文件，按 authority + path 返回静态响应或转发到明文 HTTP upstream"
     )]
     mitm_stub_config_file: Option<String>,
 }

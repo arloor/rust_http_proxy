@@ -21,7 +21,7 @@ use crate::{
     location::{
         DEFAULT_HOST, LocationConfig, Upstream, build_upstream_req, handle_websocket_upgrade_reverse, normalize302,
     },
-    mitm::{MitmStubResponse, MitmStubSpecs},
+    mitm::{MitmDynamicStub, MitmStubAction, MitmStubResponse, MitmStubSpecs},
     static_serve,
 };
 use {io_x::CounterIO, io_x::TimeoutIO, prom_label::LabelImpl};
@@ -981,6 +981,7 @@ impl ProxyHandler {
             ipv6_first,
             forward_bypass: forward_bypass.clone(),
             stub_specs: self.config.mitm_stub_specs.clone(),
+            stub_client: self.reverse_proxy_client.clone(),
             dump_plaintext: self.config.mitm_dump_plaintext,
         };
         tokio::task::spawn(async move {
@@ -1336,6 +1337,7 @@ struct MitmRequestContext {
     ipv6_first: Option<bool>,
     forward_bypass: Option<ForwardBypassConfig>,
     stub_specs: MitmStubSpecs,
+    stub_client: legacy::Client<HttpsConnector<HttpConnector<CustomGaiDNSResolver>>, BoxBody<Bytes, io::Error>>,
     dump_plaintext: bool,
 }
 
@@ -1394,12 +1396,31 @@ async fn handle_mitm_request(
         req.version(),
     );
 
-    if let Some(stub_response) = context.stub_specs.find(&access_label.target, req.uri().path()) {
-        info!("[mitm stub] returning configured response for {access_label}{}", req.uri().path());
-        if context.dump_plaintext {
-            dump_mitm_request_body(req.body_mut(), &access_label).await?;
+    if let Some(stub_action) = context.stub_specs.find(&access_label.target, req.uri().path()) {
+        match stub_action {
+            MitmStubAction::Static(stub_response) => {
+                info!("[mitm static stub] returning configured response for {access_label}{}", req.uri().path());
+                if context.dump_plaintext {
+                    dump_mitm_request_body(req.body_mut(), &access_label).await?;
+                }
+                return build_mitm_stub_response(stub_response, access_label);
+            }
+            MitmStubAction::Dynamic(dynamic_stub) => {
+                info!(
+                    "[mitm dynamic stub] forwarding plaintext request for {access_label}{} to {}",
+                    req.uri().path(),
+                    dynamic_stub.upstream
+                );
+                return forward_to_dynamic_mitm_stub(
+                    req,
+                    dynamic_stub,
+                    &context.stub_client,
+                    access_label,
+                    context.dump_plaintext,
+                )
+                .await;
+            }
         }
-        return build_mitm_stub_response(stub_response, access_label);
     }
 
     if is_websocket {
@@ -1470,6 +1491,55 @@ fn build_mitm_stub_response(
             .boxed();
     builder
         .body(body)
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+}
+
+async fn forward_to_dynamic_mitm_stub(
+    mut req: Request<Incoming>, dynamic_stub: MitmDynamicStub,
+    stub_client: &legacy::Client<HttpsConnector<HttpConnector<CustomGaiDNSResolver>>, BoxBody<Bytes, io::Error>>,
+    access_label: AccessLabel, dump_plaintext: bool,
+) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
+    let upstream_uri = dynamic_stub_request_uri(&dynamic_stub.upstream, req.uri())?;
+    *req.uri_mut() = upstream_uri;
+    *req.version_mut() = Version::HTTP_11;
+    let req = map_mitm_request_body(req, access_label.clone(), dump_plaintext);
+    let response = stub_client.request(req).await.map_err(|e| {
+        io::Error::new(
+            ErrorKind::ConnectionRefused,
+            format!("dynamic MITM stub upstream {} request failed: {e}", dynamic_stub.upstream),
+        )
+    })?;
+    if dump_plaintext {
+        log_mitm_response_head(&response, &access_label);
+    }
+    Ok(map_mitm_response_body(response, access_label, dump_plaintext))
+}
+
+fn dynamic_stub_request_uri(upstream: &Uri, original: &Uri) -> io::Result<Uri> {
+    let scheme = upstream
+        .scheme_str()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "dynamic MITM stub upstream has no scheme"))?;
+    let authority = upstream
+        .authority()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "dynamic MITM stub upstream has no authority"))?;
+    let upstream_path = upstream.path().trim_end_matches('/');
+    let original_path = original.path();
+    let path = if upstream_path.is_empty() {
+        original_path.to_owned()
+    } else if original_path == "/" {
+        format!("{upstream_path}/")
+    } else {
+        format!("{upstream_path}{original_path}")
+    };
+    let path_and_query = match original.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path,
+    };
+    Uri::builder()
+        .scheme(scheme)
+        .authority(authority.clone())
+        .path_and_query(path_and_query)
+        .build()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
 }
 
@@ -1897,6 +1967,28 @@ mod tests {
             username: "test".to_owned(),
             relay_over_tls: Some(true),
         }
+    }
+
+    #[test]
+    fn dynamic_stub_request_uri_preserves_path_and_query() -> Result<(), crate::DynError> {
+        let upstream = "http://127.0.0.1:9010/stub".parse::<Uri>()?;
+        let original = "/v1/profile?user=42".parse::<Uri>()?;
+
+        let uri = dynamic_stub_request_uri(&upstream, &original)?;
+
+        assert_eq!(uri, "http://127.0.0.1:9010/stub/v1/profile?user=42");
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_stub_request_uri_without_prefix_uses_original_path() -> Result<(), crate::DynError> {
+        let upstream = "http://127.0.0.1:9010".parse::<Uri>()?;
+        let original = "/v1/profile".parse::<Uri>()?;
+
+        let uri = dynamic_stub_request_uri(&upstream, &original)?;
+
+        assert_eq!(uri, "http://127.0.0.1:9010/v1/profile");
+        Ok(())
     }
 
     #[test]

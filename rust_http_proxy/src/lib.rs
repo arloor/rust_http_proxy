@@ -23,6 +23,8 @@ mod linux_monitor;
 mod location;
 mod metrics;
 mod mitm;
+#[cfg(test)]
+mod mitm_stub_e2e_tests;
 mod proxy;
 mod static_serve;
 #[cfg(test)]

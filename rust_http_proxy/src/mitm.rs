@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use http::{HeaderName, HeaderValue, StatusCode};
+use http::{HeaderName, HeaderValue, StatusCode, Uri};
 use hyper::body::Bytes;
 use lru_time_cache::LruCache;
 use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose};
@@ -82,7 +82,13 @@ pub(crate) struct MitmStubSpecs {
 #[derive(Clone)]
 pub(crate) struct MitmStubRule {
     path: String,
-    response: MitmStubResponse,
+    action: MitmStubAction,
+}
+
+#[derive(Clone)]
+pub(crate) enum MitmStubAction {
+    Static(MitmStubResponse),
+    Dynamic(MitmDynamicStub),
 }
 
 #[derive(Clone)]
@@ -92,18 +98,19 @@ pub(crate) struct MitmStubResponse {
     pub(crate) body: Bytes,
 }
 
+#[derive(Clone)]
+pub(crate) struct MitmDynamicStub {
+    pub(crate) upstream: Uri,
+}
+
 #[derive(Deserialize)]
 struct MitmStubConfig {
     path: String,
-    #[serde(default = "default_status")]
-    status: u16,
+    status: Option<u16>,
     #[serde(default)]
     headers: HashMap<String, String>,
-    body_file: String,
-}
-
-fn default_status() -> u16 {
-    200
+    body_file: Option<String>,
+    upstream: Option<String>,
 }
 
 pub(crate) fn parse_mitm_stub_specs(config_file: &Option<String>) -> Result<MitmStubSpecs, crate::DynError> {
@@ -126,27 +133,62 @@ pub(crate) fn parse_mitm_stub_specs(config_file: &Option<String>) -> Result<Mitm
 
         let mut parsed_rules = Vec::new();
         for rule in rules {
-            let body_path = resolve_relative_path(base_dir, &rule.body_file);
-            let body = fs::read(&body_path)
-                .map_err(|e| format!("failed to read MITM stub body file {}: {e}", body_path.display()))?;
-            let status = StatusCode::from_u16(rule.status)
-                .map_err(|e| format!("invalid MITM stub status {} for {authority}{}: {e}", rule.status, rule.path))?;
-            let mut headers = Vec::new();
-            for (name, value) in rule.headers {
-                let header_name = HeaderName::from_bytes(name.as_bytes())
-                    .map_err(|e| format!("invalid MITM stub response header name {name}: {e}"))?;
-                let header_value = HeaderValue::from_str(&value)
-                    .map_err(|e| format!("invalid MITM stub response header value for {name}: {e}"))?;
-                headers.push((header_name, header_value));
+            if !rule.path.starts_with('/') {
+                return Err(format!("MITM stub path must start with '/' for {authority}: {}", rule.path).into());
             }
+            let action = match (rule.body_file, rule.upstream) {
+                (Some(body_file), None) => {
+                    let body_path = resolve_relative_path(base_dir, &body_file);
+                    let body = fs::read(&body_path)
+                        .map_err(|e| format!("failed to read MITM stub body file {}: {e}", body_path.display()))?;
+                    let status_code = rule.status.unwrap_or(200);
+                    let status = StatusCode::from_u16(status_code).map_err(|e| {
+                        format!("invalid MITM stub status {status_code} for {authority}{}: {e}", rule.path)
+                    })?;
+                    let mut headers = Vec::new();
+                    for (name, value) in rule.headers {
+                        let header_name = HeaderName::from_bytes(name.as_bytes())
+                            .map_err(|e| format!("invalid MITM stub response header name {name}: {e}"))?;
+                        let header_value = HeaderValue::from_str(&value)
+                            .map_err(|e| format!("invalid MITM stub response header value for {name}: {e}"))?;
+                        headers.push((header_name, header_value));
+                    }
+                    MitmStubAction::Static(MitmStubResponse {
+                        status,
+                        headers,
+                        body: Bytes::from(body),
+                    })
+                }
+                (None, Some(upstream)) => {
+                    if rule.status.is_some() || !rule.headers.is_empty() {
+                        return Err(format!(
+                            "dynamic MITM stub for {authority}{} must not set status or headers",
+                            rule.path
+                        )
+                        .into());
+                    }
+                    let upstream = parse_dynamic_stub_upstream(&upstream, &authority, &rule.path)?;
+                    MitmStubAction::Dynamic(MitmDynamicStub { upstream })
+                }
+                (Some(_), Some(_)) => {
+                    return Err(format!(
+                        "MITM stub for {authority}{} must set exactly one of body_file or upstream",
+                        rule.path
+                    )
+                    .into());
+                }
+                (None, None) => {
+                    return Err(format!(
+                        "MITM stub for {authority}{} must set exactly one of body_file or upstream",
+                        rule.path
+                    )
+                    .into());
+                }
+            };
 
             parsed_rules.push(MitmStubRule {
                 path: rule.path,
-                response: MitmStubResponse {
-                    status,
-                    headers,
-                    body: Bytes::from(body),
-                },
+                action,
             });
         }
         stubs.insert(authority, parsed_rules);
@@ -160,12 +202,32 @@ impl MitmStubSpecs {
         self.stubs.is_empty()
     }
 
-    pub(crate) fn find(&self, authority: &str, path: &str) -> Option<MitmStubResponse> {
+    pub(crate) fn find(&self, authority: &str, path: &str) -> Option<MitmStubAction> {
         self.stubs
             .get(&normalize_authority(authority))
             .and_then(|rules| rules.iter().find(|rule| rule.path == path))
-            .map(|rule| rule.response.clone())
+            .map(|rule| rule.action.clone())
     }
+}
+
+fn parse_dynamic_stub_upstream(upstream: &str, authority: &str, path: &str) -> Result<Uri, crate::DynError> {
+    let uri = upstream
+        .parse::<Uri>()
+        .map_err(|e| format!("invalid dynamic MITM stub upstream {upstream} for {authority}{path}: {e}"))?;
+    if uri.scheme_str() != Some("http") {
+        return Err(format!("dynamic MITM stub upstream for {authority}{path} must use http: {upstream}").into());
+    }
+    if uri.authority().is_none() {
+        return Err(
+            format!("dynamic MITM stub upstream for {authority}{path} must have an authority: {upstream}").into()
+        );
+    }
+    if uri.query().is_some() {
+        return Err(
+            format!("dynamic MITM stub upstream for {authority}{path} must not contain a query: {upstream}").into()
+        );
+    }
+    Ok(uri)
 }
 
 fn normalize_authority(authority: &str) -> String {
@@ -211,7 +273,8 @@ AdminMaxApi.KnowHub.Cloud:443:
 
         let specs = parse_mitm_stub_specs(&Some(config_path.to_string_lossy().into_owned()))?;
         let response = match specs.find("adminmaxapi.knowhub.cloud:443.", "/access-tokens/validate") {
-            Some(response) => response,
+            Some(MitmStubAction::Static(response)) => response,
+            Some(MitmStubAction::Dynamic(_)) => return Err("expected static MITM stub response".into()),
             None => return Err("expected MITM stub response".into()),
         };
 
@@ -219,6 +282,64 @@ AdminMaxApi.KnowHub.Cloud:443:
         assert_eq!(response.body, Bytes::from_static(br#"{"ok":true}"#));
         assert_eq!(response.headers.len(), 1);
         assert!(specs.find("adminmaxapi.knowhub.cloud:443", "/other").is_none());
+
+        fs::remove_dir_all(base_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn parses_dynamic_mitm_stub_upstream() -> Result<(), crate::DynError> {
+        let base_dir = std::env::temp_dir().join(format!(
+            "rust_http_proxy_dynamic_mitm_stub_test_{}_{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        fs::create_dir_all(&base_dir)?;
+        let config_path = base_dir.join("mitm-stubs.yaml");
+        fs::write(
+            &config_path,
+            r#"
+api.example.com:443:
+  - path: /v1/profile
+    upstream: http://127.0.0.1:9010/stub
+"#,
+        )?;
+
+        let specs = parse_mitm_stub_specs(&Some(config_path.to_string_lossy().into_owned()))?;
+        let upstream = match specs.find("api.example.com:443", "/v1/profile") {
+            Some(MitmStubAction::Dynamic(stub)) => stub.upstream,
+            Some(MitmStubAction::Static(_)) => return Err("expected dynamic MITM stub".into()),
+            None => return Err("expected MITM stub".into()),
+        };
+        assert_eq!(upstream, "http://127.0.0.1:9010/stub");
+
+        fs::remove_dir_all(base_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_mitm_stub_rejects_https_upstream() -> Result<(), crate::DynError> {
+        let base_dir = std::env::temp_dir().join(format!(
+            "rust_http_proxy_dynamic_mitm_stub_https_test_{}_{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        fs::create_dir_all(&base_dir)?;
+        let config_path = base_dir.join("mitm-stubs.yaml");
+        fs::write(
+            &config_path,
+            r#"
+api.example.com:443:
+  - path: /v1/profile
+    upstream: https://127.0.0.1:9010
+"#,
+        )?;
+
+        let error = match parse_mitm_stub_specs(&Some(config_path.to_string_lossy().into_owned())) {
+            Ok(_) => return Err("expected HTTPS dynamic MITM stub upstream to be rejected".into()),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("must use http"));
 
         fs::remove_dir_all(base_dir)?;
         Ok(())

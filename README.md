@@ -165,7 +165,7 @@ Options:
       --mitm-dump-plaintext
           打印 MITM 解密后的请求/响应头和 body 前 16KB。仅用于调试
       --mitm-stub-config-file <FILE_PATH>
-          MITM stub YAML 配置文件，按 authority + path 固定返回响应
+          MITM stub YAML 配置文件，按 authority + path 返回静态响应或转发到明文 HTTP upstream
   -h, --help
           Print help
 ```
@@ -213,9 +213,9 @@ rust_http_proxy -p 7788 \
 
 客户端需要信任 `mitm-ca-cert.pem`，否则 HTTPS 校验会失败。`--mitm-dump-plaintext` 会把解密后的请求/响应头和 body 前 16KB 写入日志，请只在你有权限解密和代理的流量上使用该功能。
 
-#### MITM Stub 固定响应
+#### MITM Stub 响应
 
-通过 `--mitm-stub-config-file` 可以让 MITM 在转发上游前按 `authority + path` 返回本地固定响应。`body_file` 支持相对路径，相对配置文件所在目录解析；程序会按 body 实际长度写入 `Content-Length`，不会自动 gzip/br/deflate 压缩。
+通过 `--mitm-stub-config-file` 可以让 MITM 在转发真实上游前按 `authority + path` 命中 stub。每条规则必须二选一：使用 `body_file` 返回本地静态响应，或使用 `upstream` 动态生成响应。
 
 ```bash
 rust_http_proxy -p 7788 \
@@ -227,12 +227,21 @@ rust_http_proxy -p 7788 \
 
 ```yaml
 adminmaxapi.knowhub.cloud:443:
+  # 静态 stub
   - path: /access-tokens/validate
     status: 200 # 可选，默认 200
     headers:
       content-type: application/json
     body_file: responses/knowhub-validate.json
+
+  # 动态 stub
+  - path: /users/current
+    upstream: http://127.0.0.1:9010/stub
 ```
+
+静态 stub 的 `body_file` 支持相对路径，相对配置文件所在目录解析；程序会按 body 实际长度写入 `Content-Length`，不会自动 gzip/br/deflate 压缩。
+
+动态 stub 的 `upstream` 必须是明文 `http://` URL，且不能包含 query。命中后，程序把已卸载 TLS 的原请求（method、headers、body、path 和 query）发送给该 upstream，并把 upstream 的 status、headers 和流式 body 通过现有 MITM TLS 连接返回客户端。`upstream` 中的路径作为前缀，例如上面的 `/users/current?verbose=1` 会转发到 `http://127.0.0.1:9010/stub/users/current?verbose=1`。原请求的 `Host` header 会保留，方便动态 stub 根据原目标生成响应。
 
 `responses/knowhub-validate.json`:
 
