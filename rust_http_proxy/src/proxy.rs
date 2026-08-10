@@ -2618,17 +2618,17 @@ impl ServerCertVerifier for NoVerifier {
         use x509_cert::Certificate;
         use x509_cert::der::Decode;
         if let Ok(cert) = Certificate::from_der(end_entity.as_ref()) {
-            let tbs = &cert.tbs_certificate;
+            let tbs = cert.tbs_certificate();
             info!("🔐 TLS Certificate Info:");
             info!("  Server Name: {:?}", server_name);
-            info!("  Subject: {}", tbs.subject);
-            info!("  Issuer: {}", tbs.issuer);
-            info!("  Serial: {:?}", tbs.serial_number);
-            info!("  Valid from: {:?}", tbs.validity.not_before);
-            info!("  Valid until: {:?}", tbs.validity.not_after);
+            info!("  Subject: {}", tbs.subject());
+            info!("  Issuer: {}", tbs.issuer());
+            info!("  Serial: {:?}", tbs.serial_number());
+            info!("  Valid from: {:?}", tbs.validity().not_before);
+            info!("  Valid until: {:?}", tbs.validity().not_after);
 
             // 打印 Subject Alternative Names
-            if let Some(extensions) = &tbs.extensions {
+            if let Some(extensions) = tbs.extensions() {
                 for ext in extensions.iter() {
                     if ext.extn_id.to_string() == "2.5.29.17" {
                         // SAN OID
