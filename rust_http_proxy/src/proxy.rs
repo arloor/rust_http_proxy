@@ -1048,9 +1048,12 @@ impl ProxyHandler {
                 }
             });
 
-            let mitm_server = auto::Builder::new(TokioExecutor::new())
+            let mut mitm_server = auto::Builder::new(TokioExecutor::new())
                 .preserve_header_case(true)
                 .title_case_headers(true);
+            mitm_server
+                .http2()
+                .max_header_list_size(crate::HTTP2_MAX_HEADER_LIST_SIZE);
             let connection = mitm_server.serve_connection_with_upgrades(TokioIo::new(tls_stream), service);
             pin!(connection);
             let result = tokio::select! {

@@ -566,6 +566,7 @@ where
         let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
 
         let (send_request, connection) = match http2::Builder::new(TokioExecutor::new())
+            .max_header_list_size(crate::HTTP2_MAX_HEADER_LIST_SIZE)
             .handshake(Box::pin(TokioIo::new(stream)))
             .await
         {

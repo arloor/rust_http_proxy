@@ -52,6 +52,11 @@ use std::time::Duration;
 
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 60 });
 
+/// HTTP/2 连接允许的最大 header list 大小（名称+值+每条目 32 字节开销）。
+/// hyper 默认仅 16KB，现代浏览器访问部分站点（如携带大量 cookie/鉴权头的站点）会超过该值，
+/// 导致对端直接收到 431 Request Header Fields Too Large。这里放宽到与 Chrome 一致的 256KB。
+pub const HTTP2_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
+
 pub type DynError = Box<dyn stdError + Send + Sync>; // wrapper for dyn Error
 
 pub const BUILD_TIME: &str = build_time::build_time_local!("%Y-%m-%d %H:%M:%S %:z");
