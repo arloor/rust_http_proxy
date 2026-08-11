@@ -1,3 +1,5 @@
+
+
 # Rust HTTP Proxy
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/arloor/rust_http_proxy)
@@ -46,7 +48,7 @@
 ### 方式一：Linux AMD64 可执行文件
 
 ```bash
-curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy -o /tmp/rust_http_proxy
+curl -SLf https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy -o /tmp/rust_http_proxy
 install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
 /usr/bin/rust_http_proxy -p 7788
 ```
