@@ -241,7 +241,7 @@ adminmaxapi.knowhub.cloud:443:
 
 静态 stub 的 `body_file` 支持相对路径，相对配置文件所在目录解析；程序会按 body 实际长度写入 `Content-Length`，不会自动 gzip/br/deflate 压缩。
 
-动态 stub 的 `upstream` 必须是明文 `http://` URL，且不能包含 query。命中后，程序把已卸载 TLS 的原请求（method、headers、body、path 和 query）发送给该 upstream，并把 upstream 的 status、headers 和流式 body 通过现有 MITM TLS 连接返回客户端。`upstream` 中的路径作为前缀，例如上面的 `/users/current?verbose=1` 会转发到 `http://127.0.0.1:9010/stub/users/current?verbose=1`。原请求的 `Host` header 会保留，方便动态 stub 根据原目标生成响应。
+动态 stub 的 `upstream` 必须是明文 `http://` URL，且不能包含 query。命中后，程序把已卸载 TLS 的原请求（method、headers、body、path 和 query）发送给该 upstream，并把 upstream 的 status、headers 和流式 body 通过现有 MITM TLS 连接返回客户端。SSE (`text/event-stream`) 会逐事件流式返回；WebSocket 请求在 upstream 返回 `101 Switching Protocols` 后会建立双向隧道。`upstream` 中的路径作为前缀，例如上面的 `/users/current?verbose=1` 会转发到 `http://127.0.0.1:9010/stub/users/current?verbose=1`。原请求的 `Host` header 会保留，方便动态 stub 根据原目标生成响应。
 
 `responses/knowhub-validate.json`:
 

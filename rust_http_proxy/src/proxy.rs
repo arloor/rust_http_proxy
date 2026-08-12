@@ -1409,6 +1409,7 @@ async fn handle_mitm_request(
                 return build_mitm_stub_response(stub_response, access_label);
             }
             MitmStubAction::Dynamic(dynamic_stub) => {
+                let client_upgrade = is_websocket.then(|| hyper::upgrade::on(&mut req));
                 info!(
                     "[mitm dynamic stub] forwarding plaintext request for {access_label}{} to {}",
                     req.uri().path(),
@@ -1420,6 +1421,7 @@ async fn handle_mitm_request(
                     &context.stub_client,
                     access_label,
                     context.dump_plaintext,
+                    client_upgrade,
                 )
                 .await;
             }
@@ -1500,13 +1502,13 @@ fn build_mitm_stub_response(
 async fn forward_to_dynamic_mitm_stub(
     mut req: Request<Incoming>, dynamic_stub: MitmDynamicStub,
     stub_client: &legacy::Client<HttpsConnector<HttpConnector<CustomGaiDNSResolver>>, BoxBody<Bytes, io::Error>>,
-    access_label: AccessLabel, dump_plaintext: bool,
+    access_label: AccessLabel, dump_plaintext: bool, client_upgrade: Option<hyper::upgrade::OnUpgrade>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     let upstream_uri = dynamic_stub_request_uri(&dynamic_stub.upstream, req.uri())?;
     *req.uri_mut() = upstream_uri;
     *req.version_mut() = Version::HTTP_11;
     let req = map_mitm_request_body(req, access_label.clone(), dump_plaintext);
-    let response = stub_client.request(req).await.map_err(|e| {
+    let mut response = stub_client.request(req).await.map_err(|e| {
         io::Error::new(
             ErrorKind::ConnectionRefused,
             format!("dynamic MITM stub upstream {} request failed: {e}", dynamic_stub.upstream),
@@ -1515,6 +1517,17 @@ async fn forward_to_dynamic_mitm_stub(
     if dump_plaintext {
         log_mitm_response_head(&response, &access_label);
     }
+
+    if let Some(client_upgrade) = client_upgrade {
+        if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
+            info!("[mitm dynamic stub] WebSocket upgrade successful for {access_label}");
+            let upstream_upgrade = hyper::upgrade::on(&mut response);
+            spawn_websocket_tunnel(client_upgrade, upstream_upgrade, None, "mitm dynamic stub");
+        } else {
+            warn!("[mitm dynamic stub] WebSocket upgrade failed, upstream returned: {}", response.status());
+        }
+    }
+
     Ok(map_mitm_response_body(response, access_label, dump_plaintext))
 }
 
