@@ -22,12 +22,13 @@ use hyper::{Method, Response, Version, body::Bytes};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{self, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
-use log::warn;
 use tokio::sync::broadcast;
 
 #[cfg(debug_assertions)]
 use super::connect::NoVerifier;
 use super::http::{SchemeHostPort, extract_scheme_host_port};
+#[cfg(debug_assertions)]
+use log::warn;
 
 #[allow(unused)]
 use hyper_rustls::HttpsConnectorBuilder;
