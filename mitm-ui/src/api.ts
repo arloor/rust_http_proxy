@@ -46,6 +46,7 @@ export type RecordDetail = RecordSummary & {
 export type RecordPage = { records: RecordSummary[]; next_before: number | null }
 export type PathGroup = { path: string; count: number; last_seen_ms: number }
 export type HostGroup = { host: string; count: number; last_seen_ms: number; paths: PathGroup[] }
+export type TlsErrorGroup = { authority: string; client_ip: string; count: number; last_seen_ms: number }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/mitm/api${path}`, {

@@ -15,9 +15,10 @@ use tokio::sync::broadcast;
 
 use crate::DynError;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const DEFAULT_PAGE_LIMIT: usize = 100;
 const MAX_PAGE_LIMIT: usize = 500;
+const MAX_TLS_ERROR_ROWS: i64 = 1000;
 const WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, Serialize)]
@@ -160,6 +161,15 @@ pub(crate) struct UrlHostGroup {
     pub paths: Vec<UrlPathGroup>,
 }
 
+// 客户端不信任 MITM CA 导致的 TLS 握手失败，按 authority + 客户端 IP 聚合计数
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct TlsErrorGroup {
+    pub authority: String,
+    pub client_ip: String,
+    pub count: i64,
+    pub last_seen_ms: i64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct MitmEvent {
     pub kind: &'static str,
@@ -192,6 +202,10 @@ enum StoreCommand {
     Error {
         id: String,
         message: String,
+    },
+    TlsError {
+        authority: String,
+        client_ip: String,
     },
     StopAllCaptures,
     Clear(mpsc::SyncSender<Result<(), String>>),
@@ -493,6 +507,33 @@ impl MitmManager {
         });
     }
 
+    // 客户端不信任 MITM CA 的 TLS 握手失败计数，与明文抓取开关无关，始终统计
+    pub(crate) fn record_tls_error(&self, authority: &str, client_ip: &str) {
+        self.send(StoreCommand::TlsError {
+            authority: authority.to_owned(),
+            client_ip: client_ip.to_owned(),
+        });
+    }
+
+    pub(crate) async fn tls_errors(&self) -> Result<Vec<TlsErrorGroup>, ManagerError> {
+        let path = self.db_path.clone();
+        run_read_db(path, move |connection| {
+            let mut statement = connection.prepare(
+                "SELECT authority, client_ip, count, last_seen_ms FROM tls_errors ORDER BY last_seen_ms DESC",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok(TlsErrorGroup {
+                    authority: row.get(0)?,
+                    client_ip: row.get(1)?,
+                    count: row.get(2)?,
+                    last_seen_ms: row.get(3)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+        .await
+    }
+
     pub(crate) async fn list_records(&self, query: RecordQuery) -> Result<RecordPage, ManagerError> {
         let path = self.db_path.clone();
         run_read_db(path, move |connection| query_records(connection, &query)).await
@@ -640,7 +681,16 @@ fn initialize_schema(
             error TEXT
         );
         CREATE INDEX IF NOT EXISTS records_started_idx ON records(started_at_ms DESC, sequence DESC);
-        CREATE INDEX IF NOT EXISTS records_host_path_idx ON records(host, path, started_at_ms DESC);",
+        CREATE INDEX IF NOT EXISTS records_host_path_idx ON records(host, path, started_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS tls_errors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            authority TEXT NOT NULL,
+            client_ip TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 1,
+            first_seen_ms INTEGER NOT NULL,
+            last_seen_ms INTEGER NOT NULL,
+            UNIQUE(authority, client_ip)
+        );",
     )?;
     let has_cli_managed = {
         let mut statement = connection.prepare("PRAGMA table_info(targets)")?;
@@ -868,6 +918,19 @@ fn apply_store_command(
                 params![completed, message, id],
             )?;
             emit(events, "record_updated", Some(id));
+        }
+        StoreCommand::TlsError { authority, client_ip } => {
+            let now = now_ms();
+            connection.execute(
+                "INSERT INTO tls_errors(authority, client_ip, count, first_seen_ms, last_seen_ms) VALUES(?1, ?2, 1, ?3, ?3)
+                 ON CONFLICT(authority, client_ip) DO UPDATE SET count=count+1, last_seen_ms=excluded.last_seen_ms",
+                params![authority, client_ip, now],
+            )?;
+            connection.execute(
+                "DELETE FROM tls_errors WHERE id NOT IN (SELECT id FROM tls_errors ORDER BY last_seen_ms DESC LIMIT ?1)",
+                [MAX_TLS_ERROR_ROWS],
+            )?;
+            emit(events, "tls_errors", None);
         }
         StoreCommand::StopAllCaptures => {
             flush_pending(connection, pending, events)?;
@@ -1482,6 +1545,30 @@ mod tests {
         assert_eq!(manager.targets().len(), 1);
         assert_eq!(manager.targets()[0].suffix, "dup.example");
         assert!(!manager.targets()[0].cli_managed);
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn aggregates_tls_errors_by_authority_and_client_ip() -> Result<(), DynError> {
+        let path = test_db("tls_errors");
+        let manager = MitmManager::open(path.clone(), true, &[], false, 10_000, 65_536)?;
+        manager.record_tls_error("example.com:443", "127.0.0.1");
+        manager.record_tls_error("example.com:443", "127.0.0.1");
+        manager.record_tls_error("example.com:443", "10.0.0.2");
+        manager.record_tls_error("api.example.com:443", "127.0.0.1");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        let groups = manager.tls_errors().await?;
+        assert_eq!(groups.len(), 3);
+        let pair = groups
+            .iter()
+            .find(|group| group.authority == "example.com:443" && group.client_ip == "127.0.0.1")
+            .ok_or("tls error group missing")?;
+        assert_eq!(pair.count, 2);
+        assert!(groups.iter().all(|group| group.last_seen_ms > 0));
         drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);

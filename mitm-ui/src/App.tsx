@@ -8,6 +8,7 @@ import {
   type RecordSummary,
   type Settings,
   type Target,
+  type TlsErrorGroup,
 } from './api'
 import {
   formatBytes,
@@ -27,6 +28,8 @@ function App() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [targets, setTargets] = useState<Target[]>([])
   const [groups, setGroups] = useState<HostGroup[]>([])
+  const [tlsErrors, setTlsErrors] = useState<TlsErrorGroup[]>([])
+  const [showTlsErrors, setShowTlsErrors] = useState(false)
   const [records, setRecords] = useState<RecordSummary[]>([])
   const [nextBefore, setNextBefore] = useState<number | null>(null)
   const [selected, setSelected] = useState<RecordDetail | null>(null)
@@ -189,14 +192,16 @@ function App() {
 
   const refreshMeta = useCallback(async () => {
     try {
-      const [nextSettings, nextTargets, nextGroups] = await Promise.all([
+      const [nextSettings, nextTargets, nextGroups, nextTlsErrors] = await Promise.all([
         api<Settings>('/settings'),
         api<Target[]>('/targets'),
         api<HostGroup[]>('/groups'),
+        api<TlsErrorGroup[]>('/tls-errors'),
       ])
       setSettings(nextSettings)
       setTargets(nextTargets)
       setGroups(nextGroups)
+      setTlsErrors(nextTlsErrors)
     } catch (value) {
       handleError(value)
     }
@@ -299,6 +304,7 @@ function App() {
     source.addEventListener('record_updated', onRecordEvent)
     source.addEventListener('settings', onMetaEvent)
     source.addEventListener('targets', onMetaEvent)
+    source.addEventListener('tls_errors', onMetaEvent)
     source.addEventListener('records_cleared', onFullEvent)
     source.addEventListener('resync', onFullEvent)
     source.onerror = () => setLive(false)
@@ -462,6 +468,7 @@ function App() {
   }, [closeDetail, moveSelection])
 
   const hasFilters = Boolean(host || path || method || status || clientIp || search)
+  const tlsErrorTotal = tlsErrors.reduce((total, group) => total + group.count, 0)
   const emptyHint = hasFilters ? '没有匹配的记录' : '等待 MITM 流量'
   const emptySub = hasFilters ? '试试放宽筛选条件' : '命中目标的 HTTPS 请求会实时出现在这里'
 
@@ -518,10 +525,35 @@ function App() {
             <span className={`dot ${settings?.ca_available ? 'online' : 'offline'}`} />
             {settings?.ca_available ? 'CA 可用' : 'CA 不可用'}
           </span>
+          {tlsErrorTotal > 0 && (
+            <button
+              className={`ca-alert-pill ${showTlsErrors ? 'active' : ''}`}
+              title="客户端不信任 MITM CA 导致的 TLS 握手失败，点击查看分组统计"
+              onClick={() => setShowTlsErrors((current) => !current)}
+            >⚠ CA 未信任 {tlsErrorTotal}</button>
+          )}
           <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● 实时' : '○ 重连中'}</span>
           <span className="record-count">{records.length} 条记录</span>
           <span className="record-count" title="mitm.sqlite3 主库 + WAL + SHM 总大小，每 10 秒刷新">DB {formatBytes(settings?.db_bytes ?? 0)}</span>
         </div>
+        {showTlsErrors && tlsErrorTotal > 0 && (
+          <div className="tls-error-panel">
+            <div className="tls-error-head">
+              <span>CA 未信任错误 · 按域名 + 客户端 IP 聚合</span>
+              <button aria-label="关闭" onClick={() => setShowTlsErrors(false)}>×</button>
+            </div>
+            {tlsErrors.map((group) => (
+              <div className="tls-error-row" key={`${group.authority}|${group.client_ip}`}>
+                <div className="tls-error-target">
+                  <strong>{group.authority}</strong>
+                  <span>{group.client_ip}</span>
+                </div>
+                <b className="tls-error-count">{group.count} 次</b>
+                <span className="tls-error-time">{formatTime(group.last_seen_ms)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section

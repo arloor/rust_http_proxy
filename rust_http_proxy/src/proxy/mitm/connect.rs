@@ -116,6 +116,9 @@ impl ProxyHandler {
             let tls_stream = match tls_acceptor.accept(PrefixedIo::new(src_upgraded, peeked)).await {
                 Ok(tls_stream) => tls_stream,
                 Err(e) => {
+                    if is_ca_trust_error(&e) {
+                        mitm_request_context.manager.record_tls_error(&target, &client_ip);
+                    }
                     warn!("[mitm tls accept error] [{}]: {}", access_tag, e);
                     return;
                 }
@@ -170,6 +173,27 @@ impl ProxyHandler {
         append_random_padding_headers(response.headers_mut());
         Ok(response)
     }
+}
+
+// 客户端拒绝 MITM 证书时，服务端通常收到证书类 fatal alert；
+// 直接 RST 断开的客户端无法与网络错误区分，不计入
+fn is_ca_trust_error(error: &io::Error) -> bool {
+    use tokio_rustls::rustls::{AlertDescription, Error as RustlsError};
+    let mut current = error.get_ref().map(|inner| inner as &dyn std::error::Error);
+    while let Some(err) = current {
+        if let Some(RustlsError::AlertReceived(description)) = err.downcast_ref::<RustlsError>() {
+            return matches!(
+                description,
+                AlertDescription::BadCertificate
+                    | AlertDescription::UnsupportedCertificate
+                    | AlertDescription::CertificateExpired
+                    | AlertDescription::CertificateUnknown
+                    | AlertDescription::UnknownCA
+            );
+        }
+        current = err.source();
+    }
+    false
 }
 
 async fn read_mitm_protocol_peek<T>(stream: &mut T) -> io::Result<Vec<u8>>
@@ -392,5 +416,34 @@ where
         self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
         self.project().inner.poll_shutdown(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_ca_trust_error;
+    use std::io;
+    use tokio_rustls::rustls::{AlertDescription, Error as RustlsError};
+
+    #[test]
+    fn classifies_certificate_alerts_as_ca_trust_errors() {
+        for alert in [
+            AlertDescription::BadCertificate,
+            AlertDescription::UnsupportedCertificate,
+            AlertDescription::CertificateExpired,
+            AlertDescription::CertificateUnknown,
+            AlertDescription::UnknownCA,
+        ] {
+            let error = io::Error::new(io::ErrorKind::InvalidData, RustlsError::AlertReceived(alert));
+            assert!(is_ca_trust_error(&error), "alert {alert:?} should be a CA trust error");
+        }
+    }
+
+    #[test]
+    fn ignores_other_tls_and_io_errors() {
+        let error =
+            io::Error::new(io::ErrorKind::InvalidData, RustlsError::AlertReceived(AlertDescription::HandshakeFailure));
+        assert!(!is_ca_trust_error(&error));
+        assert!(!is_ca_trust_error(&io::Error::new(io::ErrorKind::UnexpectedEof, "connection reset")));
     }
 }

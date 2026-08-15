@@ -36,6 +36,7 @@ pub(crate) fn router(basic_auth: HashMap<String, String>) -> Router<Arc<AppState
         .route("/mitm/api/records", get(get_records).delete(clear_records))
         .route("/mitm/api/records/{id}", get(get_record))
         .route("/mitm/api/groups", get(get_groups))
+        .route("/mitm/api/tls-errors", get(get_tls_errors))
         .route("/mitm/api/events", get(events))
         .route("/mitm/{*path}", get(asset_or_index));
     routes.route_layer(middleware::from_fn_with_state(Arc::new(basic_auth), require_basic_auth))
@@ -152,6 +153,12 @@ async fn get_groups(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<crate::mitm_manager::UrlHostGroup>>, ApiError> {
     Ok(Json(state.mitm_manager.groups().await?))
+}
+
+async fn get_tls_errors(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<crate::mitm_manager::TlsErrorGroup>>, ApiError> {
+    Ok(Json(state.mitm_manager.tls_errors().await?))
 }
 
 async fn clear_records(State(state): State<Arc<AppState>>) -> Result<StatusCode, ApiError> {
