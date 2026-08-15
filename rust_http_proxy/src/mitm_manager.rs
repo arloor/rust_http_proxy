@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -195,6 +196,7 @@ struct PendingBody {
     response_total: usize,
     request_truncated: bool,
     response_truncated: bool,
+    dirty: bool,
 }
 
 pub(crate) struct MitmManager {
@@ -455,17 +457,17 @@ impl MitmManager {
 
     pub(crate) async fn list_records(&self, query: RecordQuery) -> Result<RecordPage, ManagerError> {
         let path = self.db_path.clone();
-        run_db(path, move |connection| query_records(connection, &query)).await
+        run_read_db(path, move |connection| query_records(connection, &query)).await
     }
 
     pub(crate) async fn get_record(&self, id: String) -> Result<Option<RecordDetail>, ManagerError> {
         let path = self.db_path.clone();
-        run_db(path, move |connection| get_record(connection, &id)).await
+        run_read_db(path, move |connection| get_record(connection, &id)).await
     }
 
     pub(crate) async fn groups(&self) -> Result<Vec<UrlHostGroup>, ManagerError> {
         let path = self.db_path.clone();
-        run_db(path, query_groups).await
+        run_read_db(path, query_groups).await
     }
 
     pub(crate) async fn clear_records(&self) -> Result<(), ManagerError> {
@@ -521,10 +523,26 @@ impl From<rusqlite::Error> for ManagerError {
 }
 
 fn open_connection(path: &Path) -> Result<Connection, ManagerError> {
+    open_connection_with_mode(path, false)
+}
+
+fn open_read_connection(path: &Path) -> Result<Connection, ManagerError> {
+    open_connection_with_mode(path, true)
+}
+
+fn open_connection_with_mode(path: &Path, query_only: bool) -> Result<Connection, ManagerError> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(5))?;
-    connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
+    if query_only {
+        // WAL 已由启动/写连接设置。读连接再执行 journal_mode=WAL 会抢排他锁，
+        // 让每次 GET /records/{id} 都堵在正在写入的 capture 后面。
+        connection.pragma_update(None, "query_only", "ON")?;
+    } else {
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
+    }
     Ok(connection)
 }
 
@@ -733,6 +751,7 @@ fn apply_store_command(
             truncated,
         } => {
             let body = pending.entry(id).or_default();
+            body.dirty = true;
             match direction {
                 BodyDirection::Request => {
                     body.request.push_str(&chunk);
@@ -747,7 +766,7 @@ fn apply_store_command(
             }
         }
         StoreCommand::FinishBody { id, direction, note } => {
-            flush_one(connection, pending, &id, events)?;
+            flush_one(connection, pending, &id, events, false)?;
             let (column, note_column) = match direction {
                 BodyDirection::Request => ("request_body_note", "request_body_note"),
                 BodyDirection::Response => ("response_body_note", "response_body_note"),
@@ -757,7 +776,7 @@ fn apply_store_command(
             emit(events, "record_updated", Some(id));
         }
         StoreCommand::FinishRecord { id, state } => {
-            flush_one(connection, pending, &id, events)?;
+            flush_one(connection, pending, &id, events, true)?;
             let completed = now_ms();
             connection.execute(
                 "UPDATE records SET completed_at_ms=?1, duration_ms=?1-started_at_ms, capture_state=?2 WHERE id=?3 AND capture_state='capturing'",
@@ -766,7 +785,7 @@ fn apply_store_command(
             emit(events, "record_updated", Some(id));
         }
         StoreCommand::Error { id, message } => {
-            flush_one(connection, pending, &id, events)?;
+            flush_one(connection, pending, &id, events, true)?;
             let completed = now_ms();
             connection.execute(
                 "UPDATE records SET completed_at_ms=?1, duration_ms=?1-started_at_ms, capture_state='error', error=?2 WHERE id=?3",
@@ -804,34 +823,48 @@ fn flush_pending(
 ) -> Result<(), ManagerError> {
     let ids: Vec<String> = pending.keys().cloned().collect();
     for id in ids {
-        flush_one(connection, pending, &id, events)?;
+        flush_one(connection, pending, &id, events, false)?;
     }
     Ok(())
 }
 
 fn flush_one(
     connection: &Connection, pending: &mut HashMap<String, PendingBody>, id: &str,
-    events: &broadcast::Sender<MitmEvent>,
+    events: &broadcast::Sender<MitmEvent>, remove: bool,
 ) -> Result<(), ManagerError> {
-    let Some(body) = pending.remove(id) else {
-        return Ok(());
-    };
-    connection.execute(
-        "UPDATE records SET request_body=request_body||?1, response_body=response_body||?2,
+    let dirty = pending.get(id).is_some_and(|body| body.dirty);
+    if dirty {
+        if let Some(body) = pending.get(id) {
+            persist_body(connection, id, body)?;
+        }
+        if let Some(body) = pending.get_mut(id) {
+            body.dirty = false;
+        }
+        emit(events, "record_updated", Some(id.to_owned()));
+    }
+    if remove {
+        pending.remove(id);
+    }
+    Ok(())
+}
+
+fn persist_body(connection: &Connection, id: &str, body: &PendingBody) -> Result<(), rusqlite::Error> {
+    // 内存里累积完整 body 后一次性 SET，避免 request_body||chunk 每次都复制整列。
+    let mut statement = connection.prepare_cached(
+        "UPDATE records SET request_body=?1, response_body=?2,
             request_body_bytes=MAX(request_body_bytes, ?3), response_body_bytes=MAX(response_body_bytes, ?4),
             request_body_truncated=request_body_truncated OR ?5,
             response_body_truncated=response_body_truncated OR ?6 WHERE id=?7 AND capture_state='capturing'",
-        params![
-            body.request,
-            body.response,
-            body.request_total as i64,
-            body.response_total as i64,
-            body.request_truncated,
-            body.response_truncated,
-            id
-        ],
     )?;
-    emit(events, "record_updated", Some(id.to_owned()));
+    statement.execute(params![
+        body.request,
+        body.response,
+        body.request_total as i64,
+        body.response_total as i64,
+        body.request_truncated,
+        body.response_truncated,
+        id
+    ])?;
     Ok(())
 }
 
@@ -852,14 +885,48 @@ fn prune_records(connection: &Connection, max_records: usize) -> Result<(), rusq
     Ok(())
 }
 
+thread_local! {
+    static READ_CONNECTION: RefCell<Option<(PathBuf, Connection)>> = const { RefCell::new(None) };
+}
+
 async fn run_db<T, F>(path: PathBuf, operation: F) -> Result<T, ManagerError>
 where
     T: Send + 'static,
     F: FnOnce(&Connection) -> Result<T, rusqlite::Error> + Send + 'static,
 {
+    spawn_db(path, false, operation).await
+}
+
+async fn run_read_db<T, F>(path: PathBuf, operation: F) -> Result<T, ManagerError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, rusqlite::Error> + Send + 'static,
+{
+    spawn_db(path, true, operation).await
+}
+
+async fn spawn_db<T, F>(path: PathBuf, query_only: bool, operation: F) -> Result<T, ManagerError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, rusqlite::Error> + Send + 'static,
+{
     tokio::task::spawn_blocking(move || -> Result<T, ManagerError> {
-        let connection = open_connection(&path)?;
-        operation(&connection).map_err(ManagerError::from)
+        if query_only {
+            READ_CONNECTION.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                let needs_open = !matches!(slot.as_ref(), Some((cached_path, _)) if cached_path == &path);
+                if needs_open {
+                    *slot = Some((path.clone(), open_read_connection(&path)?));
+                }
+                match slot.as_ref() {
+                    Some((_, connection)) => operation(connection).map_err(ManagerError::from),
+                    None => Err(ManagerError::Database("failed to open MITM read connection".to_owned())),
+                }
+            })
+        } else {
+            let connection = open_connection(&path)?;
+            operation(&connection).map_err(ManagerError::from)
+        }
     })
     .await
     .map_err(|error| ManagerError::Database(format!("SQLite task failed: {error}")))?
@@ -922,51 +989,50 @@ fn query_records(connection: &Connection, query: &RecordQuery) -> Result<RecordP
 }
 
 fn get_record(connection: &Connection, id: &str) -> Result<Option<RecordDetail>, rusqlite::Error> {
-    connection
-        .query_row(
-            "SELECT id, started_at_ms, completed_at_ms, client_ip, proxy_username, authority, host, path, query,
-                method, response_status, duration_ms, capture_state, request_version, request_headers_json,
-                request_body, request_body_bytes, request_body_truncated, request_body_note, response_version,
-                response_headers_json, response_body, response_body_bytes, response_body_truncated,
-                response_body_note, error FROM records WHERE id=?1",
-            [id],
-            |row| {
-                let request_headers_json: String = row.get(14)?;
-                let response_headers_json: String = row.get(20)?;
-                Ok(RecordDetail {
-                    summary: RecordSummary {
-                        id: row.get(0)?,
-                        started_at_ms: row.get(1)?,
-                        completed_at_ms: row.get(2)?,
-                        client_ip: row.get(3)?,
-                        proxy_username: row.get(4)?,
-                        authority: row.get(5)?,
-                        host: row.get(6)?,
-                        path: row.get(7)?,
-                        query: row.get(8)?,
-                        method: row.get(9)?,
-                        status: row.get(10)?,
-                        duration_ms: row.get(11)?,
-                        capture_state: row.get(12)?,
-                    },
-                    request_version: row.get(13)?,
-                    request_headers: serde_json::from_str(&request_headers_json)
-                        .unwrap_or(serde_json::Value::Array(Vec::new())),
-                    request_body: row.get(15)?,
-                    request_body_bytes: row.get(16)?,
-                    request_body_truncated: row.get(17)?,
-                    request_body_note: row.get(18)?,
-                    response_version: row.get(19)?,
-                    response_headers: serde_json::from_str(&response_headers_json)
-                        .unwrap_or(serde_json::Value::Array(Vec::new())),
-                    response_body: row.get(21)?,
-                    response_body_bytes: row.get(22)?,
-                    response_body_truncated: row.get(23)?,
-                    response_body_note: row.get(24)?,
-                    error: row.get(25)?,
-                })
-            },
-        )
+    let mut statement = connection.prepare_cached(
+        "SELECT id, started_at_ms, completed_at_ms, client_ip, proxy_username, authority, host, path, query,
+            method, response_status, duration_ms, capture_state, request_version, request_headers_json,
+            request_body, request_body_bytes, request_body_truncated, request_body_note, response_version,
+            response_headers_json, response_body, response_body_bytes, response_body_truncated,
+            response_body_note, error FROM records WHERE id=?1",
+    )?;
+    statement
+        .query_row([id], |row| {
+            let request_headers_json: String = row.get(14)?;
+            let response_headers_json: String = row.get(20)?;
+            Ok(RecordDetail {
+                summary: RecordSummary {
+                    id: row.get(0)?,
+                    started_at_ms: row.get(1)?,
+                    completed_at_ms: row.get(2)?,
+                    client_ip: row.get(3)?,
+                    proxy_username: row.get(4)?,
+                    authority: row.get(5)?,
+                    host: row.get(6)?,
+                    path: row.get(7)?,
+                    query: row.get(8)?,
+                    method: row.get(9)?,
+                    status: row.get(10)?,
+                    duration_ms: row.get(11)?,
+                    capture_state: row.get(12)?,
+                },
+                request_version: row.get(13)?,
+                request_headers: serde_json::from_str(&request_headers_json)
+                    .unwrap_or(serde_json::Value::Array(Vec::new())),
+                request_body: row.get(15)?,
+                request_body_bytes: row.get(16)?,
+                request_body_truncated: row.get(17)?,
+                request_body_note: row.get(18)?,
+                response_version: row.get(19)?,
+                response_headers: serde_json::from_str(&response_headers_json)
+                    .unwrap_or(serde_json::Value::Array(Vec::new())),
+                response_body: row.get(21)?,
+                response_body_bytes: row.get(22)?,
+                response_body_truncated: row.get(23)?,
+                response_body_note: row.get(24)?,
+                error: row.get(25)?,
+            })
+        })
         .optional()
 }
 
@@ -1264,6 +1330,40 @@ mod tests {
         assert_eq!(detail.summary.capture_state, "complete");
         assert_eq!(detail.request_body, r#"{"request":true}"#);
         assert_eq!(detail.response_body, r#"{"ok":true}"#);
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn incremental_body_flushes_replace_full_snapshot() -> Result<(), DynError> {
+        let path = test_db("incremental_body");
+        let manager = MitmManager::open(path.clone(), true, &["example.com".to_owned()], true, 10_000, 65_536)?;
+        let request_headers = HeaderMap::new();
+        let id = manager
+            .begin_record(RecordMetadata {
+                client_ip: "127.0.0.1".to_owned(),
+                proxy_username: "tester".to_owned(),
+                authority: "api.example.com:443".to_owned(),
+                host: "api.example.com".to_owned(),
+                path: "/v1/stream".to_owned(),
+                query: None,
+                method: "POST".to_owned(),
+                request_version: Version::HTTP_11,
+                request_headers: &request_headers,
+            })
+            .ok_or("capture unexpectedly disabled")?;
+        manager.body_chunk(&id, BodyDirection::Request, b"hello", 5, false);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        manager.body_chunk(&id, BodyDirection::Request, b" world", 11, false);
+        manager.finish_body(&id, BodyDirection::Request, None);
+        manager.finish_record(&id, "complete");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.request_body, "hello world");
+        assert_eq!(detail.request_body_bytes, 11);
         drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);

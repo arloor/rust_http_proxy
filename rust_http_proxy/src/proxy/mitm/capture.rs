@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use axum::extract::Request;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
+use http_body::Body as _;
 use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::Response;
 use hyper::body::{Bytes, Incoming};
@@ -296,12 +297,27 @@ pin_project_lite::pin_project! {
         completed: bool,
     }
 
-    // 客户端提前断开或连接被回收时，body 不会 poll 到结束，直接 Drop。
-    // 在此收尾，避免记录永远停留在 capturing 状态。
+    // 下游写完头后可能不再 poll 空 body（204/304、Content-Length: 0、H2 END_STREAM）。
+    // 客户端提前断开时 body 也不会 poll 到结束。两种情况都走 Drop，必须区分：
+    // 已经结束的空流记 complete，未读完的才记 interrupted。
     impl PinnedDrop for MitmCaptureBody {
         fn drop(this: Pin<&mut Self>) {
             let this = this.project();
             if *this.completed {
+                return;
+            }
+            if stream_already_complete(&this.inner) {
+                finish_capture(
+                    this.manager,
+                    this.record_id,
+                    *this.direction,
+                    this.mode,
+                    this.captured_bytes,
+                    this.total_bytes,
+                    this.truncated,
+                    this.stopped,
+                    this.completed,
+                );
                 return;
             }
             *this.completed = true;
@@ -391,7 +407,7 @@ impl http_body::Body for MitmCaptureBody {
                 // some implementations do not report `is_end_stream()` until that terminal poll.
                 // Finish while processing the last data frame so the record does not remain in
                 // `capturing` after the complete response has already been forwarded.
-                if this.inner.is_end_stream() || this.inner.size_hint().exact() == Some(0) {
+                if stream_already_complete(&this.inner) {
                     finish_capture(
                         this.manager,
                         this.record_id,
@@ -438,6 +454,10 @@ impl http_body::Body for MitmCaptureBody {
     fn size_hint(&self) -> http_body::SizeHint {
         self.inner.size_hint()
     }
+}
+
+fn stream_already_complete(inner: &BoxBody<Bytes, io::Error>) -> bool {
+    inner.is_end_stream() || inner.size_hint().exact() == Some(0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -496,12 +516,55 @@ mod tests {
     use flate2::Compression;
     use flate2::write::{GzEncoder, ZlibEncoder};
     use http::{HeaderMap, HeaderValue};
-    use http_body::{Body as _, Frame, SizeHint};
+    use http_body::{Frame, SizeHint};
     use std::io::{Cursor, Write};
     use std::pin::Pin;
     use std::task::{Context, Poll};
 
     const PLAINTEXT: &[u8] = br#"{"message":"compressed MITM plaintext","ok":true}"#;
+
+    // 空响应（204 / Content-Length: 0 / H2 END_STREAM）下游常常一次都不 poll，Drop 必须记 complete
+    #[tokio::test]
+    async fn unpolled_empty_body_marks_record_complete() -> Result<(), crate::DynError> {
+        let (manager, path, id) = open_capture_record("empty")?;
+        let body = http_body_util::Empty::<Bytes>::new()
+            .map_err(|never: std::convert::Infallible| match never {})
+            .boxed();
+        let wrapped =
+            MitmCaptureBody::new(body, manager.clone(), id.clone(), BodyDirection::Response, CaptureMode::Plaintext);
+        drop(wrapped);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "complete");
+        assert_eq!(detail.response_body_note, None);
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    // H2 204 常不带 content-length：is_end_stream 为真，但 size_hint 不是 exact(0)
+    #[tokio::test]
+    async fn unpolled_end_stream_without_exact_size_marks_record_complete() -> Result<(), crate::DynError> {
+        let (manager, path, id) = open_capture_record("end_stream")?;
+        let wrapped = MitmCaptureBody::new(
+            EndedStreamWithoutSizeHint.boxed(),
+            manager.clone(),
+            id.clone(),
+            BodyDirection::Response,
+            CaptureMode::Plaintext,
+        );
+        drop(wrapped);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "complete");
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
 
     // 客户端提前断开导致 body 未读完就被 Drop 时，记录应收尾为 interrupted 而不是永远 capturing
     #[tokio::test]
@@ -671,6 +734,58 @@ mod tests {
         let mut encoder = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
         encoder.write_all(input)?;
         Ok(encoder.into_inner())
+    }
+
+    fn open_capture_record(tag: &str) -> Result<(Arc<MitmManager>, std::path::PathBuf, String), crate::DynError> {
+        let path = std::env::temp_dir().join(format!(
+            "rust_http_proxy_mitm_capture_{tag}_{}_{:x}.sqlite3",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let manager = crate::mitm_manager::MitmManager::open(
+            path.clone(),
+            true,
+            &["example.com".to_owned()],
+            true,
+            10_000,
+            65_536,
+        )?;
+        let request_headers = HeaderMap::new();
+        let id = manager
+            .begin_record(crate::mitm_manager::RecordMetadata {
+                client_ip: "127.0.0.1".to_owned(),
+                proxy_username: "tester".to_owned(),
+                authority: "example.com:443".to_owned(),
+                host: "example.com".to_owned(),
+                path: "/".to_owned(),
+                query: None,
+                method: "GET".to_owned(),
+                request_version: http::Version::HTTP_2,
+                request_headers: &request_headers,
+            })
+            .ok_or("capture unexpectedly disabled")?;
+        Ok((manager, path, id))
+    }
+
+    struct EndedStreamWithoutSizeHint;
+
+    impl http_body::Body for EndedStreamWithoutSizeHint {
+        type Data = Bytes;
+        type Error = io::Error;
+
+        fn poll_frame(
+            self: Pin<&mut Self>, _context: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+            Poll::Ready(None)
+        }
+
+        fn is_end_stream(&self) -> bool {
+            true
+        }
+
+        fn size_hint(&self) -> SizeHint {
+            SizeHint::default()
+        }
     }
 
     struct LastFrameWithoutEndStream {

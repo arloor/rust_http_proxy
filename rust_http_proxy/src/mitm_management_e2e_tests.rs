@@ -140,6 +140,22 @@ async fn mitm_api_manages_targets_without_a_global_switch() -> Result<(), DynErr
     proxy.shutdown().await
 }
 
+#[tokio::test]
+async fn mitm_json_apis_honor_accept_encoding_gzip() -> Result<(), DynError> {
+    let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned()]).await?;
+    let response = request(
+        proxy.port,
+        &format!(
+            "GET /mitm/api/settings HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Accept-Encoding: gzip\r\nConnection: close\r\n\r\n"
+        ),
+    )
+    .await?;
+    let lower = response.to_ascii_lowercase();
+    assert!(response.starts_with("HTTP/1.1 200"));
+    assert!(lower.contains("content-encoding: gzip"), "MITM JSON APIs should be compressed: {response}");
+    proxy.shutdown().await
+}
+
 async fn request(port: u16, raw_request: &str) -> Result<String, io::Error> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
     stream.write_all(raw_request.as_bytes()).await?;

@@ -28,7 +28,9 @@ pub(crate) struct AppState {
 }
 
 pub(crate) fn build_router(appstate: AppState) -> Router {
-    let mitm_router = crate::mitm_web::router(appstate.basic_auth.clone());
+    // merge() 发生在下面的 layer 之后，MITM 路由必须自己挂压缩，
+    // 否则 /mitm/api/records/{id} 这类大 JSON 会按明文传输。
+    let mitm_router = crate::mitm_web::router(appstate.basic_auth.clone()).layer(CompressionLayer::new());
     // build our application with a route
     let router = Router::new()
         .route(
