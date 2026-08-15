@@ -45,6 +45,12 @@ function App() {
   const queryStringRef = useRef('')
   const copyTimer = useRef<number | null>(null)
   const recordsRef = useRef<RecordSummary[]>([])
+  const tableWrapRef = useRef<HTMLDivElement>(null)
+  const pinToLatestRef = useRef(true)
+  const nextBeforeRef = useRef<number | null>(null)
+  const loadingMoreRef = useRef(false)
+  const [pinToLatest, setPinToLatest] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
     selectedIdRef.current = selected?.id ?? null
@@ -52,6 +58,7 @@ function App() {
 
   useEffect(() => {
     recordsRef.current = records
+    if (pinToLatestRef.current) tableWrapRef.current?.scrollTo({ top: 0 })
   }, [records])
 
   useEffect(() => {
@@ -110,6 +117,14 @@ function App() {
     }
   }, [handleError])
 
+  const refreshGroups = useCallback(async () => {
+    try {
+      setGroups(await api<HostGroup[]>('/groups'))
+    } catch (value) {
+      handleError(value)
+    }
+  }, [handleError])
+
   const refreshRecords = useCallback(
     async (includeDetail = false) => {
       try {
@@ -119,6 +134,7 @@ function App() {
         const page = await api<RecordPage>(`/records?limit=${limit}&${qs}`)
         loadedCountRef.current = page.records.length
         setRecords(page.records)
+        nextBeforeRef.current = page.next_before
         setNextBefore(page.next_before)
         const id = selectedIdRef.current
         if (includeDetail && id) {
@@ -145,6 +161,8 @@ function App() {
 
   useEffect(() => {
     loadedCountRef.current = 0
+    pinToLatestRef.current = true
+    setPinToLatest(true)
     void refreshRecords(true)
   }, [queryString, refreshRecords])
 
@@ -152,20 +170,25 @@ function App() {
     const source = new EventSource('/mitm/api/events')
     let needRecords = false
     let needMeta = false
+    let needGroups = false
     let includeDetail = false
     const schedule = () => {
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
       refreshTimer.current = window.setTimeout(() => {
         const pending = needRecords ? refreshRecords(includeDetail) : Promise.resolve()
-        void pending.then(() => (needMeta ? refreshMeta() : undefined))
-        needRecords = needMeta = includeDetail = false
+        void pending.then(() => {
+          if (needMeta) return refreshMeta()
+          if (needGroups) return refreshGroups()
+          return undefined
+        })
+        needRecords = needMeta = needGroups = includeDetail = false
       }, 250)
     }
     const onRecordEvent = (event: MessageEvent) => {
       needRecords = true
+      if (event.type === 'record_created') needGroups = true
       try {
         const data = JSON.parse(event.data) as { record_id?: string }
-        // 只有当前选中记录有更新时才重新拉取详情
         if (data.record_id && data.record_id === selectedIdRef.current) includeDetail = true
       } catch {
         includeDetail = true
@@ -192,7 +215,7 @@ function App() {
       source.close()
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
     }
-  }, [refreshMeta, refreshRecords])
+  }, [refreshGroups, refreshMeta, refreshRecords])
 
   async function updateSettings(patch: Partial<Settings>) {
     try {
@@ -224,24 +247,33 @@ function App() {
     }
   }
 
-  async function loadMore() {
-    if (nextBefore === null) return
+  const loadMore = useCallback(async () => {
+    const before = nextBeforeRef.current
+    if (before === null || loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
     try {
-      const page = await api<RecordPage>(`/records?limit=100&${queryString}&before=${nextBefore}`)
+      const page = await api<RecordPage>(`/records?limit=100&${queryStringRef.current}&before=${before}`)
       loadedCountRef.current += page.records.length
+      nextBeforeRef.current = page.next_before
       setRecords((current) => [...current, ...page.records])
       setNextBefore(page.next_before)
     } catch (value) {
       handleError(value)
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
     }
-  }
+  }, [handleError])
 
   async function clearRecords() {
     if (!window.confirm('确定清空所有 MITM 明文记录吗？此操作不可撤销。')) return
     try {
       await api<void>('/records', { method: 'DELETE' })
       loadedCountRef.current = 0
+      nextBeforeRef.current = null
       setRecords([])
+      setNextBefore(null)
       setSelected(null)
       await refreshMeta()
     } catch (value) {
@@ -256,6 +288,26 @@ function App() {
     setStatus('')
     setSearchInput('')
     setSearch('')
+    pinToLatestRef.current = true
+    setPinToLatest(true)
+  }
+
+  function onTableScroll() {
+    const el = tableWrapRef.current
+    if (!el) return
+    const nearTop = el.scrollTop <= 32
+    if (nearTop !== pinToLatestRef.current) {
+      pinToLatestRef.current = nearTop
+      setPinToLatest(nearTop)
+    }
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 80
+    if (nearBottom) void loadMore()
+  }
+
+  function jumpToLatest() {
+    pinToLatestRef.current = true
+    setPinToLatest(true)
+    tableWrapRef.current?.scrollTo({ top: 0 })
   }
 
   const moveSelection = useCallback((delta: number) => {
@@ -292,18 +344,6 @@ function App() {
 
   return (
     <main>
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">RUST HTTP PROXY</p>
-          <h1>MITM Observatory</h1>
-        </div>
-        <div className="status-line">
-          <span className={`dot ${settings?.ca_available ? 'online' : 'offline'}`} />
-          {settings?.ca_available ? 'CA READY' : 'CA UNAVAILABLE'}
-          <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● LIVE' : '○ RECONNECTING'}</span>
-        </div>
-      </header>
-
       {error && <div className="error-banner">{error}<button onClick={() => setError('')}>×</button></div>}
       {copied && <div className="copy-toast" role="status">{copied} 已复制</div>}
 
@@ -333,7 +373,12 @@ function App() {
             <option value={262144}>256 KiB</option><option value={1048576}>1 MiB</option>
           </select>
         </label>
-        <span className="record-count">{records.length} 条记录</span>
+        <div className="status-line">
+          <span className={`dot ${settings?.ca_available ? 'online' : 'offline'}`} />
+          {settings?.ca_available ? 'CA READY' : 'CA UNAVAILABLE'}
+          <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● LIVE' : '○ RECONNECTING'}</span>
+          <span className="record-count">{records.length} 条记录</span>
+        </div>
       </section>
 
       <section className={`workspace ${selected ? 'has-detail' : ''}`}>
@@ -394,7 +439,7 @@ function App() {
               <button className="reset" onClick={resetFilters}>清除筛选</button>
             </div>
           )}
-          <div className="table-wrap">
+          <div className="table-wrap" ref={tableWrapRef} onScroll={onTableScroll}>
             <table>
               <thead><tr><th>时间</th><th>方法</th><th>URL</th><th>状态</th><th>耗时</th><th>抓取</th></tr></thead>
               <tbody>
@@ -402,7 +447,6 @@ function App() {
                   <tr
                     key={record.id}
                     className={selected?.id === record.id ? 'selected' : ''}
-                    ref={selected?.id === record.id ? (node) => node?.scrollIntoView({ block: 'nearest' }) : undefined}
                     onClick={() => {
                       if (selected?.id === record.id) setSelected(null)
                       else void selectRecord(record.id)
@@ -420,7 +464,13 @@ function App() {
             </table>
             {!records.length && <div className="empty-table"><span>◎</span><p>{emptyHint}</p><small>{emptySub}</small></div>}
           </div>
-          {nextBefore !== null && <button className="load-more" onClick={() => void loadMore()}>加载更早记录</button>}
+          <div className="table-footer">
+            {!pinToLatest && <button className="jump-latest" onClick={jumpToLatest}>回到最新</button>}
+            {loadingMore && <span className="loading-more">正在加载更早记录…</span>}
+            {!loadingMore && nextBefore === null && records.length > 0 && !pinToLatest && (
+              <span className="loading-more">已到最早记录</span>
+            )}
+          </div>
         </section>
 
         {selected && <Detail detail={selected} onClose={() => setSelected(null)} onCopy={copyText} />}
