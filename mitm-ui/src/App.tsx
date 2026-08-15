@@ -64,9 +64,9 @@ function App() {
   const [pinToLatest, setPinToLatest] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
-  // 详情的 Request/Response tab 提到这一层：切换记录时 Detail 会卸载（显示加载态），状态不能丢
+  // 详情的 Request/Response tab 提到这一层：切换记录或关闭详情时 Detail 会卸载，状态不能丢
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request')
-  // 详情「拉到了最下面」的状态同样跨 record 保持
+  // 详情「拉到了最下面」的状态同样跨 record 和详情关闭/重开保持
   const detailAtBottomRef = useRef(false)
   // 图片预览点开的大图（data URL），非空时显示缩放 lightbox
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
@@ -364,7 +364,6 @@ function App() {
     activeRecordIdRef.current = null
     setDetailLoadingId(null)
     setSelected(null)
-    setDetailTab('request')
   }, [])
 
   const loadMore = useCallback(async () => {
@@ -397,7 +396,6 @@ function App() {
       setRecordsTotal(0)
       setNextBefore(null)
       setSelected(null)
-      setDetailTab('request')
       await refreshMeta()
     } catch (value) {
       handleError(value)
