@@ -9,17 +9,18 @@ import {
   type Settings,
   type Target,
 } from './api'
+import {
+  formatBytes,
+  formatCaptureState,
+  formatDuration,
+  formatTime,
+  prettyBody,
+  statusTone,
+  toCurl,
+} from './format'
 
 const methods = ['', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-
-function formatTime(value: number) {
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    fractionalSecondDigits: 3,
-  }).format(value)
-}
+const SENSITIVE_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'proxy-authorization'])
 
 function App() {
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -32,16 +33,31 @@ function App() {
   const [path, setPath] = useState('')
   const [method, setMethod] = useState('')
   const [status, setStatus] = useState('')
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [newTarget, setNewTarget] = useState('')
   const [error, setError] = useState('')
+  const [live, setLive] = useState(false)
+  const [copied, setCopied] = useState('')
   const refreshTimer = useRef<number | null>(null)
   const selectedIdRef = useRef<string | null>(null)
   const loadedCountRef = useRef(0)
+  const queryStringRef = useRef('')
+  const copyTimer = useRef<number | null>(null)
+  const recordsRef = useRef<RecordSummary[]>([])
 
   useEffect(() => {
     selectedIdRef.current = selected?.id ?? null
   }, [selected])
+
+  useEffect(() => {
+    recordsRef.current = records
+  }, [records])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(searchInput.trim()), 280)
+    return () => window.clearTimeout(timer)
+  }, [searchInput])
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams()
@@ -53,9 +69,31 @@ function App() {
     return params.toString()
   }, [host, path, method, status, search])
 
+  queryStringRef.current = queryString
+
   const handleError = useCallback((value: unknown) => {
     setError(value instanceof Error ? value.message : String(value))
   }, [])
+
+  const copyText = useCallback(async (value: string, label: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value)
+      } else {
+        fallbackCopy(value)
+      }
+      setCopied(label)
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
+      copyTimer.current = window.setTimeout(() => setCopied(''), 1600)
+    } catch {
+      try {
+        fallbackCopy(value)
+        setCopied(label)
+      } catch (error) {
+        handleError(error)
+      }
+    }
+  }, [handleError])
 
   const refreshMeta = useCallback(async () => {
     try {
@@ -67,7 +105,6 @@ function App() {
       setSettings(nextSettings)
       setTargets(nextTargets)
       setGroups(nextGroups)
-      setError('')
     } catch (value) {
       handleError(value)
     }
@@ -76,9 +113,10 @@ function App() {
   const refreshRecords = useCallback(
     async (includeDetail = false) => {
       try {
+        const qs = queryStringRef.current
         // 已经「加载更早记录」时按已加载条数拉取，避免刷新后列表缩回第一页导致跳动
         const limit = Math.min(Math.max(loadedCountRef.current, 100), 1000)
-        const page = await api<RecordPage>(`/records?limit=${limit}&${queryString}`)
+        const page = await api<RecordPage>(`/records?limit=${limit}&${qs}`)
         loadedCountRef.current = page.records.length
         setRecords(page.records)
         setNextBefore(page.next_before)
@@ -94,12 +132,11 @@ function App() {
             )
           }
         }
-        setError('')
       } catch (value) {
         handleError(value)
       }
     },
-    [handleError, queryString],
+    [handleError],
   )
 
   useEffect(() => {
@@ -107,8 +144,9 @@ function App() {
   }, [refreshMeta])
 
   useEffect(() => {
+    loadedCountRef.current = 0
     void refreshRecords(true)
-  }, [refreshRecords])
+  }, [queryString, refreshRecords])
 
   useEffect(() => {
     const source = new EventSource('/mitm/api/events')
@@ -142,13 +180,14 @@ function App() {
       needRecords = needMeta = includeDetail = true
       schedule()
     }
+    source.addEventListener('open', () => setLive(true))
     source.addEventListener('record_created', onRecordEvent)
     source.addEventListener('record_updated', onRecordEvent)
     source.addEventListener('settings', onMetaEvent)
     source.addEventListener('targets', onMetaEvent)
     source.addEventListener('records_cleared', onFullEvent)
     source.addEventListener('resync', onFullEvent)
-    source.onerror = () => setError('实时连接暂时中断，浏览器正在自动重连')
+    source.onerror = () => setLive(false)
     return () => {
       source.close()
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
@@ -210,6 +249,47 @@ function App() {
     }
   }
 
+  function resetFilters() {
+    setHost('')
+    setPath('')
+    setMethod('')
+    setStatus('')
+    setSearchInput('')
+    setSearch('')
+  }
+
+  const moveSelection = useCallback((delta: number) => {
+    const list = recordsRef.current
+    if (!list.length) return
+    const index = list.findIndex((record) => record.id === selectedIdRef.current)
+    const next = list[Math.min(list.length - 1, Math.max(0, (index < 0 ? 0 : index) + delta))]
+    if (next) void selectRecord(next.id)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      const target = event.target as HTMLElement
+      if (target.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (event.key === 'Escape') {
+        setSelected(null)
+        return
+      }
+      if (event.key === 'ArrowDown' || event.key === 'j') {
+        event.preventDefault()
+        moveSelection(1)
+      } else if (event.key === 'ArrowUp' || event.key === 'k') {
+        event.preventDefault()
+        moveSelection(-1)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [moveSelection])
+
+  const hasFilters = Boolean(host || path || method || status || search)
+  const emptyHint = hasFilters ? '没有匹配的记录' : '等待 MITM 流量'
+  const emptySub = hasFilters ? '试试放宽筛选条件' : '命中目标的 HTTPS 请求会实时出现在这里'
+
   return (
     <main>
       <header className="topbar">
@@ -220,11 +300,12 @@ function App() {
         <div className="status-line">
           <span className={`dot ${settings?.ca_available ? 'online' : 'offline'}`} />
           {settings?.ca_available ? 'CA READY' : 'CA UNAVAILABLE'}
-          <span className="live-pill">● LIVE</span>
+          <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● LIVE' : '○ RECONNECTING'}</span>
         </div>
       </header>
 
       {error && <div className="error-banner">{error}<button onClick={() => setError('')}>×</button></div>}
+      {copied && <div className="copy-toast" role="status">{copied} 已复制</div>}
 
       <section className="control-strip">
         <Toggle
@@ -252,9 +333,10 @@ function App() {
             <option value={262144}>256 KiB</option><option value={1048576}>1 MiB</option>
           </select>
         </label>
+        <span className="record-count">{records.length} 条记录</span>
       </section>
 
-      <section className="workspace">
+      <section className={`workspace ${selected ? 'has-detail' : ''}`}>
         <aside className="sidebar">
           <div className="panel-title"><span>目标域名</span><b>{targets.length}</b></div>
           <form className="target-form" onSubmit={addTarget}>
@@ -263,8 +345,18 @@ function App() {
           </form>
           <div className="target-list">
             {targets.map((target) => (
-              <div className="target" key={target.id}><div className="target-main"><span>{target.suffix}</span>{target.cli_managed && <em>启动参数</em>}</div>
-                {!target.cli_managed && <button aria-label={`删除 ${target.suffix}`} onClick={() => void api<void>(`/targets/${target.id}`, { method: 'DELETE' }).then(refreshMeta).catch(handleError)}>×</button>}
+              <div className={`target ${host === target.suffix ? 'active' : ''}`} key={target.id}>
+                <button className="target-main" onClick={() => { setHost(target.suffix); setPath('') }} title="按该后缀筛选">
+                  <span>{target.suffix}</span>
+                  {target.cli_managed && <em>启动参数</em>}
+                </button>
+                {!target.cli_managed && (
+                  <button
+                    className="target-remove"
+                    aria-label={`删除 ${target.suffix}`}
+                    onClick={() => void api<void>(`/targets/${target.id}`, { method: 'DELETE' }).then(refreshMeta).catch(handleError)}
+                  >×</button>
+                )}
               </div>
             ))}
             {!targets.length && <p className="empty">尚未配置目标后缀</p>}
@@ -287,36 +379,67 @@ function App() {
 
         <section className="records-panel">
           <div className="filters">
-            <input aria-label="搜索 URL" placeholder="搜索 URL…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input aria-label="搜索 URL" placeholder="搜索 URL…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
             <select aria-label="请求方法" value={method} onChange={(e) => setMethod(e.target.value)}>{methods.map((item) => <option key={item} value={item}>{item || '全部方法'}</option>)}</select>
             <input aria-label="状态码" className="status-input" placeholder="状态码" value={status} onChange={(e) => setStatus(e.target.value.replace(/\D/g, '').slice(0, 3))} />
             <button className="danger" onClick={() => void clearRecords()}>清空</button>
           </div>
+          {hasFilters && (
+            <div className="filter-chips">
+              {host && <button onClick={() => { setHost(''); setPath('') }}>host: {host} ×</button>}
+              {path && <button onClick={() => setPath('')}>path: {path} ×</button>}
+              {method && <button onClick={() => setMethod('')}>{method} ×</button>}
+              {status && <button onClick={() => setStatus('')}>状态 {status} ×</button>}
+              {search && <button onClick={() => { setSearchInput(''); setSearch('') }}>搜索 “{search}” ×</button>}
+              <button className="reset" onClick={resetFilters}>清除筛选</button>
+            </div>
+          )}
           <div className="table-wrap">
             <table>
               <thead><tr><th>时间</th><th>方法</th><th>URL</th><th>状态</th><th>耗时</th><th>抓取</th></tr></thead>
               <tbody>
                 {records.map((record) => (
-                  <tr key={record.id} className={selected?.id === record.id ? 'selected' : ''} onClick={() => void selectRecord(record.id)}>
+                  <tr
+                    key={record.id}
+                    className={selected?.id === record.id ? 'selected' : ''}
+                    ref={selected?.id === record.id ? (node) => node?.scrollIntoView({ block: 'nearest' }) : undefined}
+                    onClick={() => {
+                      if (selected?.id === record.id) setSelected(null)
+                      else void selectRecord(record.id)
+                    }}
+                  >
                     <td className="mono muted">{formatTime(record.started_at_ms)}</td>
                     <td><span className={`method method-${record.method.toLowerCase()}`}>{record.method}</span></td>
                     <td className="url-cell"><strong>{record.host}</strong><span>{record.path}{record.query ? `?${record.query}` : ''}</span></td>
-                    <td className={`mono status-${Math.floor((record.status ?? 0) / 100)}`}>{record.status ?? '…'}</td>
-                    <td className="mono muted">{record.duration_ms === null ? '…' : `${record.duration_ms}ms`}</td>
-                    <td><span className={`state state-${record.capture_state}`}>{record.capture_state}</span></td>
+                    <td className={`mono status-${statusTone(record.status)}`}>{record.status ?? '…'}</td>
+                    <td className="mono muted">{formatDuration(record.duration_ms)}</td>
+                    <td><span className={`state state-${record.capture_state}`}>{formatCaptureState(record.capture_state)}</span></td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {!records.length && <div className="empty-table"><span>◎</span><p>等待 MITM 流量</p><small>命中目标的 HTTPS 请求会实时出现在这里</small></div>}
+            {!records.length && <div className="empty-table"><span>◎</span><p>{emptyHint}</p><small>{emptySub}</small></div>}
           </div>
           {nextBefore !== null && <button className="load-more" onClick={() => void loadMore()}>加载更早记录</button>}
         </section>
 
-        <Detail detail={selected} onClose={() => setSelected(null)} />
+        {selected && <Detail detail={selected} onClose={() => setSelected(null)} onCopy={copyText} />}
       </section>
     </main>
   )
+}
+
+function fallbackCopy(value: string) {
+  const area = document.createElement('textarea')
+  area.value = value
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.left = '-9999px'
+  document.body.appendChild(area)
+  area.select()
+  const ok = document.execCommand('copy')
+  document.body.removeChild(area)
+  if (!ok) throw new Error('复制失败，请手动选择文本')
 }
 
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
@@ -326,27 +449,86 @@ function Toggle({ label, checked, disabled, onChange }: { label: string; checked
   </label>
 }
 
-function Detail({ detail, onClose }: { detail: RecordDetail | null; onClose: () => void }) {
+function Detail({
+  detail,
+  onClose,
+  onCopy,
+}: {
+  detail: RecordDetail
+  onClose: () => void
+  onCopy: (value: string, label: string) => void
+}) {
   const [tab, setTab] = useState<'request' | 'response'>('request')
-  useEffect(() => setTab('request'), [detail?.id])
-  if (!detail) return <aside className="detail empty-detail"><span>↗</span><p>选择一条记录查看明文</p></aside>
+  const [pretty, setPretty] = useState(true)
+  useEffect(() => setTab('request'), [detail.id])
   const request = tab === 'request'
   const headers = request ? detail.request_headers : detail.response_headers
-  const body = request ? detail.request_body : detail.response_body
+  const rawBody = request ? detail.request_body : detail.response_body
+  const body = pretty ? prettyBody(rawBody) : rawBody
   const note = request ? detail.request_body_note : detail.response_body_note
   const bytes = request ? detail.request_body_bytes : detail.response_body_bytes
-  return <aside className="detail">
-    <div className="detail-head"><div><span className={`method method-${detail.method.toLowerCase()}`}>{detail.method}</span><b>{detail.status ?? 'PENDING'}</b></div><button aria-label="关闭详情" onClick={onClose}>×</button></div>
-    <p className="detail-url">{fullUrl(detail)}</p>
-    <div className="detail-meta"><span>{detail.client_ip}</span><span>{detail.proxy_username}</span><span>{detail.duration_ms ?? '…'} ms</span></div>
-    <div className="tabs"><button className={tab === 'request' ? 'active' : ''} onClick={() => setTab('request')}>Request</button><button className={tab === 'response' ? 'active' : ''} onClick={() => setTab('response')}>Response</button></div>
-    <h3>Headers</h3>
-    <pre>{headers.map(([name, value]) => `${name}: ${value}`).join('\n') || '(none)'}</pre>
-    <h3>Body <small>{bytes} bytes seen</small></h3>
-    {note && <div className="note">{note}</div>}
-    <pre className="body-content">{body || '(empty)'}</pre>
-    {detail.error && <div className="note error-note">{detail.error}</div>}
-  </aside>
+  const truncated = request ? detail.request_body_truncated : detail.response_body_truncated
+  const url = fullUrl(detail)
+  return (
+    <aside className="detail">
+      <div className="detail-head">
+        <div>
+          <span className={`method method-${detail.method.toLowerCase()}`}>{detail.method}</span>
+          <b className={`status-${statusTone(detail.status)}`}>{detail.status ?? 'PENDING'}</b>
+          <span className={`state state-${detail.capture_state}`}>{formatCaptureState(detail.capture_state)}</span>
+        </div>
+        <button aria-label="关闭详情" onClick={onClose}>×</button>
+      </div>
+      <div className="detail-url-row">
+        <p className="detail-url">{url}</p>
+        <div className="detail-actions">
+          <button className="ghost" onClick={() => void onCopy(url, 'URL')}>复制 URL</button>
+          <button className="ghost" onClick={() => void onCopy(toCurl(detail), 'cURL')}>复制 cURL</button>
+        </div>
+      </div>
+      <div className="detail-meta">
+        <span>{detail.client_ip}</span>
+        <span>{detail.proxy_username}</span>
+        <span>{formatDuration(detail.duration_ms)}</span>
+        {detail.request_version && <span>{detail.request_version}</span>}
+        {detail.response_version && <span>→ {detail.response_version}</span>}
+      </div>
+      <div className="tabs">
+        <button className={tab === 'request' ? 'active' : ''} onClick={() => setTab('request')}>Request</button>
+        <button className={tab === 'response' ? 'active' : ''} onClick={() => setTab('response')}>Response</button>
+      </div>
+      <h3>
+        Headers
+        <span className="heading-actions">
+          <small>{headers.length}</small>
+          <button className="ghost compact" onClick={() => void onCopy(headers.map(([name, value]) => `${name}: ${value}`).join('\n'), 'Headers')}>复制</button>
+        </span>
+      </h3>
+      <div className="header-list">
+        {headers.length === 0 && <div className="empty-headers">(none)</div>}
+        {headers.map(([name, value], index) => (
+          <div className={`header-row ${SENSITIVE_HEADERS.has(name.toLowerCase()) ? 'sensitive' : ''}`} key={`${name}-${index}`}>
+            <span className="header-name">{name}</span>
+            <span className="header-value">{value}</span>
+          </div>
+        ))}
+      </div>
+      <h3>
+        Body
+        <span className="heading-actions">
+          <small>{formatBytes(bytes)}{truncated ? ' · 已截断' : ''}</small>
+          <label className="pretty-toggle">
+            <input type="checkbox" checked={pretty} onChange={(event) => setPretty(event.target.checked)} />
+            格式化
+          </label>
+          <button className="ghost compact" disabled={!rawBody} onClick={() => void onCopy(body || rawBody, 'Body')}>复制</button>
+        </span>
+      </h3>
+      {note && <div className="note">{note}</div>}
+      <pre className="body-content">{body || '(empty)'}</pre>
+      {detail.error && <div className="note error-note">{detail.error}</div>}
+    </aside>
+  )
 }
 
 export default App

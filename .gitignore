@@ -8,3 +8,4 @@ vmlinux.h
 # Cargo.lock
 .pi-subagents
 mitm-ui/node_modules/
+.tmp/
