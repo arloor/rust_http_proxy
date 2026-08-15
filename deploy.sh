@@ -141,9 +141,9 @@ kubectl rollout restart ds/proxy
 kubectl rollout status ds/proxy
 
 hosts=(
+    bwg.arloor.dev
     ttl.arloor.com
     us.arloor.dev
-    bwg.arloor.dev
     hk.arloor.dev
     ti.arloor.dev
     bj.arloor.com

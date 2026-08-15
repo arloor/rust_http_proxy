@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   fullUrl,
@@ -38,6 +38,9 @@ function App() {
   const [clientIp, setClientIp] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
+  const [groupFilter, setGroupFilter] = useState('')
+  const [sidebarWidth, setSidebarWidth] = useState(250)
+  const [detailWidth, setDetailWidth] = useState(420)
   const [newTarget, setNewTarget] = useState('')
   const [error, setError] = useState('')
   const [live, setLive] = useState(false)
@@ -103,6 +106,26 @@ function App() {
   const handleError = useCallback((value: unknown) => {
     setError(value instanceof Error ? value.message : String(value))
   }, [])
+
+  // 栏宽拖拽：direction=1 表示向右拖变宽（左栏），-1 表示向左拖变宽（右栏）
+  const startColumnResize = useCallback(
+    (event: ReactMouseEvent, startWidth: number, direction: 1 | -1, min: number, max: number, apply: (width: number) => void) => {
+      event.preventDefault()
+      const startX = event.clientX
+      const onMove = (moveEvent: MouseEvent) => {
+        apply(Math.min(max, Math.max(min, startWidth + direction * (moveEvent.clientX - startX))))
+      }
+      const onUp = () => {
+        document.body.classList.remove('col-resizing')
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      document.body.classList.add('col-resizing')
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [],
+  )
 
   const copyText = useCallback(async (value: string, label: string) => {
     try {
@@ -383,6 +406,22 @@ function App() {
   const emptyHint = hasFilters ? '没有匹配的记录' : '等待 MITM 流量'
   const emptySub = hasFilters ? '试试放宽筛选条件' : '命中目标的 HTTPS 请求会实时出现在这里'
 
+  // URL 分类前端搜索：host 命中保留全部 path，仅 path 命中则只展示匹配的 path
+  const groupQuery = groupFilter.trim().toLowerCase()
+  const filteredGroups = useMemo(() => {
+    if (!groupQuery) return groups
+    const result: HostGroup[] = []
+    for (const group of groups) {
+      if (group.host.toLowerCase().includes(groupQuery)) {
+        result.push(group)
+        continue
+      }
+      const paths = group.paths.filter((item) => item.path.toLowerCase().includes(groupQuery))
+      if (paths.length) result.push({ ...group, paths })
+    }
+    return result
+  }, [groups, groupQuery])
+
   return (
     <main>
       {error && <div className="error-banner">{error}<button onClick={() => setError('')}>×</button></div>}
@@ -424,7 +463,14 @@ function App() {
         </div>
       </section>
 
-      <section className={`workspace ${showDetail ? 'has-detail' : ''}`}>
+      <section
+        className={`workspace ${showDetail ? 'has-detail' : ''}`}
+        style={{
+          gridTemplateColumns: showDetail
+            ? `${sidebarWidth}px 6px minmax(360px, 1fr) 6px ${detailWidth}px`
+            : `${sidebarWidth}px 6px minmax(470px, 1fr)`,
+        }}
+      >
         <aside className="sidebar">
           <div className="panel-title"><span>目标域名</span><b>{targets.length}</b></div>
           <form className="target-form" onSubmit={addTarget}>
@@ -449,13 +495,22 @@ function App() {
             ))}
             {!targets.length && <p className="empty">尚未配置目标后缀</p>}
           </div>
-          <div className="panel-title group-title"><span>URL 分类</span><b>{groups.length}</b></div>
+          <div className="panel-title group-title"><span>URL 分类</span><b>{groupQuery ? `${filteredGroups.length}/${groups.length}` : groups.length}</b></div>
+          <input
+            aria-label="搜索 URL 分类"
+            className="group-search"
+            placeholder="搜索 host / path…"
+            value={groupFilter}
+            onChange={(e) => setGroupFilter(e.target.value)}
+          />
           <button className={!host ? 'group active' : 'group'} onClick={() => { setHost(''); setExpandedHost(''); setPath('') }}>全部请求</button>
-          {groups.map((group) => (
+          {filteredGroups.map((group) => {
+            const expanded = groupQuery ? true : expandedHost === group.host
+            return (
             <div key={group.host} className="group-block">
               <button
                 className={host === group.host && !path ? 'group active' : 'group'}
-                aria-expanded={expandedHost === group.host}
+                aria-expanded={expanded}
                 onClick={() => {
                   setHost(group.host)
                   setPath('')
@@ -464,14 +519,24 @@ function App() {
               >
                 <span>{group.host}</span><b>{group.count}</b>
               </button>
-              {expandedHost === group.host && group.paths.map((item) => (
+              {expanded && group.paths.map((item) => (
                 <button key={item.path} className={path === item.path ? 'path active' : 'path'} onClick={() => setPath(item.path)}>
                   <span>{item.path}</span><b>{item.count}</b>
                 </button>
               ))}
             </div>
-          ))}
+            )
+          })}
+          {groupQuery && !filteredGroups.length && <p className="empty">没有匹配的分类</p>}
         </aside>
+
+        <div
+          className="col-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整侧栏宽度"
+          onMouseDown={(event) => startColumnResize(event, sidebarWidth, 1, 180, 480, setSidebarWidth)}
+        />
 
         <section className="records-panel">
           <div className="filters">
@@ -526,6 +591,15 @@ function App() {
           </div>
         </section>
 
+        {showDetail && (
+          <div
+            className="col-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整详情宽度"
+            onMouseDown={(event) => startColumnResize(event, detailWidth, -1, 320, 800, setDetailWidth)}
+          />
+        )}
         {detailLoadingId
           ? <DetailLoading record={loadingRecord} onClose={closeDetail} />
           : selected && <Detail detail={selected} onClose={closeDetail} onCopy={copyText} />}
