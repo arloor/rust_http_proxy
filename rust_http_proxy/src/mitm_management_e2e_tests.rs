@@ -46,7 +46,7 @@ async fn mitm_routes_require_basic_auth_and_serve_embedded_ui() -> Result<(), Dy
         request(proxy.port, &format!("GET /mitm HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"))
             .await?;
     assert!(authorized.starts_with("HTTP/1.1 200"));
-    assert!(authorized.contains("<title>MITM Observatory</title>"));
+    assert!(authorized.contains("<title>MITM 抓取</title>"));
     assert!(!authorized.contains("this static file must not win"));
     assert!(
         authorized

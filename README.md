@@ -235,7 +235,7 @@ rust_http_proxy -p 7788 \
 
 - MITM 直接由目标列表控制：有目标且 CA 可用时，命中的新 CONNECT 会进入 MITM；删除目标不影响已经建立的连接。
 - 动态增删域名后缀并独立开启/关闭明文抓取。`example.com` 同时匹配 `example.com` 与其子域名。
-- 按域名、路径、方法、状态码和关键字查看最近请求；请求与响应 headers/body 使用同一个记录 ID 关联。
+- 按域名、路径、客户端 IP、方法、状态码和关键字查看最近请求；请求与响应 headers/body 使用同一个记录 ID 关联。
 - 实时显示流式响应。关闭抓取后，在途记录会保留已经捕获的部分并标记为 `capture_stopped`；客户端提前断开、body 未传输完的记录会标记为 `interrupted`（重启时历史 `capturing` 记录也会统一收尾为该状态）。204 / `Content-Length: 0` / 已 `END_STREAM` 的空响应即使下游不再 poll body，也会记为 `complete`。
 - 默认保留最近 10,000 条记录，请求与响应 body 分别最多保存 64 KiB；可在面板中调整。
 

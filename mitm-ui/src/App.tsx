@@ -34,6 +34,8 @@ function App() {
   const [path, setPath] = useState('')
   const [method, setMethod] = useState('')
   const [status, setStatus] = useState('')
+  const [clientIpInput, setClientIpInput] = useState('')
+  const [clientIp, setClientIp] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [newTarget, setNewTarget] = useState('')
@@ -80,15 +82,21 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [searchInput])
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setClientIp(clientIpInput.trim()), 280)
+    return () => window.clearTimeout(timer)
+  }, [clientIpInput])
+
   const queryString = useMemo(() => {
     const params = new URLSearchParams()
     if (host) params.set('host', host)
     if (path) params.set('path', path)
     if (method) params.set('method', method)
     if (status) params.set('status', status)
+    if (clientIp) params.set('client_ip', clientIp)
     if (search) params.set('q', search)
     return params.toString()
-  }, [host, path, method, status, search])
+  }, [host, path, method, status, clientIp, search])
 
   queryStringRef.current = queryString
 
@@ -317,6 +325,8 @@ function App() {
     setPath('')
     setMethod('')
     setStatus('')
+    setClientIpInput('')
+    setClientIp('')
     setSearchInput('')
     setSearch('')
     pinToLatestRef.current = true
@@ -369,7 +379,7 @@ function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [closeDetail, moveSelection])
 
-  const hasFilters = Boolean(host || path || method || status || search)
+  const hasFilters = Boolean(host || path || method || status || clientIp || search)
   const emptyHint = hasFilters ? '没有匹配的记录' : '等待 MITM 流量'
   const emptySub = hasFilters ? '试试放宽筛选条件' : '命中目标的 HTTPS 请求会实时出现在这里'
 
@@ -466,6 +476,7 @@ function App() {
         <section className="records-panel">
           <div className="filters">
             <input aria-label="搜索 URL" placeholder="搜索 URL…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+            <input aria-label="客户端 IP" className="client-ip-input" placeholder="客户端 IP" value={clientIpInput} onChange={(e) => setClientIpInput(e.target.value)} />
             <select aria-label="请求方法" value={method} onChange={(e) => setMethod(e.target.value)}>{methods.map((item) => <option key={item} value={item}>{item || '全部方法'}</option>)}</select>
             <input aria-label="状态码" className="status-input" placeholder="状态码" value={status} onChange={(e) => setStatus(e.target.value.replace(/\D/g, '').slice(0, 3))} />
             <button className="danger" onClick={() => void clearRecords()}>清空</button>
@@ -476,6 +487,7 @@ function App() {
               {path && <button onClick={() => setPath('')}>path: {path} ×</button>}
               {method && <button onClick={() => setMethod('')}>{method} ×</button>}
               {status && <button onClick={() => setStatus('')}>状态 {status} ×</button>}
+              {clientIp && <button onClick={() => { setClientIpInput(''); setClientIp('') }}>客户端 {clientIp} ×</button>}
               {search && <button onClick={() => { setSearchInput(''); setSearch('') }}>搜索 “{search}” ×</button>}
               <button className="reset" onClick={resetFilters}>清除筛选</button>
             </div>

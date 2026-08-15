@@ -98,8 +98,9 @@ main { min-height: 100vh; display: flex; flex-direction: column; }
 
 /* ---------- Records table ---------- */
 .records-panel { background: #f8fafc; display: flex; flex-direction: column; }
-.filters { min-height: 56px; display: flex; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.filters input:first-child { flex: 1; }
+.filters { min-height: 56px; display: flex; flex-wrap: wrap; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.filters input:first-child { flex: 1; min-width: 180px; }
+.filters .client-ip-input { width: 136px; font-family: var(--font-mono); }
 .filters select { width: 110px; }
 .filters .status-input { width: 84px; }
 .filters .danger { border: 1px solid #fecaca; background: #fff; color: var(--red); border-radius: 6px; cursor: pointer; padding: 0 14px; font-size: 12px; font-weight: 600; transition: background .15s; }

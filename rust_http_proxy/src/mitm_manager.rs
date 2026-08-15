@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock, mpsc};
@@ -128,6 +129,7 @@ pub(crate) struct RecordQuery {
     pub path: Option<String>,
     pub method: Option<String>,
     pub status: Option<u16>,
+    pub client_ip: Option<String>,
     pub q: Option<String>,
 }
 
@@ -959,6 +961,19 @@ fn query_records(connection: &Connection, query: &RecordQuery) -> Result<RecordP
         sql.push_str(" AND response_status = ?");
         values.push(Box::new(status));
     }
+    if let Some(client_ip) = query
+        .client_ip
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        let normalized = client_ip
+            .parse::<IpAddr>()
+            .map(|address| address.to_canonical().to_string())
+            .unwrap_or_else(|_| client_ip.to_owned());
+        sql.push_str(" AND client_ip = ?");
+        values.push(Box::new(normalized));
+    }
     if let Some(search) = query.q.as_ref().filter(|value| !value.is_empty()) {
         sql.push_str(" AND (authority LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR query LIKE ? ESCAPE '\\')");
         let pattern = format!("%{}%", search.replace('%', "\\%").replace('_', "\\_"));
@@ -1182,6 +1197,34 @@ mod tests {
     fn normalizes_suffixes() {
         assert_eq!(normalize_suffix(" .Example.COM. "), Some("example.com".to_owned()));
         assert_eq!(normalize_suffix("..."), None);
+    }
+
+    #[test]
+    fn filters_records_by_normalized_client_ip() -> Result<(), DynError> {
+        let path = test_db("client_ip_filter");
+        let connection = Connection::open(&path)?;
+        initialize_schema(&connection, &[], true, 10_000, 65_536)?;
+        for (id, client_ip, sequence) in [("ipv4", "127.0.0.1", 1), ("ipv6", "2001:db8::1", 2)] {
+            connection.execute(
+                "INSERT INTO records(id, started_at_ms, client_ip, proxy_username, authority, host, path,
+                    method, request_version, capture_state) VALUES(?1, ?2, ?3, '', 'example.com:443',
+                    'example.com', '/', 'GET', 'HTTP/1.1', 'complete')",
+                params![id, sequence, client_ip],
+            )?;
+        }
+
+        let page = query_records(
+            &connection,
+            &RecordQuery {
+                client_ip: Some(" 2001:0DB8:0:0:0:0:0:1 ".to_owned()),
+                ..RecordQuery::default()
+            },
+        )?;
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].id, "ipv6");
+        drop(connection);
+        fs::remove_file(path)?;
+        Ok(())
     }
 
     #[test]
