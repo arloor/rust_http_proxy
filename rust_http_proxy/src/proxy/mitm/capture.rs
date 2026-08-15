@@ -295,6 +295,28 @@ pin_project_lite::pin_project! {
         stopped: bool,
         completed: bool,
     }
+
+    // 客户端提前断开或连接被回收时，body 不会 poll 到结束，直接 Drop。
+    // 在此收尾，避免记录永远停留在 capturing 状态。
+    impl PinnedDrop for MitmCaptureBody {
+        fn drop(this: Pin<&mut Self>) {
+            let this = this.project();
+            if *this.completed {
+                return;
+            }
+            *this.completed = true;
+            if !*this.stopped {
+                this.manager.finish_body(
+                    this.record_id,
+                    *this.direction,
+                    Some("connection closed before body stream ended".to_owned()),
+                );
+            }
+            if matches!(*this.direction, BodyDirection::Response) {
+                this.manager.finish_record(this.record_id, "interrupted");
+            }
+        }
+    }
 }
 
 impl MitmCaptureBody {
@@ -469,6 +491,102 @@ mod tests {
     use std::io::{Cursor, Write};
 
     const PLAINTEXT: &[u8] = br#"{"message":"compressed MITM plaintext","ok":true}"#;
+
+    // 客户端提前断开导致 body 未读完就被 Drop 时，记录应收尾为 interrupted 而不是永远 capturing
+    #[tokio::test]
+    async fn dropped_body_marks_record_interrupted() -> Result<(), crate::DynError> {
+        let path = std::env::temp_dir().join(format!(
+            "rust_http_proxy_mitm_capture_drop_{}_{:x}.sqlite3",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let manager = crate::mitm_manager::MitmManager::open(
+            path.clone(),
+            true,
+            &["example.com".to_owned()],
+            true,
+            10_000,
+            65_536,
+        )?;
+        let request_headers = HeaderMap::new();
+        let id = manager
+            .begin_record(crate::mitm_manager::RecordMetadata {
+                client_ip: "127.0.0.1".to_owned(),
+                proxy_username: "tester".to_owned(),
+                authority: "example.com:443".to_owned(),
+                host: "example.com".to_owned(),
+                path: "/".to_owned(),
+                query: None,
+                method: "GET".to_owned(),
+                request_version: http::Version::HTTP_2,
+                request_headers: &request_headers,
+            })
+            .ok_or("capture unexpectedly disabled")?;
+        let body = http_body_util::Full::new(Bytes::from_static(b"never polled"))
+            .map_err(|never: std::convert::Infallible| match never {})
+            .boxed();
+        let wrapped =
+            MitmCaptureBody::new(body, manager.clone(), id.clone(), BodyDirection::Response, CaptureMode::Plaintext);
+        drop(wrapped);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "interrupted");
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    // HTTP/1.1 下游写满 Content-Length 后可能不再 poll body：消费完最后一帧时 is_end_stream
+    // 已经完成收尾，随后即使直接 Drop 也必须保持 complete，不能误标为 interrupted
+    #[tokio::test]
+    async fn content_length_fulfilled_body_stays_complete_after_drop() -> Result<(), crate::DynError> {
+        let path = std::env::temp_dir().join(format!(
+            "rust_http_proxy_mitm_capture_exact_len_{}_{:x}.sqlite3",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let manager = crate::mitm_manager::MitmManager::open(
+            path.clone(),
+            true,
+            &["example.com".to_owned()],
+            true,
+            10_000,
+            65_536,
+        )?;
+        let request_headers = HeaderMap::new();
+        let id = manager
+            .begin_record(crate::mitm_manager::RecordMetadata {
+                client_ip: "127.0.0.1".to_owned(),
+                proxy_username: "tester".to_owned(),
+                authority: "example.com:443".to_owned(),
+                host: "example.com".to_owned(),
+                path: "/".to_owned(),
+                query: None,
+                method: "GET".to_owned(),
+                request_version: http::Version::HTTP_2,
+                request_headers: &request_headers,
+            })
+            .ok_or("capture unexpectedly disabled")?;
+        let body = http_body_util::Full::new(Bytes::from_static(b"exact length"))
+            .map_err(|never: std::convert::Infallible| match never {})
+            .boxed();
+        let mut wrapped =
+            MitmCaptureBody::new(body, manager.clone(), id.clone(), BodyDirection::Response, CaptureMode::Plaintext);
+        // 只 poll 一次拿到全部数据，模拟下游消费完 Content-Length 后不再 poll
+        let first = wrapped.frame().await;
+        assert!(matches!(first, Some(Ok(_))));
+        drop(wrapped);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "complete");
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
 
     #[test]
     fn response_mode_skips_binary() {

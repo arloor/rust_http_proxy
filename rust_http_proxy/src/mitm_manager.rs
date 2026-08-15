@@ -626,6 +626,12 @@ fn initialize_schema(
         )?;
     }
     transaction.commit()?;
+    // 重启后不存在仍在进行的抓取，把历史遗留的 capturing 记录统一收尾为 interrupted
+    connection.execute(
+        "UPDATE records SET capture_state='interrupted', completed_at_ms=COALESCE(completed_at_ms, ?1),
+            duration_ms=COALESCE(duration_ms, ?1-started_at_ms) WHERE capture_state='capturing'",
+        [now_ms()],
+    )?;
     if current_version < SCHEMA_VERSION {
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
