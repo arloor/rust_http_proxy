@@ -144,6 +144,8 @@ pub(crate) struct RecordQuery {
 pub(crate) struct RecordPage {
     pub records: Vec<RecordSummary>,
     pub next_before: Option<i64>,
+    // 数据库中的记录总条数（不受筛选条件影响）
+    pub total: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1134,9 +1136,11 @@ fn query_records(connection: &Connection, query: &RecordQuery) -> Result<RecordP
         records.truncate(limit);
         sequences.truncate(limit);
     }
+    let total = connection.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
     Ok(RecordPage {
         next_before: has_more.then(|| sequences.last().copied()).flatten(),
         records,
+        total,
     })
 }
 

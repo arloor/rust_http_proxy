@@ -31,6 +31,7 @@ function App() {
   const [tlsErrors, setTlsErrors] = useState<TlsErrorGroup[]>([])
   const [showTlsErrors, setShowTlsErrors] = useState(false)
   const [records, setRecords] = useState<RecordSummary[]>([])
+  const [recordsTotal, setRecordsTotal] = useState(0)
   const [nextBefore, setNextBefore] = useState<number | null>(null)
   const [selected, setSelected] = useState<RecordDetail | null>(null)
   const [host, setHost] = useState('')
@@ -65,6 +66,10 @@ function App() {
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
   // 详情的 Request/Response tab 提到这一层：切换记录时 Detail 会卸载（显示加载态），状态不能丢
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request')
+  // 详情「拉到了最下面」的状态同样跨 record 保持
+  const detailAtBottomRef = useRef(false)
+  // 图片预览点开的大图（data URL），非空时显示缩放 lightbox
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const detailRequestRef = useRef(0)
   const activeRecordIdRef = useRef<string | null>(null)
 
@@ -224,6 +229,7 @@ function App() {
         const page = await api<RecordPage>(`/records?limit=${limit}&${qs}`)
         loadedCountRef.current = page.records.length
         setRecords(page.records)
+        setRecordsTotal(page.total)
         nextBeforeRef.current = page.next_before
         setNextBefore(page.next_before)
         const id = selectedIdRef.current
@@ -371,6 +377,7 @@ function App() {
       loadedCountRef.current += page.records.length
       nextBeforeRef.current = page.next_before
       setRecords((current) => [...current, ...page.records])
+      setRecordsTotal(page.total)
       setNextBefore(page.next_before)
     } catch (value) {
       handleError(value)
@@ -387,6 +394,7 @@ function App() {
       loadedCountRef.current = 0
       nextBeforeRef.current = null
       setRecords([])
+      setRecordsTotal(0)
       setNextBefore(null)
       setSelected(null)
       setDetailTab('request')
@@ -452,6 +460,10 @@ function App() {
       const target = event.target as HTMLElement
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return
       if (event.key === 'Escape') {
+        if (lightboxSrc) {
+          setLightboxSrc(null)
+          return
+        }
         closeDetail()
         return
       }
@@ -465,7 +477,7 @@ function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [closeDetail, moveSelection])
+  }, [closeDetail, moveSelection, lightboxSrc])
 
   const hasFilters = Boolean(host || path || method || status || clientIp || search)
   const tlsErrorTotal = tlsErrors.reduce((total, group) => total + group.count, 0)
@@ -533,7 +545,7 @@ function App() {
             >⚠ CA 未信任 {tlsErrorTotal}</button>
           )}
           <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● 实时' : '○ 重连中'}</span>
-          <span className="record-count">{records.length} 条记录</span>
+          <span className="record-count" title="数据库中的记录总条数">{recordsTotal} 条记录</span>
           <span className="record-count" title="mitm.sqlite3 主库 + WAL + SHM 总大小，每 10 秒刷新">DB {formatBytes(settings?.db_bytes ?? 0)}</span>
         </div>
         {showTlsErrors && tlsErrorTotal > 0 && (
@@ -720,9 +732,12 @@ function App() {
               onClose={closeDetail}
               onCopy={copyText}
               onCopyImage={copyImage}
+              atBottomRef={detailAtBottomRef}
+              onZoomImage={setLightboxSrc}
             />
           )}
       </section>
+      {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
     </main>
   )
 }
@@ -840,6 +855,8 @@ function Detail({
   onClose,
   onCopy,
   onCopyImage,
+  atBottomRef,
+  onZoomImage,
 }: {
   detail: RecordDetail
   tab: 'request' | 'response'
@@ -847,8 +864,21 @@ function Detail({
   onClose: () => void
   onCopy: (value: string, label: string) => void
   onCopyImage: (dataUrl: string, label: string) => void
+  atBottomRef: { current: boolean }
+  onZoomImage: (dataUrl: string) => void
 }) {
   const [pretty, setPretty] = useState(true)
+  const asideRef = useRef<HTMLElement>(null)
+  const scrollToBottomIfPinned = useCallback(() => {
+    const el = asideRef.current
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [atBottomRef])
+  // 切换 record 后，如果之前处于「拉到了最下面」状态，新记录也保持吸底
+  useEffect(() => scrollToBottomIfPinned(), [detail.id, scrollToBottomIfPinned])
+  const onDetailScroll = () => {
+    const el = asideRef.current
+    if (el) atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 8
+  }
   const request = tab === 'request'
   const headers = request ? detail.request_headers : detail.response_headers
   const rawBody = request ? detail.request_body : detail.response_body
@@ -861,7 +891,7 @@ function Detail({
   const imagePreview = imageMediaType && rawBody && !truncated ? `data:${imageMediaType};base64,${rawBody}` : null
   const url = fullUrl(detail)
   return (
-    <aside className="detail">
+    <aside className="detail" ref={asideRef} onScroll={onDetailScroll}>
       <div className="detail-head">
         <div>
           <span className={`method method-${detail.method.toLowerCase()}`}>{detail.method}</span>
@@ -927,10 +957,64 @@ function Detail({
       </h3>
       {note && <div className="note">{note}</div>}
       {imagePreview
-        ? <img className="body-image-preview" src={imagePreview} alt={`${imageMediaType} 预览`} />
+        ? (
+          <img
+            className="body-image-preview"
+            src={imagePreview}
+            alt={`${imageMediaType} 预览`}
+            title="点击查看大图"
+            onClick={() => onZoomImage(imagePreview)}
+            onLoad={scrollToBottomIfPinned}
+          />
+        )
         : <pre className="body-content">{body || '(empty)'}</pre>}
       {detail.error && <div className="note error-note">{detail.error}</div>}
     </aside>
+  )
+}
+
+function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const [zoom, setZoom] = useState(1)
+  const [naturalWidth, setNaturalWidth] = useState(0)
+  const bodyRef = useRef<HTMLDivElement>(null)
+
+  const zoomBy = useCallback((factor: number) => {
+    setZoom((current) => Math.min(10, Math.max(0.1, current * factor)))
+  }, [])
+
+  // React 的 onWheel 是 passive 的，无法 preventDefault，需要原生监听阻止页面滚动
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      zoomBy(event.deltaY < 0 ? 1.2 : 1 / 1.2)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [zoomBy])
+
+  return (
+    <div className="image-lightbox" onClick={onClose}>
+      <div className="lightbox-toolbar" onClick={(event) => event.stopPropagation()}>
+        <button onClick={() => zoomBy(1 / 1.2)}>－</button>
+        <span>{Math.round(zoom * 100)}%</span>
+        <button onClick={() => zoomBy(1.2)}>＋</button>
+        <button onClick={() => setZoom(1)}>重置</button>
+        <span className="lightbox-hint">滚轮缩放 · 双击切换 100%/200% · 点击空白或 Esc 关闭</span>
+        <button aria-label="关闭大图" onClick={onClose}>×</button>
+      </div>
+      <div className="lightbox-body" ref={bodyRef} onClick={onClose}>
+        <img
+          src={src}
+          alt="图片大图"
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={() => setZoom((current) => (current === 1 ? 2 : 1))}
+          onLoad={(event) => setNaturalWidth(event.currentTarget.naturalWidth)}
+          style={naturalWidth ? { width: naturalWidth * zoom } : undefined}
+        />
+      </div>
+    </div>
   )
 }
 

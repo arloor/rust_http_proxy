@@ -221,7 +221,14 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .detail h3 small { float: right; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .detail pre { background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; padding: 11px; color: var(--text-2); font: 12.5px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 215px; overflow: auto; }
 .detail .body-content { max-height: 340px; color: var(--text); }
-.detail .body-image-preview { display: block; max-width: 100%; max-height: 340px; object-fit: contain; background: repeating-conic-gradient(#f1f5f9 0 25%, #fff 0 50%) 0 0 / 16px 16px; border: 1px solid var(--line); border-radius: 6px; }
+.detail .body-image-preview { display: block; max-width: 100%; max-height: 340px; object-fit: contain; background: repeating-conic-gradient(#f1f5f9 0 25%, #fff 0 50%) 0 0 / 16px 16px; border: 1px solid var(--line); border-radius: 6px; cursor: zoom-in; }
+.image-lightbox { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: rgba(15,23,42,.78); }
+.lightbox-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; color: #e2e8f0; font: 600 12px var(--font-sans); }
+.lightbox-toolbar button { border: 1px solid rgba(226,232,240,.35); background: rgba(30,41,59,.6); color: #f1f5f9; border-radius: 6px; padding: 3px 10px; font-size: 13px; cursor: pointer; }
+.lightbox-toolbar button:hover { background: rgba(51,65,85,.85); }
+.lightbox-hint { flex: 1; text-align: center; color: #94a3b8; font-weight: 400; }
+.lightbox-body { flex: 1; overflow: auto; display: flex; cursor: zoom-out; }
+.lightbox-body img { margin: auto; display: block; max-width: none; cursor: default; background: repeating-conic-gradient(#334155 0 25%, #1e293b 0 50%) 0 0 / 16px 16px; }
 .loading-detail-url { margin-top: 18px; color: var(--text-2); }
 .detail-loading-message { display: flex; align-items: center; gap: 11px; margin: 26px 0 22px; color: var(--text-2); }
 .detail-loading-message strong { display: block; font-size: 13px; font-weight: 600; }
