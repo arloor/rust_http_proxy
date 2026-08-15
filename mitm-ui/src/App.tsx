@@ -148,6 +148,12 @@ function App() {
     return () => window.removeEventListener('resize', clampColumns)
   }, [sidebarWidth, detailWidth, showDetail])
 
+  const showCopied = useCallback((label: string) => {
+    setCopied(label)
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
+    copyTimer.current = window.setTimeout(() => setCopied(''), 1600)
+  }, [])
+
   const copyText = useCallback(async (value: string, label: string) => {
     try {
       if (navigator.clipboard?.writeText) {
@@ -155,18 +161,29 @@ function App() {
       } else {
         fallbackCopy(value)
       }
-      setCopied(label)
-      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
-      copyTimer.current = window.setTimeout(() => setCopied(''), 1600)
+      showCopied(label)
     } catch {
       try {
         fallbackCopy(value)
-        setCopied(label)
+        showCopied(label)
       } catch (error) {
         handleError(error)
       }
     }
-  }, [handleError])
+  }, [handleError, showCopied])
+
+  // 图片 body 复制的是图片本身：base64 还原为二进制写入剪贴板；
+  // 剪贴板只可靠支持 PNG，其他格式先经 canvas 转成 PNG
+  const copyImage = useCallback(async (dataUrl: string, label: string) => {
+    try {
+      const blob = await blobFromDataUrl(dataUrl)
+      const png = blob.type === 'image/png' ? blob : await toPngBlob(blob)
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+      showCopied(label)
+    } catch (error) {
+      handleError(error)
+    }
+  }, [handleError, showCopied])
 
   const refreshMeta = useCallback(async () => {
     try {
@@ -652,7 +669,7 @@ function App() {
         )}
         {detailLoadingId
           ? <DetailLoading record={loadingRecord} onClose={closeDetail} />
-          : selected && <Detail detail={selected} onClose={closeDetail} onCopy={copyText} />}
+          : selected && <Detail detail={selected} onClose={closeDetail} onCopy={copyText} onCopyImage={copyImage} />}
       </section>
     </main>
   )
@@ -669,6 +686,27 @@ function fallbackCopy(value: string) {
   const ok = document.execCommand('copy')
   document.body.removeChild(area)
   if (!ok) throw new Error('复制失败，请手动选择文本')
+}
+
+async function blobFromDataUrl(dataUrl: string): Promise<Blob> {
+  const [head, data] = dataUrl.split(',')
+  const mime = /data:(.*?);base64/.exec(head)?.[1] ?? 'application/octet-stream'
+  const binary = atob(data)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+  return new Blob([bytes], { type: mime })
+}
+
+async function toPngBlob(blob: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob)
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((png) => (png ? resolve(png) : reject(new Error('图片转换为 PNG 失败'))), 'image/png'),
+  )
 }
 
 function ClearableInput({
@@ -733,10 +771,12 @@ function Detail({
   detail,
   onClose,
   onCopy,
+  onCopyImage,
 }: {
   detail: RecordDetail
   onClose: () => void
   onCopy: (value: string, label: string) => void
+  onCopyImage: (dataUrl: string, label: string) => void
 }) {
   const [tab, setTab] = useState<'request' | 'response'>('request')
   const [pretty, setPretty] = useState(true)
@@ -812,7 +852,9 @@ function Detail({
               格式化
             </label>
           )}
-          <button className="ghost compact" disabled={!rawBody} onClick={() => void onCopy(body || rawBody, 'Body')}>复制</button>
+          {imagePreview
+            ? <button className="ghost compact" onClick={() => void onCopyImage(imagePreview, '图片')}>复制图片</button>
+            : <button className="ghost compact" disabled={!rawBody} onClick={() => void onCopy(body || rawBody, 'Body')}>复制</button>}
         </span>
       </h3>
       {note && <div className="note">{note}</div>}
