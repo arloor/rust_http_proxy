@@ -3,6 +3,7 @@ export type Settings = {
   ca_available: boolean
   max_records: number
   body_limit_bytes: number
+  db_bytes: number
 }
 
 export type Target = { id: number; suffix: string; created_at_ms: number; cli_managed: boolean }

@@ -26,6 +26,7 @@ pub(crate) struct MitmSettings {
     pub ca_available: bool,
     pub max_records: usize,
     pub body_limit_bytes: usize,
+    pub db_bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -266,6 +267,7 @@ impl MitmManager {
             ca_available: self.ca_available,
             max_records: self.max_records.load(Ordering::Acquire),
             body_limit_bytes: self.body_limit_bytes.load(Ordering::Acquire),
+            db_bytes: db_file_bytes(&self.db_path),
         }
     }
 
@@ -684,6 +686,18 @@ fn table_has_column(connection: &Connection, table: &str, column: &str) -> Resul
         .collect::<Result<Vec<_>, _>>()?
         .iter()
         .any(|name| name == column))
+}
+
+// WAL 模式下真实占用 = 主库 + wal + shm
+fn db_file_bytes(path: &Path) -> u64 {
+    ["", "-wal", "-shm"]
+        .iter()
+        .map(|suffix| {
+            let mut file = path.as_os_str().to_owned();
+            file.push(suffix);
+            fs::metadata(&file).map(|metadata| metadata.len()).unwrap_or(0)
+        })
+        .sum()
 }
 
 fn load_settings(connection: &Connection) -> Result<(bool, usize, usize), ManagerError> {
@@ -1320,6 +1334,7 @@ mod tests {
         let path = test_db("settings");
         let manager = MitmManager::open(path.clone(), true, &["Example.COM".to_owned()], false, 10_000, 65_536)?;
         assert!(manager.should_mitm("api.example.com"));
+        assert!(manager.settings().db_bytes > 0);
         assert!(manager.targets()[0].cli_managed);
         let protected_id = manager.targets()[0].id;
         let error = manager

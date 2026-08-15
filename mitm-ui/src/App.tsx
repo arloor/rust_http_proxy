@@ -60,6 +60,7 @@ function App() {
   const [pinToLatest, setPinToLatest] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
+  const [detailTab, setDetailTab] = useState<'request' | 'response'>('request')
   const detailRequestRef = useRef(0)
   const activeRecordIdRef = useRef<string | null>(null)
 
@@ -242,6 +243,12 @@ function App() {
     void refreshMeta()
   }, [refreshMeta])
 
+  // DB 大小、prune 后过期的 URL 分类计数等没有事件驱动，周期性兜底刷新
+  useEffect(() => {
+    const timer = window.setInterval(() => void refreshMeta(), 10_000)
+    return () => window.clearInterval(timer)
+  }, [refreshMeta])
+
   useEffect(() => {
     loadedCountRef.current = 0
     pinToLatestRef.current = true
@@ -283,7 +290,7 @@ function App() {
       schedule()
     }
     const onFullEvent = () => {
-      needRecords = needMeta = includeDetail = true
+      needRecords = needMeta = needGroups = includeDetail = true
       schedule()
     }
     source.addEventListener('open', () => setLive(true))
@@ -344,6 +351,7 @@ function App() {
     activeRecordIdRef.current = null
     setDetailLoadingId(null)
     setSelected(null)
+    setDetailTab('request')
   }, [])
 
   const loadMore = useCallback(async () => {
@@ -374,6 +382,7 @@ function App() {
       setRecords([])
       setNextBefore(null)
       setSelected(null)
+      setDetailTab('request')
       await refreshMeta()
     } catch (value) {
       handleError(value)
@@ -510,6 +519,7 @@ function App() {
           </span>
           <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● 实时' : '○ 重连中'}</span>
           <span className="record-count">{records.length} 条记录</span>
+          <span className="record-count" title="mitm.sqlite3 主库 + WAL + SHM 总大小，每 10 秒刷新">DB {formatBytes(settings?.db_bytes ?? 0)}</span>
         </div>
       </section>
 
@@ -668,8 +678,17 @@ function App() {
           />
         )}
         {detailLoadingId
-          ? <DetailLoading record={loadingRecord} onClose={closeDetail} />
-          : selected && <Detail detail={selected} onClose={closeDetail} onCopy={copyText} onCopyImage={copyImage} />}
+          ? <DetailLoading record={loadingRecord} tab={detailTab} onTabChange={setDetailTab} onClose={closeDetail} />
+          : selected && (
+            <Detail
+              detail={selected}
+              tab={detailTab}
+              onTabChange={setDetailTab}
+              onClose={closeDetail}
+              onCopy={copyText}
+              onCopyImage={copyImage}
+            />
+          )}
       </section>
     </main>
   )
@@ -735,7 +754,17 @@ function Toggle({ label, checked, disabled, onChange }: { label: string; checked
   </label>
 }
 
-function DetailLoading({ record, onClose }: { record: RecordSummary | null; onClose: () => void }) {
+function DetailLoading({
+  record,
+  tab,
+  onTabChange,
+  onClose,
+}: {
+  record: RecordSummary | null
+  tab: 'request' | 'response'
+  onTabChange: (tab: 'request' | 'response') => void
+  onClose: () => void
+}) {
   return (
     <aside className="detail detail-loading" aria-busy="true" aria-live="polite">
       <div className="detail-head">
@@ -746,6 +775,10 @@ function DetailLoading({ record, onClose }: { record: RecordSummary | null; onCl
         <button aria-label="关闭详情" onClick={onClose}>×</button>
       </div>
       {record && <p className="detail-url loading-detail-url">{fullUrl(record)}</p>}
+      <div className="tabs">
+        <button className={tab === 'request' ? 'active' : ''} onClick={() => onTabChange('request')}>Request</button>
+        <button className={tab === 'response' ? 'active' : ''} onClick={() => onTabChange('response')}>Response</button>
+      </div>
       <div className="detail-loading-message">
         <span className="loading-spinner" aria-hidden="true" />
         <span><strong>正在加载详情</strong><small>正在读取 Headers 和 Body…</small></span>
@@ -769,18 +802,20 @@ function DetailLoading({ record, onClose }: { record: RecordSummary | null; onCl
 
 function Detail({
   detail,
+  tab,
+  onTabChange,
   onClose,
   onCopy,
   onCopyImage,
 }: {
   detail: RecordDetail
+  tab: 'request' | 'response'
+  onTabChange: (tab: 'request' | 'response') => void
   onClose: () => void
   onCopy: (value: string, label: string) => void
   onCopyImage: (dataUrl: string, label: string) => void
 }) {
-  const [tab, setTab] = useState<'request' | 'response'>('request')
   const [pretty, setPretty] = useState(true)
-  useEffect(() => setTab('request'), [detail.id])
   const request = tab === 'request'
   const headers = request ? detail.request_headers : detail.response_headers
   const rawBody = request ? detail.request_body : detail.response_body
@@ -817,8 +852,8 @@ function Detail({
         {detail.response_version && <span>→ {detail.response_version}</span>}
       </div>
       <div className="tabs">
-        <button className={tab === 'request' ? 'active' : ''} onClick={() => setTab('request')}>Request</button>
-        <button className={tab === 'response' ? 'active' : ''} onClick={() => setTab('response')}>Response</button>
+        <button className={tab === 'request' ? 'active' : ''} onClick={() => onTabChange('request')}>Request</button>
+        <button className={tab === 'response' ? 'active' : ''} onClick={() => onTabChange('response')}>Response</button>
       </div>
       <h3>
         Headers
