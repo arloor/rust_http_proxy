@@ -36,9 +36,15 @@ function App() {
   const [newTarget, setNewTarget] = useState('')
   const [error, setError] = useState('')
   const refreshTimer = useRef<number | null>(null)
+  const selectedIdRef = useRef<string | null>(null)
+  const loadedCountRef = useRef(0)
+
+  useEffect(() => {
+    selectedIdRef.current = selected?.id ?? null
+  }, [selected])
 
   const queryString = useMemo(() => {
-    const params = new URLSearchParams({ limit: '100' })
+    const params = new URLSearchParams()
     if (host) params.set('host', host)
     if (path) params.set('path', path)
     if (method) params.set('method', method)
@@ -67,44 +73,81 @@ function App() {
     }
   }, [handleError])
 
-  const refreshRecords = useCallback(async () => {
-    try {
-      const page = await api<RecordPage>(`/records?${queryString}`)
-      setRecords(page.records)
-      setNextBefore(page.next_before)
-      if (selected) {
-        const detail = await api<RecordDetail>(`/records/${selected.id}`).catch(() => null)
-        setSelected(detail)
+  const refreshRecords = useCallback(
+    async (includeDetail = false) => {
+      try {
+        // 已经「加载更早记录」时按已加载条数拉取，避免刷新后列表缩回第一页导致跳动
+        const limit = Math.min(Math.max(loadedCountRef.current, 100), 1000)
+        const page = await api<RecordPage>(`/records?limit=${limit}&${queryString}`)
+        loadedCountRef.current = page.records.length
+        setRecords(page.records)
+        setNextBefore(page.next_before)
+        const id = selectedIdRef.current
+        if (includeDetail && id) {
+          const detail = await api<RecordDetail>(`/records/${id}`).catch(() => null)
+          if (detail === null) {
+            setSelected(null)
+          } else {
+            // 内容没变就不触发重渲染，避免详情面板闪烁
+            setSelected((current) =>
+              current && JSON.stringify(current) === JSON.stringify(detail) ? current : detail,
+            )
+          }
+        }
+        setError('')
+      } catch (value) {
+        handleError(value)
       }
-      setError('')
-    } catch (value) {
-      handleError(value)
-    }
-  }, [handleError, queryString, selected?.id])
+    },
+    [handleError, queryString],
+  )
 
   useEffect(() => {
     void refreshMeta()
   }, [refreshMeta])
 
   useEffect(() => {
-    void refreshRecords()
+    void refreshRecords(true)
   }, [refreshRecords])
 
   useEffect(() => {
     const source = new EventSource('/mitm/api/events')
-    source.onmessage = () => {
+    let needRecords = false
+    let needMeta = false
+    let includeDetail = false
+    const schedule = () => {
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
       refreshTimer.current = window.setTimeout(() => {
-        void refreshRecords()
-        void refreshMeta()
-      }, 180)
+        const pending = needRecords ? refreshRecords(includeDetail) : Promise.resolve()
+        void pending.then(() => (needMeta ? refreshMeta() : undefined))
+        needRecords = needMeta = includeDetail = false
+      }, 250)
     }
-    source.addEventListener('record_created', source.onmessage)
-    source.addEventListener('record_updated', source.onmessage)
-    source.addEventListener('settings', source.onmessage)
-    source.addEventListener('targets', source.onmessage)
-    source.addEventListener('records_cleared', source.onmessage)
-    source.addEventListener('resync', source.onmessage)
+    const onRecordEvent = (event: MessageEvent) => {
+      needRecords = true
+      try {
+        const data = JSON.parse(event.data) as { record_id?: string }
+        // 只有当前选中记录有更新时才重新拉取详情
+        if (data.record_id && data.record_id === selectedIdRef.current) includeDetail = true
+      } catch {
+        includeDetail = true
+      }
+      schedule()
+    }
+    const onMetaEvent = () => {
+      needMeta = true
+      schedule()
+    }
+    const onFullEvent = () => {
+      needRecords = needMeta = includeDetail = true
+      schedule()
+    }
+    source.addEventListener('record_created', onRecordEvent)
+    source.addEventListener('record_updated', onRecordEvent)
+    source.addEventListener('settings', onMetaEvent)
+    source.addEventListener('targets', onMetaEvent)
+    source.addEventListener('records_cleared', onFullEvent)
+    source.addEventListener('resync', onFullEvent)
     source.onerror = () => setError('实时连接暂时中断，浏览器正在自动重连')
     return () => {
       source.close()
@@ -145,7 +188,8 @@ function App() {
   async function loadMore() {
     if (nextBefore === null) return
     try {
-      const page = await api<RecordPage>(`/records?${queryString}&before=${nextBefore}`)
+      const page = await api<RecordPage>(`/records?limit=100&${queryString}&before=${nextBefore}`)
+      loadedCountRef.current += page.records.length
       setRecords((current) => [...current, ...page.records])
       setNextBefore(page.next_before)
     } catch (value) {
@@ -157,6 +201,7 @@ function App() {
     if (!window.confirm('确定清空所有 MITM 明文记录吗？此操作不可撤销。')) return
     try {
       await api<void>('/records', { method: 'DELETE' })
+      loadedCountRef.current = 0
       setRecords([])
       setSelected(null)
       await refreshMeta()
