@@ -239,7 +239,7 @@ rust_http_proxy -p 7788 \
 - 实时显示流式响应。关闭抓取后，在途记录会保留已经捕获的部分并标记为 `capture_stopped`。
 - 默认保留最近 10,000 条记录，请求与响应 body 分别最多保存 64 KiB；可在面板中调整。
 
-每次启动时，命令行中全部 `--mitm-domain-suffix` 会原子替换 SQLite 中保存的目标列表；未传该参数会清空目标。`--mitm-dump` 仅在新数据库第一次创建时初始化“明文抓取”开关，之后以 SQLite 中的持久化抓取设置为准，并且不会向普通日志输出明文。响应 gzip 会在旁路解压后展示；二进制内容、WebSocket 数据帧和不支持的压缩格式不会保存 body，详情中会显示跳过原因。
+每次启动时，命令行中全部 `--mitm-domain-suffix` 会原子替换 SQLite 中保存的目标列表；未传该参数会清空目标。`--mitm-dump` 仅在新数据库第一次创建时初始化“明文抓取”开关，之后以 SQLite 中的持久化抓取设置为准，并且不会向普通日志输出明文。请求和响应的 `gzip`、`deflate`、`br`、`zstd` 以及多层 `Content-Encoding` 会在旁路解压后展示；二进制内容、WebSocket 数据帧和不支持的压缩格式不会保存 body，详情中会显示跳过原因。
 
 > ⚠️ **安全提示**：记录会完整保存 `Authorization`、`Cookie`、`Set-Cookie` 等敏感头。Basic 认证本身不加密凭据，管理面板应使用 `--over-tls`、反向代理 TLS 或仅在可信网络监听，并妥善保护 SQLite 文件。
 

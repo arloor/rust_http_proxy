@@ -2077,6 +2077,7 @@ dependencies = [
  "axum-extra",
  "axum-macros",
  "base64 0.23.1",
+ "brotli",
  "build-time",
  "cgroup_traffic",
  "chrono",
@@ -2124,6 +2125,7 @@ dependencies = [
  "tracing",
  "windows-service",
  "x509-cert",
+ "zstd",
 ]
 
 [[package]]

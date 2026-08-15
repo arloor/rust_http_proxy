@@ -50,7 +50,7 @@ pub(super) async fn capture_and_drain_mitm_request_body(
                     &mut total,
                     &mut truncated,
                 ),
-                CaptureMode::Gzip(decoder) => match decoder.decode_chunk(data) {
+                CaptureMode::Decoded(decoder) => match decoder.decode_chunk(data) {
                     Ok(decoded) => capture_bytes(
                         &manager,
                         &id,
@@ -60,14 +60,14 @@ pub(super) async fn capture_and_drain_mitm_request_body(
                         &mut total,
                         &mut truncated,
                     ),
-                    Err(error) => mode = CaptureMode::Skip(format!("gzip decode failed: {error}")),
+                    Err(error) => mode = CaptureMode::Skip(format!("content decode failed: {error}")),
                 },
                 CaptureMode::Skip(_) => {}
             }
         }
     }
     let note = match &mut mode {
-        CaptureMode::Gzip(decoder) => match decoder.finish() {
+        CaptureMode::Decoded(decoder) => match decoder.finish() {
             Ok(decoded) => {
                 capture_bytes(
                     &manager,
@@ -80,7 +80,7 @@ pub(super) async fn capture_and_drain_mitm_request_body(
                 );
                 truncated.then(|| "body truncated at configured limit".to_owned())
             }
-            Err(error) => Some(format!("gzip finish failed: {error}")),
+            Err(error) => Some(format!("content decode finish failed: {error}")),
         },
         CaptureMode::Skip(reason) => Some(reason.clone()),
         CaptureMode::Plaintext => truncated.then(|| "body truncated at configured limit".to_owned()),
@@ -114,19 +114,21 @@ pub(super) fn map_boxed_mitm_response_body(
     })
 }
 
-#[derive(Debug)]
 enum CaptureMode {
     Plaintext,
-    Gzip(GzipBodyDecoder),
+    Decoded(DecoderPipeline),
     Skip(String),
 }
 
 fn body_capture_mode(headers: &http::HeaderMap) -> CaptureMode {
     let content_encoding = non_identity_content_encodings(headers);
-    let encoding_mode = match content_encoding.as_slice() {
-        [] => CaptureMode::Plaintext,
-        [encoding] if encoding.eq_ignore_ascii_case("gzip") => CaptureMode::Gzip(GzipBodyDecoder::new()),
-        _ => return CaptureMode::Skip(format!("unsupported content-encoding: {}", content_encoding.join(", "))),
+    let encoding_mode = if content_encoding.is_empty() {
+        CaptureMode::Plaintext
+    } else {
+        match DecoderPipeline::new(&content_encoding) {
+            Ok(decoder) => CaptureMode::Decoded(decoder),
+            Err(reason) => return CaptureMode::Skip(reason),
+        }
     };
 
     let Some(content_type) = headers.get(CONTENT_TYPE) else {
@@ -180,26 +182,102 @@ fn is_human_readable_media_type(media_type: &str) -> bool {
         || media_type.ends_with("+xml")
 }
 
-#[derive(Debug)]
-struct GzipBodyDecoder {
-    decoder: flate2::write::GzDecoder<Vec<u8>>,
+struct DecoderPipeline {
+    stages: Vec<DecoderStage>,
 }
 
-impl GzipBodyDecoder {
-    fn new() -> Self {
-        Self {
-            decoder: flate2::write::GzDecoder::new(Vec::new()),
-        }
+impl DecoderPipeline {
+    fn new(content_encodings: &[String]) -> Result<Self, String> {
+        let stages = content_encodings
+            .iter()
+            .rev()
+            .map(|encoding| DecoderStage::new(encoding))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { stages })
     }
 
     fn decode_chunk(&mut self, compressed: &[u8]) -> io::Result<Bytes> {
-        self.decoder.write_all(compressed)?;
-        Ok(Bytes::from(std::mem::take(self.decoder.get_mut())))
+        let mut output = compressed.to_vec();
+        for stage in &mut self.stages {
+            output = stage.decode_chunk(&output)?;
+        }
+        Ok(Bytes::from(output))
     }
 
     fn finish(&mut self) -> io::Result<Bytes> {
-        self.decoder.try_finish()?;
-        Ok(Bytes::from(std::mem::take(self.decoder.get_mut())))
+        let mut decoded = Vec::new();
+        for index in 0..self.stages.len() {
+            let (finished, remaining) = self.stages.split_at_mut(index + 1);
+            let mut output = finished[index].finish()?;
+            for stage in remaining {
+                output = stage.decode_chunk(&output)?;
+            }
+            decoded.extend_from_slice(&output);
+        }
+        Ok(Bytes::from(decoded))
+    }
+}
+
+enum DecoderStage {
+    Gzip(flate2::write::GzDecoder<Vec<u8>>),
+    Deflate(flate2::write::ZlibDecoder<Vec<u8>>),
+    Brotli(Box<brotli::DecompressorWriter<Vec<u8>>>),
+    Zstd(zstd::stream::write::Decoder<'static, Vec<u8>>),
+}
+
+impl DecoderStage {
+    fn new(encoding: &str) -> Result<Self, String> {
+        match encoding.to_ascii_lowercase().as_str() {
+            "gzip" | "x-gzip" => Ok(Self::Gzip(flate2::write::GzDecoder::new(Vec::new()))),
+            "deflate" => Ok(Self::Deflate(flate2::write::ZlibDecoder::new(Vec::new()))),
+            "br" => Ok(Self::Brotli(Box::new(brotli::DecompressorWriter::new(Vec::new(), 4096)))),
+            "zstd" => zstd::stream::write::Decoder::new(Vec::new())
+                .map(Self::Zstd)
+                .map_err(|error| format!("failed to initialize zstd decoder: {error}")),
+            _ => Err(format!("unsupported content-encoding: {encoding}")),
+        }
+    }
+
+    fn decode_chunk(&mut self, compressed: &[u8]) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Gzip(decoder) => {
+                decoder.write_all(compressed)?;
+                Ok(std::mem::take(decoder.get_mut()))
+            }
+            Self::Deflate(decoder) => {
+                decoder.write_all(compressed)?;
+                Ok(std::mem::take(decoder.get_mut()))
+            }
+            Self::Brotli(decoder) => {
+                decoder.write_all(compressed)?;
+                Ok(std::mem::take(decoder.get_mut()))
+            }
+            Self::Zstd(decoder) => {
+                decoder.write_all(compressed)?;
+                Ok(std::mem::take(decoder.get_mut()))
+            }
+        }
+    }
+
+    fn finish(&mut self) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Gzip(decoder) => {
+                decoder.try_finish()?;
+                Ok(std::mem::take(decoder.get_mut()))
+            }
+            Self::Deflate(decoder) => {
+                decoder.try_finish()?;
+                Ok(std::mem::take(decoder.get_mut()))
+            }
+            Self::Brotli(decoder) => {
+                decoder.close()?;
+                Ok(std::mem::take(decoder.get_mut()))
+            }
+            Self::Zstd(decoder) => {
+                decoder.flush()?;
+                Ok(std::mem::take(decoder.get_mut()))
+            }
+        }
     }
 }
 
@@ -269,7 +347,7 @@ impl http_body::Body for MitmCaptureBody {
                             this.total_bytes,
                             this.truncated,
                         ),
-                        CaptureMode::Gzip(decoder) => match decoder.decode_chunk(data) {
+                        CaptureMode::Decoded(decoder) => match decoder.decode_chunk(data) {
                             Ok(decoded) => capture_bytes(
                                 this.manager,
                                 this.record_id,
@@ -280,7 +358,7 @@ impl http_body::Body for MitmCaptureBody {
                                 this.truncated,
                             ),
                             Err(error) => {
-                                *this.mode = CaptureMode::Skip(format!("gzip decode failed: {error}"));
+                                *this.mode = CaptureMode::Skip(format!("content decode failed: {error}"));
                             }
                         },
                         CaptureMode::Skip(_) => {}
@@ -345,11 +423,11 @@ fn finish_capture(
     let mut note = None;
     if !*stopped {
         match mode {
-            CaptureMode::Gzip(decoder) => match decoder.finish() {
+            CaptureMode::Decoded(decoder) => match decoder.finish() {
                 Ok(decoded) => {
                     capture_bytes(manager, record_id, direction, &decoded, captured_bytes, total_bytes, truncated)
                 }
-                Err(error) => note = Some(format!("gzip finish failed: {error}")),
+                Err(error) => note = Some(format!("content decode finish failed: {error}")),
             },
             CaptureMode::Skip(reason) => note = Some(reason.clone()),
             CaptureMode::Plaintext => {}
@@ -385,7 +463,12 @@ fn capture_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::Compression;
+    use flate2::write::{GzEncoder, ZlibEncoder};
     use http::{HeaderMap, HeaderValue};
+    use std::io::{Cursor, Write};
+
+    const PLAINTEXT: &[u8] = br#"{"message":"compressed MITM plaintext","ok":true}"#;
 
     #[test]
     fn response_mode_skips_binary() {
@@ -395,10 +478,70 @@ mod tests {
     }
 
     #[test]
-    fn response_mode_decodes_gzip_text() {
+    fn response_mode_accepts_supported_content_encodings() -> Result<(), crate::DynError> {
+        for encoding in ["gzip", "x-gzip", "deflate", "br", "zstd"] {
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            headers.insert(CONTENT_ENCODING, HeaderValue::from_str(encoding)?);
+            assert!(matches!(body_capture_mode(&headers), CaptureMode::Decoded(_)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn decodes_gzip_deflate_brotli_and_zstd_streams() -> Result<(), crate::DynError> {
+        assert_decodes(&["gzip"], gzip(PLAINTEXT)?)?;
+        assert_decodes(&["deflate"], deflate(PLAINTEXT)?)?;
+        assert_decodes(&["br"], brotli(PLAINTEXT)?)?;
+        assert_decodes(&["zstd"], zstd::stream::encode_all(Cursor::new(PLAINTEXT), 3)?)?;
+        Ok(())
+    }
+
+    #[test]
+    fn decodes_multiple_content_encodings_in_reverse_order() -> Result<(), crate::DynError> {
+        let gzip_then_brotli = brotli(&gzip(PLAINTEXT)?)?;
+        assert_decodes(&["gzip", "br"], gzip_then_brotli)?;
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_content_encoding_is_skipped() {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
-        assert!(matches!(body_capture_mode(&headers), CaptureMode::Gzip(_)));
+        headers.insert(CONTENT_ENCODING, HeaderValue::from_static("compress"));
+        assert!(matches!(body_capture_mode(&headers), CaptureMode::Skip(_)));
+    }
+
+    fn assert_decodes(encodings: &[&str], compressed: Vec<u8>) -> io::Result<()> {
+        let encodings = encodings
+            .iter()
+            .map(|encoding| (*encoding).to_owned())
+            .collect::<Vec<_>>();
+        let mut pipeline = DecoderPipeline::new(&encodings).map_err(io::Error::other)?;
+        let mut decoded = Vec::new();
+        for chunk in compressed.chunks(7) {
+            decoded.extend_from_slice(&pipeline.decode_chunk(chunk)?);
+        }
+        decoded.extend_from_slice(&pipeline.finish()?);
+        assert_eq!(decoded, PLAINTEXT);
+        Ok(())
+    }
+
+    fn gzip(input: &[u8]) -> io::Result<Vec<u8>> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(input)?;
+        encoder.finish()
+    }
+
+    fn deflate(input: &[u8]) -> io::Result<Vec<u8>> {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(input)?;
+        encoder.finish()
+    }
+
+    fn brotli(input: &[u8]) -> io::Result<Vec<u8>> {
+        let mut encoder = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
+        encoder.write_all(input)?;
+        Ok(encoder.into_inner())
     }
 }
