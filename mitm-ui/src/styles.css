@@ -81,9 +81,9 @@ body.col-resizing * { cursor: col-resize !important; }
 .group-search { width: 100%; margin: 0 0 8px; box-sizing: border-box; }
 .group-search input { font-size: 12px; }
 .clearable { position: relative; display: flex; align-items: center; }
-.clearable input { flex: 1; width: 100%; min-width: 0; padding-right: 26px; }
-.input-clear { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); display: flex; border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 14px; line-height: 1; padding: 1px; border-radius: 3px; }
-.input-clear:hover { color: var(--red); }
+.clearable input { flex: 1; width: 100%; min-width: 0; padding-right: 30px; }
+.input-clear { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 16px; line-height: 1; padding: 0; border-radius: 50%; transition: color .15s, background .15s; }
+.input-clear:hover { color: var(--red); background: #fee2e2; }
 .target-form button, .load-more { background: var(--teal); color: #fff; border: 1px solid var(--teal); border-radius: 6px; cursor: pointer; padding: 0 14px; font-size: 12px; font-weight: 600; white-space: nowrap; flex: none; transition: background .15s; }
 .target-form button:hover, .load-more:hover { background: #0f766e; }
 .target-list { margin-top: 9px; }
@@ -151,6 +151,7 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .state-error { color: #991b1b; border-color: #fecaca; background: #fee2e2; }
 .state-capturing { color: var(--amber); border-color: #fde68a; background: #fffbeb; }
 .state-interrupted, .state-capture_stopped { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+.state-upgraded { color: #1d4ed8; border-color: #bfdbfe; background: #dbeafe; }
 
 /* ---------- Empty states ---------- */
 .empty, .empty-table { color: #64748b; text-align: center; font-size: 11px; }

@@ -6,6 +6,7 @@ const CAPTURE_LABELS: Record<string, string> = {
   capturing: '抓取中',
   interrupted: '中断',
   capture_stopped: '已停止',
+  upgraded: '已提升',
   error: '错误',
 }
 
