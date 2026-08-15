@@ -6,7 +6,6 @@ mod axum_handler;
 #[cfg(target_os = "linux")]
 mod cgroup_stats;
 pub mod config;
-mod dns_resolver;
 #[cfg(test)]
 mod e2e_test_support;
 #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -30,6 +29,9 @@ mod mitm_manager;
 mod mitm_stub_e2e_tests;
 mod mitm_web;
 mod proxy;
+mod reverse_proxy_client;
+#[cfg(test)]
+mod reverse_proxy_e2e_tests;
 mod static_serve;
 #[cfg(test)]
 mod websocket_e2e_tests;

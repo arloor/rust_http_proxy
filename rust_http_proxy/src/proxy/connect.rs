@@ -16,6 +16,7 @@ pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: Option<bool>
     if addrs.is_empty() {
         return Err(io::Error::new(ErrorKind::InvalidInput, "No addresses found"));
     }
+    let prefer_ipv6 = prefer_ipv6(ipv6_first, &addrs);
 
     // 分离IPv4和IPv6地址
     let mut v4_addrs = Vec::new();
@@ -83,11 +84,11 @@ pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: Option<bool>
     } else if !has_v4 && has_v6 {
         connect_v6.await
     } else {
-        // 根据 ipv6_first 参数决定优先级
+        // 显式配置优先；未配置时遵循 DNS 返回的第一个地址族。
         use futures::future::{self, Either};
 
-        match ipv6_first {
-            Some(true) => {
+        match prefer_ipv6 {
+            true => {
                 // IPv6 优先：先启动 IPv6，300ms 后并发启动 IPv4
                 let v4_fut = async move {
                     tokio::time::sleep(FIXED_DELAY).await;
@@ -109,7 +110,7 @@ pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: Option<bool>
                     },
                 }
             }
-            Some(false) => {
+            false => {
                 // IPv4 优先：先启动 IPv4，300ms 后并发启动 IPv6
                 let v6_fut = async move {
                     tokio::time::sleep(FIXED_DELAY).await;
@@ -131,31 +132,12 @@ pub(crate) async fn connect_with_preference(addr: &str, ipv6_first: Option<bool>
                     },
                 }
             }
-            None => {
-                // 不指定优先级：保持 DNS 返回的顺序，同时并发尝试所有地址
-                // 这使用标准的 Happy Eyeballs 算法，按 DNS 返回顺序但并发尝试
-                let v4_fut = async move {
-                    tokio::time::sleep(FIXED_DELAY).await;
-                    connect_v4.await
-                };
-                let v6_fut = connect_v6;
-
-                tokio::pin!(v4_fut);
-                tokio::pin!(v6_fut);
-
-                match future::select(v4_fut, v6_fut).await {
-                    Either::Left((v4_res, v6_fut)) => match v4_res {
-                        Ok(stream) => Ok(stream),
-                        Err(_v4_err) => v6_fut.await,
-                    },
-                    Either::Right((v6_res, v4_fut)) => match v6_res {
-                        Ok(stream) => Ok(stream),
-                        Err(_v6_err) => v4_fut.await,
-                    },
-                }
-            }
         }
     }
+}
+
+fn prefer_ipv6(configured: Option<bool>, addrs: &[SocketAddr]) -> bool {
+    configured.unwrap_or_else(|| addrs.first().is_some_and(SocketAddr::is_ipv6))
 }
 
 /// Debug 模式：不验证证书（方便测试）
@@ -170,6 +152,10 @@ pub(crate) fn build_tls_connector_with_http_alpn() -> TlsConnector {
 
 pub(crate) fn build_tls_connector_with_http1_alpn() -> TlsConnector {
     build_tls_connector_with_alpn(vec![b"http/1.1".to_vec()])
+}
+
+pub(crate) fn build_tls_connector_with_http2_alpn() -> TlsConnector {
+    build_tls_connector_with_alpn(vec![b"h2".to_vec()])
 }
 
 fn build_tls_connector_with_alpn(alpn_protocols: Vec<Vec<u8>>) -> TlsConnector {
@@ -188,10 +174,10 @@ fn build_tls_connector_with_alpn(alpn_protocols: Vec<Vec<u8>>) -> TlsConnector {
 
     #[cfg(not(debug_assertions))]
     {
-        use hyper_rustls::ConfigBuilderExt;
+        use rustls_platform_verifier::BuilderVerifierExt;
         #[allow(clippy::expect_used)]
         let config = tokio_rustls::rustls::ClientConfig::builder()
-            .try_with_platform_verifier()
+            .with_platform_verifier()
             .expect("Failed to create platform verifier")
             .with_no_client_auth();
         let mut config = config;
@@ -365,5 +351,22 @@ impl tokio::io::AsyncWrite for EitherTlsStream {
             EitherTlsStreamProj::Tcp { stream } => stream.poll_shutdown(cx),
             EitherTlsStreamProj::Tls { stream } => stream.poll_shutdown(cx),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unspecified_address_family_follows_first_dns_result() -> Result<(), std::net::AddrParseError> {
+        let ipv4_first = ["127.0.0.1:80".parse()?, "[::1]:80".parse()?];
+        let ipv6_first = ["[::1]:80".parse()?, "127.0.0.1:80".parse()?];
+
+        assert!(!prefer_ipv6(None, &ipv4_first));
+        assert!(prefer_ipv6(None, &ipv6_first));
+        assert!(prefer_ipv6(Some(true), &ipv4_first));
+        assert!(!prefer_ipv6(Some(false), &ipv6_first));
+        Ok(())
     }
 }

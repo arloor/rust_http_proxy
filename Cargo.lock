@@ -1228,41 +1228,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-rustls"
-version = "0.27.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f"
-dependencies = [
- "http",
- "hyper",
- "hyper-util",
- "log",
- "rustls",
- "rustls-native-certs",
- "rustls-platform-verifier",
- "tokio",
- "tokio-rustls",
- "tower-service",
-]
-
-[[package]]
 name = "hyper-util"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
  "bytes",
- "futures-channel",
- "futures-util",
  "http",
  "http-body",
  "hyper",
- "libc",
  "pin-project-lite",
- "socket2",
  "tokio",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
@@ -2090,7 +2067,6 @@ dependencies = [
  "http-body-util",
  "httpdate",
  "hyper",
- "hyper-rustls",
  "hyper-util",
  "io_x",
  "ipnetwork 0.21.1",
@@ -2111,6 +2087,7 @@ dependencies = [
  "rusqlite",
  "rust-embed",
  "rustls-pemfile",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "serde_yaml_bw",
@@ -2121,7 +2098,6 @@ dependencies = [
  "toml",
  "tower",
  "tower-http",
- "tower-service",
  "tracing",
  "windows-service",
  "x509-cert",

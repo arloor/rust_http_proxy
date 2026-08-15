@@ -20,10 +20,19 @@ pub(crate) struct SchemeHostPort {
 
 impl Display for SchemeHostPort {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let host = format_uri_host(&self.host);
         match self.port {
-            Some(port) => write!(f, "{}://{}:{}", self.scheme, self.host, port),
-            None => write!(f, "{}://{}", self.scheme, self.host),
+            Some(port) => write!(f, "{}://{}:{}", self.scheme, host, port),
+            None => write!(f, "{}://{}", self.scheme, host),
         }
+    }
+}
+
+fn format_uri_host(host: &str) -> String {
+    if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
     }
 }
 
@@ -45,8 +54,8 @@ pub(super) fn extract_scheme_host_port(
             .headers()
             .get(http::header::HOST)
             .and_then(|host| host.to_str().ok())
-            .and_then(|host_str| host_str.split(':').next())
-            .map(str::to_string);
+            .and_then(|host| host.parse::<http::uri::Authority>().ok())
+            .map(|authority| authority.host().to_owned());
         Ok((
             SchemeHostPort {
                 scheme: scheme.to_owned(),
@@ -59,24 +68,16 @@ pub(super) fn extract_scheme_host_port(
             }),
         ))
     } else {
-        let mut split = req
+        let authority = req
             .headers()
             .get(http::header::HOST)
             .ok_or(io::Error::new(ErrorKind::InvalidData, "Host Header is absent in HTTP/1.1"))?
             .to_str()
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?
-            .split(':');
-        let host = split
-            .next()
-            .ok_or(io::Error::new(ErrorKind::InvalidData, "host not in header"))?
-            .to_string();
-        let port = match split.next() {
-            Some(port) => Some(
-                port.parse::<u16>()
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
-            ),
-            None => None,
-        };
+            .parse::<http::uri::Authority>()
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        let host = authority.host().to_owned();
+        let port = authority.port_u16();
         Ok((
             SchemeHostPort {
                 scheme: scheme.to_owned(),
@@ -211,5 +212,15 @@ mod tests {
 
         assert!(!is_websocket_upgrade(&req));
         Ok(())
+    }
+
+    #[test]
+    fn scheme_host_port_formats_ipv6_authority() {
+        let origin = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "::1".to_owned(),
+            port: Some(8443),
+        };
+        assert_eq!(origin.to_string(), "https://[::1]:8443");
     }
 }

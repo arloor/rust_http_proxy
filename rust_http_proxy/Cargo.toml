@@ -50,13 +50,7 @@ regex = "1"
 log_x = { path = "../log_x" }
 io_x = { path = "../io_x" }
 prom_label = { path = "../prom_label" }
-hyper-rustls = { version = "0.27", default-features = false, features = [
-    "rustls-platform-verifier",
-    "http2",
-    "native-tokio",
-    "http1",
-    "logging",
-] }
+rustls-platform-verifier = "0.7"
 http = "1"
 lru_time_cache = "0.11"
 toml = "1"
@@ -67,7 +61,6 @@ rust-embed = "8.7"
 # axum-bootstrap = { git = "https://github.com/arloor/axum-bootstrap", branch = "master",default-features = false  }
 axum-bootstrap = { version = "0.1.33", default-features = false }
 tower = "0.5"
-tower-service = "0.3"
 tower-http = { version = "0.6", features = [
     "cors",
     "timeout",
@@ -106,6 +99,6 @@ mimalloc = ["dep:mimalloc"]
 bpf = ["socket_filter", "cgroup_traffic"]
 bpf_vendored = ["bpf", "socket_filter/vendored", "cgroup_traffic/vendored"]
 bpf_static = ["bpf", "socket_filter/static", "cgroup_traffic/static"]
-aws_lc_rs = ["tokio-rustls/aws-lc-rs", "hyper-rustls/aws-lc-rs"]
-ring = ["tokio-rustls/ring", "hyper-rustls/ring"]
+aws_lc_rs = ["tokio-rustls/aws-lc-rs"]
+ring = ["tokio-rustls/ring"]
 winservice = ["windows-service"]

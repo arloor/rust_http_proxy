@@ -4,9 +4,6 @@ use http_body_util::BodyExt as _;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::body::Incoming;
-use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy;
-use hyper_util::client::legacy::connect::HttpConnector;
 use log::info;
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -15,10 +12,11 @@ use std::io::{self, ErrorKind};
 use std::str::FromStr;
 
 use crate::config::{Config, Param, normalize_static_auth_path_prefixes, parse_basic_auth_users};
-use crate::dns_resolver::CustomGaiDNSResolver;
+use crate::forward_proxy_client::{DirectConnectionKey, DirectProtocol};
 use crate::proxy::AccessLabel;
 use crate::proxy::SchemeHostPort;
 use crate::proxy::spawn_websocket_tunnel;
+use crate::reverse_proxy_client::ReverseProxyClient;
 
 pub(crate) struct RedirectBackpaths {
     pub(crate) redirect_url: String,
@@ -87,10 +85,8 @@ impl LocationConfig {
 
 pub(crate) async fn handle_websocket_upgrade_reverse(
     upstream_req: Request<Incoming>, client_upgrade_fut: hyper::upgrade::OnUpgrade, traffic_label: AccessLabel,
-    reverse_client: &legacy::Client<
-        HttpsConnector<HttpConnector<CustomGaiDNSResolver>>,
-        http_body_util::combinators::BoxBody<axum::body::Bytes, std::io::Error>,
-    >,
+    connection_key: &DirectConnectionKey, reverse_client: &ReverseProxyClient<BoxBody<Bytes, io::Error>>,
+    ipv6_first: Option<bool>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     // 客户端的升级 future 已经在调用前准备好了
 
@@ -99,9 +95,8 @@ pub(crate) async fn handle_websocket_upgrade_reverse(
 
     // 发送升级请求到上游
     let mut upstream_resp = reverse_client
-        .request(upstream_req)
-        .await
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+        .send_request_uncached(upstream_req, connection_key, &traffic_label, ipv6_first)
+        .await?;
 
     // 检查上游是否返回 101 Switching Protocols
     if upstream_resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
@@ -114,7 +109,6 @@ pub(crate) async fn handle_websocket_upgrade_reverse(
     // 准备上游的升级
     let upstream_upgrade_fut = hyper::upgrade::on(&mut upstream_resp);
 
-    // 启动异步任务进行双向数据转发（反向代理场景需要统计流量）
     spawn_websocket_tunnel(client_upgrade_fut, upstream_upgrade_fut, Some(traffic_label), "reverse");
 
     let client_response = upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
@@ -122,36 +116,94 @@ pub(crate) async fn handle_websocket_upgrade_reverse(
     Ok(client_response)
 }
 
-pub(crate) fn build_upstream_req(
-    location: &str, upstream: &Upstream, req: Request<Incoming>, original_scheme_host_port: &SchemeHostPort,
-) -> io::Result<Request<Incoming>> {
+pub(crate) struct BuiltUpstreamRequest<B> {
+    pub(crate) request: Request<B>,
+    pub(crate) connection_key: DirectConnectionKey,
+}
+
+pub(crate) fn build_upstream_req<B>(
+    location: &str, upstream: &Upstream, req: Request<B>, original_scheme_host_port: &SchemeHostPort,
+) -> io::Result<BuiltUpstreamRequest<B>> {
     let method = req.method().clone();
     let path_and_query = match req.uri().path_and_query() {
         Some(path_and_query) => path_and_query.as_str(),
         None => "",
     };
-    let upstream_url = upstream.url_base.clone() + &path_and_query[location.len()..]; // upstream.url_base + 原始url去除location的部分
+    let remaining_path = path_and_query.get(location.len()..).ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("request path {path_and_query:?} does not match location {location:?}"),
+        )
+    })?;
+    let upstream_url = upstream.url_base.clone() + remaining_path; // upstream.url_base + 原始url去除location的部分
 
     // 先解析 URI 以提取 authority，然后再移动 upstream_url
     let upstream_uri = upstream_url
         .parse::<Uri>()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-    // let upstream_authority = upstream_uri.authority().cloned();
+    let upstream_scheme = upstream_uri
+        .scheme_str()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "upstream URI has no scheme"))?;
+    let upstream_authority = upstream_uri
+        .authority()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "upstream URI has no authority"))?;
+    let configured_host = upstream.headers.as_ref().and_then(|headers| {
+        headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(header::HOST.as_str()))
+            .map(|(_, value)| value.as_str())
+    });
+    let authority = resolve_upstream_template(
+        upstream
+            .authority
+            .as_deref()
+            .or(configured_host)
+            .unwrap_or(upstream_authority.as_str()),
+        original_scheme_host_port,
+    );
+    let authority = authority
+        .parse::<http::uri::Authority>()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("invalid upstream authority: {e}")))?;
+    let connect_to = resolve_upstream_template(
+        upstream.connect_to.as_deref().unwrap_or(upstream_authority.as_str()),
+        original_scheme_host_port,
+    );
+    let connect_to = socket_target(&connect_to, upstream_scheme)?;
+    let tls_server_name = if upstream_scheme.eq_ignore_ascii_case("https") {
+        Some(resolve_upstream_template(
+            upstream
+                .tls_server_name
+                .as_deref()
+                .unwrap_or_else(|| upstream_uri.host().unwrap_or_default()),
+            original_scheme_host_port,
+        ))
+    } else {
+        None
+    };
 
+    let upstream_version = match upstream.version {
+        Version::H1 => http::Version::HTTP_11,
+        Version::H2 => http::Version::HTTP_2,
+        Version::Auto => {
+            if upstream_scheme.eq_ignore_ascii_case("https") {
+                req.version()
+            } else {
+                http::Version::HTTP_11
+            }
+        }
+    };
+    let protocol = if upstream_version == http::Version::HTTP_2 {
+        DirectProtocol::Http2
+    } else {
+        DirectProtocol::Http1
+    };
+    let mut uri_parts = upstream_uri.into_parts();
+    uri_parts.authority = Some(authority.clone());
+    let request_uri = Uri::from_parts(uri_parts).map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
     let mut builder = Request::builder()
         .method(method)
-        .uri(upstream_uri)
-        .version(match upstream.version {
-            Version::H1 => http::Version::HTTP_11,
-            Version::H2 => http::Version::HTTP_2,
-            Version::Auto => {
-                if upstream.url_base.starts_with("https:") {
-                    req.version()
-                } else {
-                    http::Version::HTTP_11
-                }
-            }
-        });
+        .uri(request_uri)
+        .version(upstream_version);
     let header_map = match builder.headers_mut() {
         Some(header_map) => header_map,
         None => {
@@ -182,6 +234,9 @@ pub(crate) fn build_upstream_req(
                 warn!("skip empty header value for key: {}", key);
                 continue;
             }
+            if key.eq_ignore_ascii_case(header::HOST.as_str()) {
+                continue;
+            }
             let mut header_value = value.clone();
             if value == "#{host}" {
                 // TIPS: 即使本程序在反向代理的request中增加Host头部，如果upstream在H2协议中不读取Host头部，则仍然会使用uri中的host进行跨域检测，容易出现origin not allowed的问题
@@ -199,9 +254,57 @@ pub(crate) fn build_upstream_req(
             }
         }
     }
-    builder
+    if protocol == DirectProtocol::Http1 {
+        header_map.insert(
+            header::HOST,
+            HeaderValue::from_str(authority.as_str()).map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?,
+        );
+    }
+    let request = builder
         .body(req.into_body())
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    Ok(BuiltUpstreamRequest {
+        request,
+        connection_key: DirectConnectionKey {
+            connect_to,
+            tls_server_name,
+            authority: authority.to_string(),
+            protocol,
+        },
+    })
+}
+
+fn resolve_upstream_template(value: &str, original: &SchemeHostPort) -> String {
+    if value == "#{host}" {
+        let host = if original.host.contains(':') && !(original.host.starts_with('[') && original.host.ends_with(']')) {
+            format!("[{}]", original.host)
+        } else {
+            original.host.clone()
+        };
+        match original.port {
+            Some(port) => format!("{host}:{port}"),
+            None => host,
+        }
+    } else {
+        value.to_owned()
+    }
+}
+
+fn socket_target(authority: &str, scheme: &str) -> io::Result<String> {
+    let authority = authority
+        .parse::<http::uri::Authority>()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("invalid connect_to authority: {e}")))?;
+    if authority.port_u16().is_some() {
+        return Ok(authority.to_string());
+    }
+    let default_port = if scheme.eq_ignore_ascii_case("https") { 443 } else { 80 };
+    Ok(format!("{authority}:{default_port}"))
+}
+
+pub(crate) fn validate_tls_server_name(value: &str) -> io::Result<()> {
+    tokio_rustls::rustls::pki_types::ServerName::try_from(value.to_owned())
+        .map(|_| ())
+        .map_err(|error| io::Error::new(ErrorKind::InvalidInput, format!("invalid TLS server name: {error}")))
 }
 
 pub(crate) fn normalize302(
@@ -232,11 +335,17 @@ pub(crate) fn normalize302(
     Ok(())
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub(crate) struct Upstream {
     pub(crate) url_base: String, // https://google.com
     #[serde(default = "default_version")]
     pub(crate) version: Version,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) connect_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tls_server_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) authority: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) headers: Option<HashMap<String, String>>, // 可选的头部覆盖
 }
@@ -250,7 +359,7 @@ fn root() -> String {
     "/".to_owned()
 }
 
-#[derive(PartialEq, PartialOrd, Copy, Clone, Eq, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone, Eq, Ord, Hash, Serialize, Deserialize)]
 pub(crate) enum Version {
     #[serde(rename = "H1")]
     H1,
@@ -373,6 +482,9 @@ pub(crate) fn parse_location_specs(
                             upstream: crate::location::Upstream {
                                 url_base: (*upstream_url_base).to_owned() + path,
                                 version: crate::location::Version::Auto,
+                                connect_to: None,
+                                tls_server_name: None,
+                                authority: None,
                                 headers: None,
                             },
                             basic_auth_users: Vec::new(),
@@ -470,6 +582,34 @@ pub(crate) fn parse_location_specs(
                                 upstream.url_base
                             )
                             .into());
+                        }
+                        let scheme = upstream_url_base.scheme_str().unwrap_or("http");
+                        if upstream.connect_to.as_deref() == Some("#{host}") {
+                            return Err(format!(
+                                "upstream connect_to must be a static host or IP for location {location}; #{{host}} is not allowed"
+                            )
+                            .into());
+                        }
+                        if let Some(connect_to) = upstream.connect_to.as_deref() {
+                            socket_target(connect_to, scheme).map_err(|error| {
+                                format!("wrong upstream connect_to for location {location}: {error}")
+                            })?;
+                        }
+                        if let Some(authority) = upstream.authority.as_deref().filter(|value| *value != "#{host}") {
+                            authority.parse::<http::uri::Authority>().map_err(|error| {
+                                format!("wrong upstream authority for location {location}: {error}")
+                            })?;
+                        }
+                        if upstream.tls_server_name.as_deref() == Some("#{host}") {
+                            return Err(format!(
+                                "upstream tls_server_name must be static for location {location}; #{{host}} is not allowed"
+                            )
+                            .into());
+                        }
+                        if let Some(tls_server_name) = upstream.tls_server_name.as_deref() {
+                            validate_tls_server_name(tls_server_name).map_err(|error| {
+                                format!("wrong upstream tls_server_name for location {location}: {error}")
+                            })?;
                         }
                         // 在某些情况下，补全upstream.url_base最后的/
                         if location.ends_with('/')
@@ -662,6 +802,290 @@ default_host:
             _ => panic!("service should be reverse proxy"),
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_host_override_for_http1_upstream() -> Result<(), crate::DynError> {
+        let config_path = temp_config_path("reverse-location-http1-host.yaml");
+        std::fs::write(
+            &config_path,
+            r##"
+default_host:
+  - location: /grafana/
+    upstream:
+      url_base: https://in.example.com:3000/grafana/
+      version: H1
+      headers:
+        Host: "#{host}"
+"##,
+        )?;
+
+        let mut append_upstream_url = Vec::new();
+        let result = parse_location_specs(
+            &Some(config_path.to_string_lossy().into_owned()),
+            &None,
+            Vec::new(),
+            Vec::new(),
+            &mut append_upstream_url,
+            false,
+        );
+        std::fs::remove_file(&config_path)?;
+
+        result?;
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_host_override_for_auto_upstream() -> Result<(), crate::DynError> {
+        let config_path = temp_config_path("reverse-location-auto-host.yaml");
+        std::fs::write(
+            &config_path,
+            r##"
+default_host:
+  - location: /grafana/
+    upstream:
+      url_base: https://in.example.com:3000/grafana/
+      version: AUTO
+      headers:
+        hOsT: "#{host}"
+"##,
+        )?;
+
+        let mut append_upstream_url = Vec::new();
+        let result = parse_location_specs(
+            &Some(config_path.to_string_lossy().into_owned()),
+            &None,
+            Vec::new(),
+            Vec::new(),
+            &mut append_upstream_url,
+            false,
+        );
+        std::fs::remove_file(&config_path)?;
+
+        result?;
+        Ok(())
+    }
+
+    #[test]
+    fn parses_split_upstream_routing_fields() -> Result<(), crate::DynError> {
+        let config_path = temp_config_path("reverse-location-split-routing.yaml");
+        std::fs::write(
+            &config_path,
+            r#"
+default_host:
+  - location: /grafana/
+    upstream:
+      url_base: https://physical.example/grafana/
+      connect_to: 10.0.0.8:3000
+      tls_server_name: tls.example
+      authority: public.example
+      version: H2
+"#,
+        )?;
+
+        let mut append_upstream_url = Vec::new();
+        let specs = parse_location_specs(
+            &Some(config_path.to_string_lossy().into_owned()),
+            &None,
+            Vec::new(),
+            Vec::new(),
+            &mut append_upstream_url,
+            false,
+        )?;
+        std::fs::remove_file(&config_path)?;
+
+        let upstream = specs
+            .locations
+            .get(DEFAULT_HOST)
+            .and_then(|locations| locations.first())
+            .and_then(|location| match location {
+                LocationConfig::ReverseProxy { upstream, .. } => Some(upstream),
+                LocationConfig::Serving { .. } => None,
+            })
+            .ok_or("reverse upstream not found")?;
+        assert_eq!(upstream.connect_to.as_deref(), Some("10.0.0.8:3000"));
+        assert_eq!(upstream.tls_server_name.as_deref(), Some("tls.example"));
+        assert_eq!(upstream.authority.as_deref(), Some("public.example"));
+        assert_eq!(upstream.version, Version::H2);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_request_host_as_connection_or_tls_target() -> Result<(), crate::DynError> {
+        for (field, file_name) in [
+            ("connect_to", "reverse-location-dynamic-connect-to.yaml"),
+            ("tls_server_name", "reverse-location-dynamic-sni.yaml"),
+        ] {
+            let config_path = temp_config_path(file_name);
+            let yaml = format!(
+                r##"
+default_host:
+  - location: /
+    upstream:
+      url_base: https://backend.example/
+      {field}: "#{{host}}"
+"##
+            );
+            std::fs::write(&config_path, yaml)?;
+
+            let mut append_upstream_url = Vec::new();
+            let result = parse_location_specs(
+                &Some(config_path.to_string_lossy().into_owned()),
+                &None,
+                Vec::new(),
+                Vec::new(),
+                &mut append_upstream_url,
+                false,
+            );
+            std::fs::remove_file(&config_path)?;
+
+            let error = match result {
+                Ok(_) => panic!("request Host must not control connection routing"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("is not allowed"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn host_template_brackets_ipv6_authority() -> Result<(), crate::DynError> {
+        let original = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "::1".to_owned(),
+            port: None,
+        };
+
+        assert_eq!(resolve_upstream_template("#{host}", &original), "[::1]");
+        Ok(())
+    }
+
+    #[test]
+    fn tls_server_name_rejects_authority_with_port() {
+        assert!(validate_tls_server_name("backend.example").is_ok());
+        assert!(validate_tls_server_name("127.0.0.1").is_ok());
+        assert!(validate_tls_server_name("backend.example:443").is_err());
+    }
+
+    #[test]
+    fn auto_http1_preserves_host_override() -> Result<(), crate::DynError> {
+        let upstream = Upstream {
+            url_base: "https://in.example.com:3000/grafana/".to_owned(),
+            version: Version::Auto,
+            connect_to: None,
+            tls_server_name: None,
+            authority: None,
+            headers: Some(HashMap::from([("Host".to_owned(), "#{host}".to_owned())])),
+        };
+        let request = Request::builder()
+            .uri("/grafana/dashboard")
+            .version(http::Version::HTTP_11)
+            .header(header::HOST, "public.example.com")
+            .body(())?;
+        let original = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "public.example.com".to_owned(),
+            port: None,
+        };
+
+        let upstream_request = build_upstream_req("/grafana/", &upstream, request, &original)?;
+
+        assert_eq!(upstream_request.request.version(), http::Version::HTTP_11);
+        assert_eq!(
+            upstream_request.request.headers().get(header::HOST),
+            Some(&HeaderValue::from_static("public.example.com"))
+        );
+        assert_eq!(upstream_request.connection_key.connect_to, "in.example.com:3000");
+        assert_eq!(upstream_request.connection_key.tls_server_name.as_deref(), Some("in.example.com"));
+        assert_eq!(upstream_request.connection_key.authority, "public.example.com");
+        Ok(())
+    }
+
+    #[test]
+    fn auto_http2_removes_host_override() -> Result<(), crate::DynError> {
+        let upstream = Upstream {
+            url_base: "https://in.example.com:3000/grafana/".to_owned(),
+            version: Version::Auto,
+            connect_to: None,
+            tls_server_name: None,
+            authority: None,
+            headers: Some(HashMap::from([("Host".to_owned(), "#{host}".to_owned())])),
+        };
+        let request = Request::builder()
+            .uri("/grafana/dashboard")
+            .version(http::Version::HTTP_2)
+            .header(header::HOST, "public.example.com")
+            .body(())?;
+        let original = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "public.example.com".to_owned(),
+            port: None,
+        };
+
+        let upstream_request = build_upstream_req("/grafana/", &upstream, request, &original)?;
+
+        assert_eq!(upstream_request.request.version(), http::Version::HTTP_2);
+        assert!(!upstream_request.request.headers().contains_key(header::HOST));
+        assert_eq!(
+            upstream_request
+                .request
+                .uri()
+                .authority()
+                .map(|authority| authority.as_str()),
+            Some("public.example.com")
+        );
+        assert_eq!(upstream_request.connection_key.connect_to, "in.example.com:3000");
+        assert_eq!(upstream_request.connection_key.tls_server_name.as_deref(), Some("in.example.com"));
+        assert_eq!(upstream_request.connection_key.authority, "public.example.com");
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_path_join_preserves_root_and_query_variants() -> Result<(), crate::DynError> {
+        let original = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "public.example.com".to_owned(),
+            port: None,
+        };
+        for (location, url_base, request_uri, expected) in [
+            ("", "http://backend.example/base", "/users?verbose=1", "http://backend.example/base/users?verbose=1"),
+            ("/", "http://backend.example/", "/", "http://backend.example/"),
+            ("/api/", "http://backend.example/base/", "/api/item?q=rust", "http://backend.example/base/item?q=rust"),
+        ] {
+            let upstream = Upstream {
+                url_base: url_base.to_owned(),
+                version: Version::H1,
+                connect_to: None,
+                tls_server_name: None,
+                authority: None,
+                headers: None,
+            };
+            let request = Request::builder().uri(request_uri).body(())?;
+            let built = build_upstream_req(location, &upstream, request, &original)?;
+            assert_eq!(built.request.uri().to_string(), expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_path_mismatch_returns_error_instead_of_panicking() -> Result<(), crate::DynError> {
+        let upstream = Upstream {
+            url_base: "http://backend.example/".to_owned(),
+            version: Version::H1,
+            connect_to: None,
+            tls_server_name: None,
+            authority: None,
+            headers: None,
+        };
+        let request = Request::builder().uri("/").body(())?;
+        let original = SchemeHostPort {
+            scheme: "http".to_owned(),
+            host: "public.example.com".to_owned(),
+            port: None,
+        };
+
+        assert!(build_upstream_req("/longer/", &upstream, request, &original).is_err());
         Ok(())
     }
 

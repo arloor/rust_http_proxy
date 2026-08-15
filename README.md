@@ -171,7 +171,7 @@ Options:
       --mitm-body-limit-bytes <MITM_BODY_LIMIT_BYTES>
           新 MITM 数据库中单个请求或响应 body 的默认抓取字节上限 [default: 65536]
       --mitm-stub-config-file <FILE_PATH>
-          MITM stub YAML 配置文件，按 authority + path 返回静态响应或转发到明文 HTTP upstream
+          MITM stub YAML 配置文件，按 authority + path 返回静态响应或转发到 HTTP/HTTPS upstream
   -h, --help
           Print help
 ```
@@ -279,11 +279,24 @@ adminmaxapi.knowhub.cloud:443:
   # 动态 stub
   - path: /users/current
     upstream: http://127.0.0.1:9010/stub
+
+  # 动态 stub 的完整 upstream 配置
+  - path: /users/detail
+    upstream:
+      url_base: https://stub.internal/stub
+      connect_to: 10.0.0.20:8443
+      tls_server_name: stub.internal
+      authority: "#{host}"
+      version: AUTO
+      headers:
+        X-Stub-Source: mitm
 ```
 
 静态 stub 的 `body_file` 支持相对路径，相对配置文件所在目录解析；程序会按 body 实际长度写入 `Content-Length`，不会自动 gzip/br/deflate 压缩。
 
-动态 stub 的 `upstream` 必须是明文 `http://` URL，且不能包含 query。命中后，程序把已卸载 TLS 的原请求（method、headers、body、path 和 query）发送给该 upstream，并把 upstream 的 status、headers 和流式 body 通过现有 MITM TLS 连接返回客户端。SSE (`text/event-stream`) 会逐事件流式返回；WebSocket 请求在 upstream 返回 `101 Switching Protocols` 后会建立双向隧道。`upstream` 中的路径作为前缀，例如上面的 `/users/current?verbose=1` 会转发到 `http://127.0.0.1:9010/stub/users/current?verbose=1`。原请求的 `Host` header 会保留，方便动态 stub 根据原目标生成响应。
+动态 stub 的 `upstream` 可以使用 `http://` 或 `https://` URL 字符串，也可以使用与反向代理相同的完整 upstream 对象；两种形式都不能在 `url_base` 中包含 query。完整对象支持 `H1`/`H2`/`AUTO`、静态的 `connect_to`/`tls_server_name`、`authority` 和请求头覆盖，字段语义与下方反向代理 upstream 完全相同。字符串简写保持兼容行为：固定使用 H1，并以原请求 Host 作为上游 Host。
+
+命中后，程序把已卸载 TLS 的原请求（method、headers、body、path 和 query）发送给该 upstream，并把 upstream 的 status、headers 和流式 body 通过现有 MITM TLS 连接返回客户端。SSE (`text/event-stream`) 会逐事件流式返回；WebSocket 请求在 upstream 返回 `101 Switching Protocols` 后会建立双向隧道，且要求最终选择 H1。`upstream` 中的路径作为前缀，例如上面的 `/users/current?verbose=1` 会转发到 `http://127.0.0.1:9010/stub/users/current?verbose=1`。完整对象未配置 `authority` 时默认使用 `url_base` 的 authority；需要保留原请求虚拟主机时可显式设置 `authority: "#{host}"`。
 
 `responses/knowhub-validate.json`:
 
@@ -377,10 +390,12 @@ api.example.com:
     basic_auth_path_prefixes: # 可选；相对当前 location 的路径前缀
       - /private
     upstream:
-      url_base: "https://backend.internal.com" # 上游服务器 URL
+      url_base: "https://backend.internal.com/api/" # 上游 scheme 和路径
+      connect_to: "10.0.0.8:8443" # 可选：DNS/TCP 连接目标
+      tls_server_name: "backend.internal.com" # 可选：TLS SNI 和证书校验名
+      authority: "#{host}" # 可选：H1 Host / H2 :authority
       version: "AUTO" # HTTP 版本: H1/H2/AUTO
       headers: # 可选：修改发送给上游的请求头
-        Host: "#{host}" # #{host} 变量代表原始请求的 Host
         X-Custom-Header: "custom_value"
 ```
 
@@ -389,16 +404,24 @@ api.example.com:
 反向代理到上游的请求url构建方式如下：
 
 ```rust
-let upstream_url = upstream.url_base.clone() + &path_and_query[location.len()..]; // upstream.url_base + 原始url_path去除location的部分
+let remaining = path_and_query.get(location.len()..).ok_or("location 不匹配请求路径")?;
+let upstream_url = upstream.url_base.clone() + remaining;
 ```
 
 #### upstream 配置项说明
 
-| 参数       | 说明                        | 可选值                      |
-| ---------- | --------------------------- | --------------------------- |
-| `url_base` | 上游服务器的基础 URL        | 任意有效 URL                |
-| `version`  | HTTP 协议版本               | `H1`、`H2`、`AUTO`（默认）  |
-| `headers`  | 覆盖/添加发送给上游的请求头 | 键值对，支持 `#{host}` 变量 |
+| 参数 | 说明 | 默认值/可选值 |
+| --- | --- | --- |
+| `url_base` | 上游 scheme、默认主机与基础路径 | 任意有效 URL |
+| `connect_to` | DNS/TCP 实际连接目标；必须是静态域名或 IP | `url_base` 的 authority（自动补 80/443） |
+| `tls_server_name` | TLS SNI 与证书校验名；必须是静态 DNS 名或 IP | `url_base` 的 host |
+| `authority` | HTTP 虚拟主机：H1 写入 `Host`，H2 写入 `:authority` | `url_base` 的 authority，支持 `#{host}` |
+| `version` | HTTP 协议版本 | `H1`、`H2`、`AUTO`（默认） |
+| `headers` | 覆盖/添加发送给上游的请求头 | 键值对，支持 `#{host}` |
+
+`H1` 和 `H2` 使用彼此独立且严格限定协议的客户端。HTTPS upstream 的 `AUTO` 沿用入口请求版本后再分流，明文 HTTP upstream 则使用 H1；若对 `http://` upstream 显式指定 `H2`，使用的是 h2c prior knowledge，上游必须直接接受明文 HTTP/2。H2 不发送普通 `Host`，但会把 `authority` 写入 `:authority`，因此仍支持独立于连接目标和 TLS SNI 的虚拟主机。为兼容旧配置，未设置 `authority` 时，`headers.Host` 会作为 authority 使用。
+
+`connect_to` 和 `tls_server_name` 不接受 `#{host}`，避免外部请求的 Host 控制代理的 DNS/TCP 或 TLS 目标。需要动态虚拟主机时只配置 `authority: "#{host}"`（或兼容写法 `headers.Host: "#{host}"`）；连接目标与证书校验名应保持静态。
 
 ### 🌐 内置反向代理功能
 

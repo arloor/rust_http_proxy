@@ -17,7 +17,7 @@ pub use labels::{AccessLabel, ReqLabels, ReverseProxyReqLabel, TunnelHandshakeLa
 
 pub(crate) use connect::{
     EitherTlsStream, HttpClientStream, build_tls_connector, build_tls_connector_with_http_alpn,
-    build_tls_connector_with_http1_alpn, connect_with_preference,
+    build_tls_connector_with_http1_alpn, build_tls_connector_with_http2_alpn, connect_with_preference,
 };
 pub(crate) use http::SchemeHostPort;
 pub(crate) use tunnel::spawn_websocket_tunnel;

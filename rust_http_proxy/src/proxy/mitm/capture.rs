@@ -386,7 +386,12 @@ impl http_body::Body for MitmCaptureBody {
                         CaptureMode::Skip(_) => {}
                     }
                 }
-                if this.inner.is_end_stream() {
+                // HTTP/1 writers can stop polling once the body's exact size hint reaches zero.
+                // In that case the wrapped body may never be polled again to return `None`, and
+                // some implementations do not report `is_end_stream()` until that terminal poll.
+                // Finish while processing the last data frame so the record does not remain in
+                // `capturing` after the complete response has already been forwarded.
+                if this.inner.is_end_stream() || this.inner.size_hint().exact() == Some(0) {
                     finish_capture(
                         this.manager,
                         this.record_id,
@@ -424,7 +429,10 @@ impl http_body::Body for MitmCaptureBody {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.completed
+        // Capture completion is bookkeeping only. The wrapped transport must
+        // remain authoritative so an exact-length H2 body can still deliver
+        // trailing headers after its final data frame.
+        self.inner.is_end_stream()
     }
 
     fn size_hint(&self) -> http_body::SizeHint {
@@ -488,7 +496,10 @@ mod tests {
     use flate2::Compression;
     use flate2::write::{GzEncoder, ZlibEncoder};
     use http::{HeaderMap, HeaderValue};
+    use http_body::{Body as _, Frame, SizeHint};
     use std::io::{Cursor, Write};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
     const PLAINTEXT: &[u8] = br#"{"message":"compressed MITM plaintext","ok":true}"#;
 
@@ -538,8 +549,8 @@ mod tests {
         Ok(())
     }
 
-    // HTTP/1.1 下游写满 Content-Length 后可能不再 poll body：消费完最后一帧时 is_end_stream
-    // 已经完成收尾，随后即使直接 Drop 也必须保持 complete，不能误标为 interrupted
+    // HTTP/1.1 下游写满 Content-Length 后可能不再 poll body：最后一帧消费后 size_hint
+    // 已精确归零，即使底层尚未报告 is_end_stream，也必须收尾为 complete 而不是 interrupted
     #[tokio::test]
     async fn content_length_fulfilled_body_stays_complete_after_drop() -> Result<(), crate::DynError> {
         let path = std::env::temp_dir().join(format!(
@@ -569,14 +580,13 @@ mod tests {
                 request_headers: &request_headers,
             })
             .ok_or("capture unexpectedly disabled")?;
-        let body = http_body_util::Full::new(Bytes::from_static(b"exact length"))
-            .map_err(|never: std::convert::Infallible| match never {})
-            .boxed();
+        let body = LastFrameWithoutEndStream::new(Bytes::from_static(b"exact length")).boxed();
         let mut wrapped =
             MitmCaptureBody::new(body, manager.clone(), id.clone(), BodyDirection::Response, CaptureMode::Plaintext);
         // 只 poll 一次拿到全部数据，模拟下游消费完 Content-Length 后不再 poll
         let first = wrapped.frame().await;
         assert!(matches!(first, Some(Ok(_))));
+        assert!(!wrapped.is_end_stream(), "capture completion must not hide possible trailers");
         drop(wrapped);
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
@@ -661,5 +671,34 @@ mod tests {
         let mut encoder = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
         encoder.write_all(input)?;
         Ok(encoder.into_inner())
+    }
+
+    struct LastFrameWithoutEndStream {
+        data: Option<Bytes>,
+    }
+
+    impl LastFrameWithoutEndStream {
+        fn new(data: Bytes) -> Self {
+            Self { data: Some(data) }
+        }
+    }
+
+    impl http_body::Body for LastFrameWithoutEndStream {
+        type Data = Bytes;
+        type Error = io::Error;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>, _context: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+            Poll::Ready(self.data.take().map(|data| Ok(Frame::data(data))))
+        }
+
+        fn is_end_stream(&self) -> bool {
+            false
+        }
+
+        fn size_hint(&self) -> SizeHint {
+            SizeHint::with_exact(self.data.as_ref().map_or(0, |data| data.len()) as u64)
+        }
     }
 }

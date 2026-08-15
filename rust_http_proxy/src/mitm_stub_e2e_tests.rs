@@ -1,15 +1,113 @@
 use std::io::{self, ErrorKind};
 
+use http_body_util::{BodyExt as _, Empty};
+use hyper::{Request, body::Bytes, client::conn::http2};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 use crate::DynError;
 use crate::e2e_test_support::{
-    WS_PAYLOAD, assert_switching_protocols, connect_to_mitm_target, read_exact_bytes, read_http_head,
-    read_ws_frame_payload, start_proxy, start_websocket_echo_server, timeout_step, unique_temp_dir,
-    write_masked_text_frame, write_test_ca,
+    WS_PAYLOAD, assert_ok, assert_switching_protocols, connect_to_mitm_target, connect_to_mitm_target_h2,
+    read_exact_bytes, read_http_head, read_ws_frame_payload, start_proxy, start_tls_h2_routing_server,
+    start_websocket_echo_server, timeout_step, unique_temp_dir, write_masked_text_frame, write_test_ca,
 };
+
+const STUB_SNI: &str = "localhost";
+const STUB_AUTHORITY: &str = "virtual.stub.test";
+
+#[tokio::test]
+async fn detailed_dynamic_mitm_stub_uses_https_h2_connect_target_sni_and_authority() -> Result<(), DynError> {
+    let upstream = start_tls_h2_routing_server(STUB_SNI, STUB_AUTHORITY).await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_dynamic_mitm_stub_h2_e2e")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let stub_config_path = temp_dir.join("mitm-stubs.yaml");
+    std::fs::write(
+        &stub_config_path,
+        format!(
+            "localhost:{}:\n  - path: /check\n    upstream:\n      url_base: https://physical.invalid/backend\n      connect_to: 127.0.0.1:{}\n      tls_server_name: {STUB_SNI}\n      authority: {STUB_AUTHORITY}\n      version: H2\n",
+            upstream.addr.port(),
+            upstream.addr.port()
+        ),
+    )?;
+    let proxy = start_proxy(vec![
+        "--mitm-domain-suffix".to_owned(),
+        "localhost".to_owned(),
+        "--mitm-ca-cert".to_owned(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".to_owned(),
+        ca.key_path.to_string_lossy().into_owned(),
+        "--mitm-stub-config-file".to_owned(),
+        stub_config_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    let mut tls_stream = connect_to_mitm_target(proxy.port, upstream.addr.port(), ca.cert_der).await?;
+    tls_stream
+        .write_all(
+            format!("GET /check HTTP/1.1\r\nHost: localhost:{}\r\nConnection: close\r\n\r\n", upstream.addr.port())
+                .as_bytes(),
+        )
+        .await?;
+    let response_head = read_http_head(&mut tls_stream).await?;
+    assert_ok(&response_head)?;
+    let body = read_exact_bytes(&mut tls_stream, 2).await?;
+    assert_eq!(body, b"ok");
+
+    proxy.shutdown().await?;
+    upstream.task.await??;
+    std::fs::remove_dir_all(temp_dir)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn detailed_dynamic_mitm_stub_auto_routes_h2_inbound_to_h2_upstream() -> Result<(), DynError> {
+    let upstream = start_tls_h2_routing_server(STUB_SNI, STUB_AUTHORITY).await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_dynamic_mitm_stub_auto_h2_e2e")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let stub_config_path = temp_dir.join("mitm-stubs.yaml");
+    std::fs::write(
+        &stub_config_path,
+        format!(
+            "localhost:{}:\n  - path: /check\n    upstream:\n      url_base: https://physical.invalid/backend\n      connect_to: 127.0.0.1:{}\n      tls_server_name: {STUB_SNI}\n      authority: {STUB_AUTHORITY}\n      version: AUTO\n",
+            upstream.addr.port(),
+            upstream.addr.port()
+        ),
+    )?;
+    let proxy = start_proxy(vec![
+        "--mitm-domain-suffix".to_owned(),
+        "localhost".to_owned(),
+        "--mitm-ca-cert".to_owned(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".to_owned(),
+        ca.key_path.to_string_lossy().into_owned(),
+        "--mitm-stub-config-file".to_owned(),
+        stub_config_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    let tls_stream = connect_to_mitm_target_h2(proxy.port, upstream.addr.port(), ca.cert_der).await?;
+    let (mut sender, connection) = http2::Builder::new(TokioExecutor::new())
+        .handshake(TokioIo::new(tls_stream))
+        .await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("https://localhost:{}/check", upstream.addr.port()))
+        .version(hyper::Version::HTTP_2)
+        .body(Empty::<Bytes>::new())?;
+    let response = sender.send_request(request).await?;
+    assert_eq!(response.status(), hyper::StatusCode::OK);
+    assert_eq!(response.into_body().collect().await?.to_bytes(), Bytes::from_static(b"ok"));
+
+    proxy.shutdown().await?;
+    upstream.task.await??;
+    std::fs::remove_dir_all(temp_dir)?;
+    Ok(())
+}
 
 #[tokio::test]
 async fn dynamic_mitm_stub_receives_plaintext_request_and_returns_response_over_tls() -> Result<(), DynError> {

@@ -13,6 +13,8 @@ use serde::Deserialize;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
+use crate::location::{Upstream, Version, validate_tls_server_name};
+
 pub(crate) struct MitmAuthority {
     ca_issuer: Issuer<'static, KeyPair>,
     cert_cache: Mutex<LruCache<String, Arc<ServerConfig>>>,
@@ -100,7 +102,14 @@ pub(crate) struct MitmStubResponse {
 
 #[derive(Clone)]
 pub(crate) struct MitmDynamicStub {
-    pub(crate) upstream: Uri,
+    pub(crate) upstream: Upstream,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MitmStubUpstreamConfig {
+    Url(String),
+    Detailed(Upstream),
 }
 
 #[derive(Deserialize)]
@@ -110,7 +119,7 @@ struct MitmStubConfig {
     #[serde(default)]
     headers: HashMap<String, String>,
     body_file: Option<String>,
-    upstream: Option<String>,
+    upstream: Option<MitmStubUpstreamConfig>,
 }
 
 pub(crate) fn parse_mitm_stub_specs(config_file: &Option<String>) -> Result<MitmStubSpecs, crate::DynError> {
@@ -167,7 +176,7 @@ pub(crate) fn parse_mitm_stub_specs(config_file: &Option<String>) -> Result<Mitm
                         )
                         .into());
                     }
-                    let upstream = parse_dynamic_stub_upstream(&upstream, &authority, &rule.path)?;
+                    let upstream = parse_dynamic_stub_upstream(upstream, &authority, &rule.path)?;
                     MitmStubAction::Dynamic(MitmDynamicStub { upstream })
                 }
                 (Some(_), Some(_)) => {
@@ -210,24 +219,77 @@ impl MitmStubSpecs {
     }
 }
 
-fn parse_dynamic_stub_upstream(upstream: &str, authority: &str, path: &str) -> Result<Uri, crate::DynError> {
+fn parse_dynamic_stub_upstream(
+    upstream: MitmStubUpstreamConfig, authority: &str, path: &str,
+) -> Result<Upstream, crate::DynError> {
+    let mut upstream = match upstream {
+        MitmStubUpstreamConfig::Url(url_base) => Upstream {
+            url_base,
+            // Preserve the original dynamic-stub behavior for the shorthand:
+            // plaintext H1 with the intercepted request's virtual host.
+            version: Version::H1,
+            connect_to: None,
+            tls_server_name: None,
+            authority: Some("#{host}".to_owned()),
+            headers: None,
+        },
+        MitmStubUpstreamConfig::Detailed(upstream) => upstream,
+    };
     let uri = upstream
+        .url_base
         .parse::<Uri>()
-        .map_err(|e| format!("invalid dynamic MITM stub upstream {upstream} for {authority}{path}: {e}"))?;
-    if uri.scheme_str() != Some("http") {
-        return Err(format!("dynamic MITM stub upstream for {authority}{path} must use http: {upstream}").into());
+        .map_err(|e| format!("invalid dynamic MITM stub upstream {} for {authority}{path}: {e}", upstream.url_base))?;
+    if !matches!(uri.scheme_str(), Some("http" | "https")) {
+        return Err(format!(
+            "dynamic MITM stub upstream for {authority}{path} must use http or https: {}",
+            upstream.url_base
+        )
+        .into());
     }
     if uri.authority().is_none() {
-        return Err(
-            format!("dynamic MITM stub upstream for {authority}{path} must have an authority: {upstream}").into()
-        );
+        return Err(format!(
+            "dynamic MITM stub upstream for {authority}{path} must have an authority: {}",
+            upstream.url_base
+        )
+        .into());
     }
     if uri.query().is_some() {
-        return Err(
-            format!("dynamic MITM stub upstream for {authority}{path} must not contain a query: {upstream}").into()
-        );
+        return Err(format!(
+            "dynamic MITM stub upstream for {authority}{path} must not contain a query: {}",
+            upstream.url_base
+        )
+        .into());
     }
-    Ok(uri)
+    if upstream.connect_to.as_deref() == Some("#{host}") {
+        return Err(format!(
+            "dynamic MITM stub connect_to must be a static host or IP for {authority}{path}; #{{host}} is not allowed"
+        )
+        .into());
+    }
+    if let Some(connect_to) = upstream.connect_to.as_deref() {
+        connect_to
+            .parse::<http::uri::Authority>()
+            .map_err(|error| format!("invalid dynamic MITM stub connect_to for {authority}{path}: {error}"))?;
+    }
+    if let Some(configured_authority) = upstream.authority.as_deref().filter(|value| *value != "#{host}") {
+        configured_authority
+            .parse::<http::uri::Authority>()
+            .map_err(|error| format!("invalid dynamic MITM stub authority for {authority}{path}: {error}"))?;
+    }
+    if upstream.tls_server_name.as_deref() == Some("#{host}") {
+        return Err(format!(
+            "dynamic MITM stub tls_server_name must be static for {authority}{path}; #{{host}} is not allowed"
+        )
+        .into());
+    }
+    if let Some(tls_server_name) = upstream.tls_server_name.as_deref() {
+        validate_tls_server_name(tls_server_name)
+            .map_err(|error| format!("invalid dynamic MITM stub tls_server_name for {authority}{path}: {error}"))?;
+    }
+    // build_upstream_req appends the original path, so normalize the prefix to
+    // avoid producing a double slash when url_base ends in '/'.
+    upstream.url_base = upstream.url_base.trim_end_matches('/').to_owned();
+    Ok(upstream)
 }
 
 fn normalize_authority(authority: &str) -> String {
@@ -311,14 +373,16 @@ api.example.com:443:
             Some(MitmStubAction::Static(_)) => return Err("expected dynamic MITM stub".into()),
             None => return Err("expected MITM stub".into()),
         };
-        assert_eq!(upstream, "http://127.0.0.1:9010/stub");
+        assert_eq!(upstream.url_base, "http://127.0.0.1:9010/stub");
+        assert_eq!(upstream.version, Version::H1);
+        assert_eq!(upstream.authority.as_deref(), Some("#{host}"));
 
         fs::remove_dir_all(base_dir)?;
         Ok(())
     }
 
     #[test]
-    fn dynamic_mitm_stub_rejects_https_upstream() -> Result<(), crate::DynError> {
+    fn parses_detailed_https_dynamic_mitm_stub_upstream() -> Result<(), crate::DynError> {
         let base_dir = std::env::temp_dir().join(format!(
             "rust_http_proxy_dynamic_mitm_stub_https_test_{}_{}",
             std::process::id(),
@@ -331,18 +395,59 @@ api.example.com:443:
             r#"
 api.example.com:443:
   - path: /v1/profile
-    upstream: https://127.0.0.1:9010
+    upstream:
+      url_base: https://physical.invalid:9443/stub/
+      connect_to: 127.0.0.1:9010
+      tls_server_name: localhost
+      authority: virtual.example.test
+      version: H2
+      headers:
+        x-stub: detailed
 "#,
         )?;
 
-        let error = match parse_mitm_stub_specs(&Some(config_path.to_string_lossy().into_owned())) {
-            Ok(_) => return Err("expected HTTPS dynamic MITM stub upstream to be rejected".into()),
-            Err(error) => error,
+        let specs = parse_mitm_stub_specs(&Some(config_path.to_string_lossy().into_owned()))?;
+        let upstream = match specs.find("api.example.com:443", "/v1/profile") {
+            Some(MitmStubAction::Dynamic(stub)) => stub.upstream,
+            Some(MitmStubAction::Static(_)) => return Err("expected dynamic MITM stub".into()),
+            None => return Err("expected MITM stub".into()),
         };
-        assert!(error.to_string().contains("must use http"));
+        assert_eq!(upstream.url_base, "https://physical.invalid:9443/stub");
+        assert_eq!(upstream.connect_to.as_deref(), Some("127.0.0.1:9010"));
+        assert_eq!(upstream.tls_server_name.as_deref(), Some("localhost"));
+        assert_eq!(upstream.authority.as_deref(), Some("virtual.example.test"));
+        assert_eq!(upstream.version, Version::H2);
+        assert_eq!(
+            upstream
+                .headers
+                .as_ref()
+                .and_then(|headers| headers.get("x-stub"))
+                .map(String::as_str),
+            Some("detailed")
+        );
 
         fs::remove_dir_all(base_dir)?;
         Ok(())
+    }
+
+    #[test]
+    fn rejects_dynamic_mitm_request_host_as_connection_or_tls_target() {
+        for (field, value) in [("connect_to", "#{host}"), ("tls_server_name", "#{host}")] {
+            let upstream = MitmStubUpstreamConfig::Detailed(Upstream {
+                url_base: "https://backend.example/".to_owned(),
+                version: Version::H1,
+                connect_to: (field == "connect_to").then(|| value.to_owned()),
+                tls_server_name: (field == "tls_server_name").then(|| value.to_owned()),
+                authority: None,
+                headers: None,
+            });
+
+            let error = match parse_dynamic_stub_upstream(upstream, "api.example:443", "/") {
+                Ok(_) => panic!("request Host must not control connection routing"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("is not allowed"));
+        }
     }
 
     #[test]

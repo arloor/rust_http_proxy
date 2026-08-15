@@ -32,13 +32,48 @@ use crate::{
     config::ForwardBypassConfig,
     proxy::{
         AccessLabel, EitherTlsStream, HttpClientStream, build_tls_connector, build_tls_connector_with_http_alpn,
-        build_tls_connector_with_http1_alpn,
+        build_tls_connector_with_http1_alpn, build_tls_connector_with_http2_alpn,
     },
 };
 
 pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
 /// 清理任务的执行间隔
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DirectProtocol {
+    Http1,
+    Http2,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct DirectConnectionKey {
+    pub(crate) connect_to: String,
+    pub(crate) tls_server_name: Option<String>,
+    pub(crate) authority: String,
+    pub(crate) protocol: DirectProtocol,
+}
+
+pub(crate) enum DirectSendError<B> {
+    Preparation(io::Error),
+    Send(Box<hyper::client::conn::TrySendError<Request<B>>>),
+}
+
+impl<B> DirectSendError<B> {
+    pub(crate) fn take_request(&mut self) -> Option<Request<B>> {
+        match self {
+            Self::Preparation(_) => None,
+            Self::Send(error) => error.take_message(),
+        }
+    }
+
+    pub(crate) fn into_io_error(self) -> io::Error {
+        match self {
+            Self::Preparation(error) => error,
+            Self::Send(error) => io::Error::other((*error).into_error()),
+        }
+    }
+}
 
 pub struct ForwardProxyClient<B> {
     cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>,
@@ -362,6 +397,45 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
 {
+    pub(crate) async fn connect_direct(
+        connection_key: &DirectConnectionKey, access_label: &AccessLabel, ipv6_first: Option<bool>,
+        idle_timeout: Option<Duration>,
+    ) -> io::Result<HttpConnection<B>> {
+        let tcp_stream = crate::proxy::connect_with_preference(&connection_key.connect_to, ipv6_first).await?;
+        let stream = if let Some(tls_server_name) = &connection_key.tls_server_name {
+            let connector = match connection_key.protocol {
+                DirectProtocol::Http1 => build_tls_connector_with_http1_alpn(),
+                DirectProtocol::Http2 => build_tls_connector_with_http2_alpn(),
+            };
+            let server_name = pki_types::ServerName::try_from(tls_server_name.as_str())
+                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid TLS server name: {e}")))?
+                .to_owned();
+            let tls_stream = connector.connect(server_name, tcp_stream).await?;
+            let negotiated_alpn = tls_stream.get_ref().1.alpn_protocol();
+            let valid_alpn = match connection_key.protocol {
+                DirectProtocol::Http1 => negotiated_alpn.is_none_or(|alpn| alpn == b"http/1.1"),
+                DirectProtocol::Http2 => negotiated_alpn == Some(b"h2"),
+            };
+            if !valid_alpn {
+                return Err(io::Error::other(format!(
+                    "upstream {} negotiated unexpected ALPN {:?} for {:?}",
+                    connection_key.connect_to,
+                    negotiated_alpn.map(String::from_utf8_lossy),
+                    connection_key.protocol
+                )));
+            }
+            EitherTlsStream::Tls { stream: tls_stream }
+        } else {
+            EitherTlsStream::Tcp { stream: tcp_stream }
+        };
+        let stream = TimeoutIO::new_optional(HttpClientStream::Direct { stream }, idle_timeout);
+
+        match connection_key.protocol {
+            DirectProtocol::Http1 => Self::handshake_http1(access_label, stream).await,
+            DirectProtocol::Http2 => Self::handshake_http2(access_label, stream).await,
+        }
+    }
+
     pub(crate) async fn connect(
         access_label: &AccessLabel, ipv6_first: Option<bool>,
         stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
@@ -539,7 +613,13 @@ where
         access_label: &AccessLabel, stream: CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
+        Self::handshake_http1(access_label, stream).await
+    }
 
+    async fn handshake_http1<S>(access_label: &AccessLabel, stream: S) -> io::Result<HttpConnection<B>>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
+    {
         // HTTP/1.x
         let (send_request, connection) = match http1::Builder::new()
             .preserve_header_case(true)
@@ -564,7 +644,13 @@ where
         access_label: &AccessLabel, stream: CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
         let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
+        Self::handshake_http2(access_label, stream).await
+    }
 
+    async fn handshake_http2<S>(access_label: &AccessLabel, stream: S) -> io::Result<HttpConnection<B>>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
+    {
         let (send_request, connection) = match http2::Builder::new(TokioExecutor::new())
             .max_header_list_size(crate::HTTP2_MAX_HEADER_LIST_SIZE)
             .handshake(Box::pin(TokioIo::new(stream)))
@@ -603,6 +689,45 @@ where
         }
     }
 
+    pub(crate) async fn send_direct_request(
+        &mut self, req: Request<B>, connection_key: &DirectConnectionKey,
+    ) -> io::Result<Response<body::Incoming>> {
+        self.try_send_direct_request(req, connection_key)
+            .await
+            .map_err(DirectSendError::into_io_error)
+    }
+
+    pub(crate) async fn try_send_direct_request(
+        &mut self, mut req: Request<B>, connection_key: &DirectConnectionKey,
+    ) -> Result<Response<body::Incoming>, DirectSendError<B>> {
+        match (self, connection_key.protocol) {
+            (HttpConnection::Http1(sender), DirectProtocol::Http1) => {
+                *req.version_mut() = Version::HTTP_11;
+                let host = HeaderValue::from_str(&connection_key.authority)
+                    .map_err(|e| DirectSendError::Preparation(io::Error::new(ErrorKind::InvalidInput, e)))?;
+                req.headers_mut().insert(HOST, host);
+                force_origin_form(&mut req);
+                sanitize_http1_request_headers(req.headers_mut());
+                sender
+                    .try_send_request(req)
+                    .await
+                    .map_err(|error| DirectSendError::Send(Box::new(error)))
+            }
+            (HttpConnection::Http2(sender), DirectProtocol::Http2) => {
+                *req.version_mut() = Version::HTTP_2;
+                replace_uri_authority(&mut req, &connection_key.authority).map_err(DirectSendError::Preparation)?;
+                sanitize_http2_request_headers(req.headers_mut());
+                sender
+                    .try_send_request(req)
+                    .await
+                    .map_err(|error| DirectSendError::Send(Box::new(error)))
+            }
+            _ => Err(DirectSendError::Preparation(io::Error::other(
+                "HTTP connection protocol does not match request route",
+            ))),
+        }
+    }
+
     pub fn is_closed(&self) -> bool {
         match self {
             HttpConnection::Http1(r) => r.is_closed(),
@@ -624,11 +749,11 @@ where
         }
     }
 
-    fn is_multiplexed(&self) -> bool {
+    pub(crate) fn is_multiplexed(&self) -> bool {
         matches!(self, HttpConnection::Http2(_))
     }
 
-    fn clone_for_multiplexed_cache(&self) -> Option<Self> {
+    pub(crate) fn clone_for_multiplexed_cache(&self) -> Option<Self> {
         match self {
             HttpConnection::Http1(_) => None,
             HttpConnection::Http2(r) => Some(HttpConnection::Http2(r.clone())),
@@ -673,6 +798,28 @@ fn prepare_http1_request_for_connection_target<B>(req: &mut Request<B>, access_l
     }
 }
 
+fn force_origin_form<B>(req: &mut Request<B>) {
+    let path = req.uri().path_and_query().cloned();
+    *req.uri_mut() = path
+        .and_then(|path| {
+            let mut parts = http::uri::Parts::default();
+            parts.path_and_query = Some(path);
+            Uri::from_parts(parts).ok()
+        })
+        .unwrap_or_else(|| Uri::from_static("/"));
+}
+
+fn replace_uri_authority<B>(req: &mut Request<B>, authority: &str) -> io::Result<()> {
+    let mut parts = req.uri().clone().into_parts();
+    parts.authority = Some(
+        authority
+            .parse()
+            .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("invalid HTTP authority: {e}")))?,
+    );
+    *req.uri_mut() = Uri::from_parts(parts).map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
+    Ok(())
+}
+
 fn uri_targets_current_connection(uri: &Uri, access_label: &AccessLabel) -> bool {
     uri.authority()
         .map(|authority| authority.as_str().eq_ignore_ascii_case(&access_label.target))
@@ -696,6 +843,10 @@ fn sanitize_http2_request_headers(headers: &mut HeaderMap) {
     }
 
     headers.remove("keep-alive");
+    // HTTP/2 carries the target authority in `:authority`, synthesized from the
+    // request URI by hyper. Some origins, including Google, reject a redundant
+    // regular `Host` field with RST_STREAM(PROTOCOL_ERROR).
+    headers.remove(HOST);
     headers.remove("proxy-connection");
     headers.remove(TRANSFER_ENCODING);
     headers.remove(UPGRADE);
@@ -725,13 +876,30 @@ fn handle_http_connection_error(protocol: &str, err: hyper::Error, access_label:
     if let Some(io_err) = err.source().and_then(|s| s.downcast_ref::<io::Error>()) {
         if io_err.kind() == ErrorKind::TimedOut {
             // 由于超时导致的连接关闭（TimeoutIO）
-            info!("[legacy proxy {protocol} connection io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
+            info!("[HTTP {protocol} connection io closed]: [{}] {} to {}", io_err.kind(), io_err, access_label);
         } else {
-            warn!("[legacy proxy {protocol} io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
+            warn!("[HTTP {protocol} io error]: [{}] {} to {}", io_err.kind(), io_err, access_label);
         }
     } else if let Some(source) = err.source() {
-        warn!("[legacy proxy {protocol} io error]: [{source}] to {access_label}");
+        warn!("[HTTP {protocol} io error]: [{source}] to {access_label}");
     } else {
-        warn!("[legacy proxy {protocol} io error] [{err}] to {access_label}");
+        warn!("[HTTP {protocol} io error] [{err}] to {access_label}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_http2_request_headers_removes_host() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static("www.google.com:443"));
+        headers.insert("accept", HeaderValue::from_static("*/*"));
+
+        sanitize_http2_request_headers(&mut headers);
+
+        assert!(!headers.contains_key(HOST));
+        assert_eq!(headers.get("accept"), Some(&HeaderValue::from_static("*/*")));
     }
 }

@@ -1,6 +1,7 @@
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -201,6 +202,100 @@ pub(crate) async fn start_tls_h2_http_server() -> Result<TestServer, DynError> {
     Ok(TestServer { addr, task })
 }
 
+pub(crate) async fn start_tls_h1_routing_server(
+    expected_sni: &'static str, expected_authority: &'static str,
+) -> Result<TestServer, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let mut tls_config = test_server_tls_config()?;
+    tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    let task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut tls_stream = acceptor.accept(stream).await?;
+        if tls_stream.get_ref().1.alpn_protocol() != Some(b"http/1.1") {
+            return Err(io::Error::new(ErrorKind::InvalidData, "expected HTTP/1.1 ALPN").into());
+        }
+        if tls_stream.get_ref().1.server_name() != Some(expected_sni) {
+            return Err(io::Error::new(ErrorKind::InvalidData, "unexpected TLS SNI").into());
+        }
+        let request_head = read_http_head(&mut tls_stream).await?;
+        if !request_head.starts_with("GET /backend/check HTTP/1.1\r\n")
+            || !request_head
+                .to_ascii_lowercase()
+                .contains(&format!("\r\nhost: {}\r\n", expected_authority.to_ascii_lowercase()))
+        {
+            return Err(io::Error::new(ErrorKind::InvalidData, request_head).into());
+        }
+        tls_stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            .await?;
+        Ok(())
+    });
+    Ok(TestServer { addr, task })
+}
+
+pub(crate) async fn start_tls_h2_routing_server(
+    expected_sni: &'static str, expected_authority: &'static str,
+) -> Result<TestServer, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let mut tls_config = test_server_tls_config()?;
+    tls_config.alpn_protocols = vec![b"h2".to_vec()];
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    let task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let tls_stream = acceptor.accept(stream).await?;
+        if tls_stream.get_ref().1.alpn_protocol() != Some(b"h2") {
+            return Err(io::Error::new(ErrorKind::InvalidData, "expected h2 ALPN").into());
+        }
+        if tls_stream.get_ref().1.server_name() != Some(expected_sni) {
+            return Err(io::Error::new(ErrorKind::InvalidData, "unexpected TLS SNI").into());
+        }
+
+        let (done_tx, done_rx) = oneshot::channel();
+        let done_tx = Arc::new(Mutex::new(Some(done_tx)));
+        let service = service_fn(move |req: Request<Incoming>| {
+            let done_tx = done_tx.clone();
+            async move {
+                let valid = req.version() == hyper::Version::HTTP_2
+                    && req.uri().path() == "/backend/check"
+                    && req.uri().authority().map(|value| value.as_str()) == Some(expected_authority)
+                    && !req.headers().contains_key(hyper::header::HOST);
+                let mut response = Response::new(Full::new(Bytes::from_static(if valid { b"ok" } else { b"bad" })));
+                if !valid {
+                    *response.status_mut() = StatusCode::BAD_REQUEST;
+                }
+                let maybe_done_tx = done_tx
+                    .lock()
+                    .map_err(|_| io::Error::other("h2 routing test done mutex poisoned"))?
+                    .take();
+                if let Some(done_tx) = maybe_done_tx {
+                    let _ = done_tx.send(());
+                }
+                Ok::<_, io::Error>(response)
+            }
+        });
+        let builder = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+        let connection = builder.serve_connection(TokioIo::new(tls_stream), service);
+        pin!(connection);
+        let result = tokio::select! {
+            result = &mut connection => result,
+            _ = done_rx => {
+                connection.as_mut().graceful_shutdown();
+                connection.await
+            }
+        };
+        if let Err(err) = result
+            && !is_expected_tls_shutdown(&err)
+        {
+            return Err(err.into());
+        }
+        Ok(())
+    });
+    Ok(TestServer { addr, task })
+}
+
 pub(crate) async fn start_tcp_echo_server() -> Result<TestServer, DynError> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
     let addr = listener.local_addr()?;
@@ -386,6 +481,8 @@ pub(crate) struct TestCa {
     pub(crate) cert_der: Vec<u8>,
 }
 
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 pub(crate) fn write_test_ca(base_dir: &Path) -> Result<TestCa, DynError> {
     std::fs::create_dir_all(base_dir)?;
     let mut params = CertificateParams::new(Vec::new())?;
@@ -446,7 +543,25 @@ Host: localhost:{upstream_port}\r\n\
 
 pub(crate) fn unique_temp_dir(prefix: &str) -> Result<PathBuf, DynError> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    Ok(std::env::temp_dir().join(format!("{prefix}_{}_{}", std::process::id(), nanos)))
+    let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    Ok(std::env::temp_dir().join(format!("{prefix}_{}_{}_{}", std::process::id(), nanos, sequence)))
+}
+
+pub(crate) fn remove_temp_dir(path: impl AsRef<Path>) -> io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[test]
+fn temp_directories_are_unique_within_one_clock_tick() -> Result<(), DynError> {
+    let paths = (0..1_000)
+        .map(|_| unique_temp_dir("rust_http_proxy_unique_temp_dir_test"))
+        .collect::<Result<std::collections::HashSet<_>, _>>()?;
+    assert_eq!(paths.len(), 1_000);
+    Ok(())
 }
 
 pub(crate) async fn timeout_step<T, E>(

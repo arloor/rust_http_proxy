@@ -14,9 +14,10 @@ use prom_label::LabelImpl;
 
 use crate::{
     METRICS,
+    forward_proxy_client::DirectProtocol,
     hyper_x::CounterBody,
     ip_x::SocketAddrFormat,
-    location::{Upstream, build_upstream_req, handle_websocket_upgrade_reverse, normalize302},
+    location::{BuiltUpstreamRequest, Upstream, build_upstream_req, handle_websocket_upgrade_reverse, normalize302},
 };
 
 use super::{
@@ -107,26 +108,42 @@ impl ProxyHandler {
                 );
                 // 在消费 request 之前，先获取客户端的 upgrade future
                 let client_upgrade_fut = hyper::upgrade::on(&mut request);
-                let upstream_req = build_upstream_req(location, upstream, request, original_scheme_host_port)?;
+                let BuiltUpstreamRequest {
+                    request: upstream_req,
+                    connection_key,
+                } = build_upstream_req(location, upstream, request, original_scheme_host_port)?;
+                if connection_key.protocol != DirectProtocol::Http1 {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidInput,
+                        "WebSocket Upgrade reverse proxy requires an H1 upstream",
+                    ));
+                }
                 return handle_websocket_upgrade_reverse(
                     upstream_req,
                     client_upgrade_fut,
                     traffic_label,
-                    &self.reverse_proxy_client,
+                    &connection_key,
+                    &self.reverse_proxy_http1_client,
+                    self.config.ipv6_first,
                 )
                 .await;
             }
 
-            let upstream_req = build_upstream_req(location, upstream, request, original_scheme_host_port)?;
+            let BuiltUpstreamRequest {
+                request: upstream_req,
+                connection_key,
+            } = build_upstream_req(location, upstream, request, original_scheme_host_port)?;
+            // build_upstream_req has resolved AUTO to a concrete request
+            // version. Select a strict transport client so the wire protocol
+            // cannot differ from that resolved version.
+            let reverse_proxy_client = if connection_key.protocol == DirectProtocol::Http2 {
+                &self.reverse_proxy_http2_client
+            } else {
+                &self.reverse_proxy_http1_client
+            };
             let upstream_req = upstream_req.map(|body| {
-                // 使用 CounterBody 包装 body 来统计请求流量
-                let counter_body =
-                    CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone()));
-                counter_body
-                    .map_err(|e| {
-                        let e = e;
-                        io::Error::new(ErrorKind::InvalidData, e)
-                    })
+                CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone()))
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
                     .boxed()
             });
             let upstream_req_method = upstream_req.method().clone();
@@ -142,7 +159,10 @@ impl ProxyHandler {
                 location,
             );
 
-            match self.reverse_proxy_client.request(upstream_req).await {
+            match reverse_proxy_client
+                .send_request(upstream_req, &connection_key, &traffic_label, self.config.ipv6_first)
+                .await
+            {
                 Ok(mut resp) => {
                     if resp.status().is_redirection() && resp.headers().contains_key(LOCATION) {
                         normalize302(original_scheme_host_port, resp.headers_mut(), config)?;
@@ -160,14 +180,8 @@ impl ProxyHandler {
                     );
 
                     Ok(resp.map(|body| {
-                        // 使用 CounterBody 包装 body 来统计响应流量
-                        let counter_body =
-                            CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label));
-                        counter_body
-                            .map_err(|e| {
-                                let e = e;
-                                io::Error::new(ErrorKind::InvalidData, e)
-                            })
+                        CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label))
+                            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
                             .boxed()
                     }))
                 }

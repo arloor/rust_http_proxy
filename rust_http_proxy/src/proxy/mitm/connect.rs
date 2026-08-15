@@ -71,7 +71,8 @@ impl ProxyHandler {
             ipv6_first,
             forward_bypass: forward_bypass.clone(),
             stub_specs: self.config.mitm_stub_specs.clone(),
-            stub_client: self.reverse_proxy_client.clone(),
+            stub_http1_client: self.reverse_proxy_http1_client.clone(),
+            stub_http2_client: self.reverse_proxy_http2_client.clone(),
             manager: self.mitm_manager.clone(),
         };
         tokio::task::spawn(async move {
