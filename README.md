@@ -239,6 +239,8 @@ rust_http_proxy -p 7788 \
 - 实时显示流式响应。关闭抓取后，在途记录会保留已经捕获的部分并标记为 `capture_stopped`；客户端提前断开、body 未传输完的记录会标记为 `interrupted`（重启时历史 `capturing` 记录也会统一收尾为该状态）。204 / `Content-Length: 0` / 已 `END_STREAM` 的空响应即使下游不再 poll body，也会记为 `complete`。
 - 默认保留最近 10,000 条记录，请求与响应 body 分别最多保存 64 KiB；可在面板中调整。
 
+![alt text](MITM-UI.png)
+
 每次启动时，命令行中全部 `--mitm-domain-suffix` 会原子替换 SQLite 中保存的目标列表；未传该参数会清空目标。启动参数目标会在面板中标记为“启动参数”，不能通过 API 或控制台删除；需要修改启动命令并重启。控制台新增的目标可以随时删除，但会在下次启动时被命令行列表覆盖。`--mitm-dump` 仅在新数据库第一次创建时初始化“明文抓取”开关，之后以 SQLite 中的持久化抓取设置为准，并且不会向普通日志输出明文。请求和响应的 `gzip`、`deflate`、`br`、`zstd` 以及多层 `Content-Encoding` 会在旁路解压后展示；二进制内容、WebSocket 数据帧和不支持的压缩格式不会保存 body，详情中会显示跳过原因。
 
 > ⚠️ **安全提示**：记录会完整保存 `Authorization`、`Cookie`、`Set-Cookie` 等敏感头。Basic 认证本身不加密凭据，管理面板应使用 `--over-tls`、反向代理 TLS 或仅在可信网络监听，并妥善保护 SQLite 文件。
@@ -301,7 +303,15 @@ adminmaxapi.knowhub.cloud:443:
 `responses/knowhub-validate.json`:
 
 ```json
-{"ok":true,"status":"enabled","owner":"mitm","expire_at":0,"user_ok":true,"user_status":"free","user_expire_at":0}
+{
+  "ok": true,
+  "status": "enabled",
+  "owner": "mitm",
+  "expire_at": 0,
+  "user_ok": true,
+  "user_status": "free",
+  "user_expire_at": 0
+}
 ```
 
 ### 📂 静态文件托管配置
@@ -410,14 +420,14 @@ let upstream_url = upstream.url_base.clone() + remaining;
 
 #### upstream 配置项说明
 
-| 参数 | 说明 | 默认值/可选值 |
-| --- | --- | --- |
-| `url_base` | 上游 scheme、默认主机与基础路径 | 任意有效 URL |
-| `connect_to` | DNS/TCP 实际连接目标；必须是静态域名或 IP | `url_base` 的 authority（自动补 80/443） |
-| `tls_server_name` | TLS SNI 与证书校验名；必须是静态 DNS 名或 IP | `url_base` 的 host |
-| `authority` | HTTP 虚拟主机：H1 写入 `Host`，H2 写入 `:authority` | `url_base` 的 authority，支持 `#{host}` |
-| `version` | HTTP 协议版本 | `H1`、`H2`、`AUTO`（默认） |
-| `headers` | 覆盖/添加发送给上游的请求头 | 键值对，支持 `#{host}` |
+| 参数              | 说明                                                | 默认值/可选值                            |
+| ----------------- | --------------------------------------------------- | ---------------------------------------- |
+| `url_base`        | 上游 scheme、默认主机与基础路径                     | 任意有效 URL                             |
+| `connect_to`      | DNS/TCP 实际连接目标；必须是静态域名或 IP           | `url_base` 的 authority（自动补 80/443） |
+| `tls_server_name` | TLS SNI 与证书校验名；必须是静态 DNS 名或 IP        | `url_base` 的 host                       |
+| `authority`       | HTTP 虚拟主机：H1 写入 `Host`，H2 写入 `:authority` | `url_base` 的 authority，支持 `#{host}`  |
+| `version`         | HTTP 协议版本                                       | `H1`、`H2`、`AUTO`（默认）               |
+| `headers`         | 覆盖/添加发送给上游的请求头                         | 键值对，支持 `#{host}`                   |
 
 `H1` 和 `H2` 使用彼此独立且严格限定协议的客户端。HTTPS upstream 的 `AUTO` 沿用入口请求版本后再分流，明文 HTTP upstream 则使用 H1；若对 `http://` upstream 显式指定 `H2`，使用的是 h2c prior knowledge，上游必须直接接受明文 HTTP/2。H2 不发送普通 `Host`，但会把 `authority` 写入 `:authority`，因此仍支持独立于连接目标和 TLS SNI 的虚拟主机。为兼容旧配置，未设置 `authority` 时，`headers.Host` 会作为 authority 使用。
 
@@ -501,19 +511,19 @@ proxy_traffic_total 1048576
 
 Linux 环境还会导出当前进程所在 cgroup 的 CPU 和内存指标。内存相关的主要指标包括：
 
-| 指标 | 说明 |
-| --- | --- |
-| `cgroup_memory_current_bytes` | 当前内存使用量 |
-| `cgroup_memory_working_set_bytes` | 当前使用量减去 inactive file |
-| `cgroup_memory_anon_bytes` | 匿名内存；cgroup v1 使用最接近的 RSS 口径 |
-| `cgroup_memory_active_file_bytes` | 活跃的文件页内存 |
-| `cgroup_memory_inactive_file_bytes` | 非活跃的文件页内存 |
-| `cgroup_memory_kernel_bytes` | 内核内存；通过 `cgroup_memory_kernel_available` 判断当前内核是否支持 |
-| `cgroup_memory_peak_bytes` | 历史峰值；通过 `cgroup_memory_peak_available` 判断内核是否支持 |
-| `cgroup_memory_limit_bytes` | cgroup 硬上限；`cgroup_memory_limit_enabled=0` 表示无限制 |
-| `cgroup_memory_collection_success` | 最近一次内存采集是否成功 |
-| `cgroup_memory_collection_errors_total` | 内存采集失败累计次数 |
-| `cgroup_memory_last_collection_timestamp_seconds` | 最近一次成功采集的 Unix 时间戳 |
+| 指标                                              | 说明                                                                 |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| `cgroup_memory_current_bytes`                     | 当前内存使用量                                                       |
+| `cgroup_memory_working_set_bytes`                 | 当前使用量减去 inactive file                                         |
+| `cgroup_memory_anon_bytes`                        | 匿名内存；cgroup v1 使用最接近的 RSS 口径                            |
+| `cgroup_memory_active_file_bytes`                 | 活跃的文件页内存                                                     |
+| `cgroup_memory_inactive_file_bytes`               | 非活跃的文件页内存                                                   |
+| `cgroup_memory_kernel_bytes`                      | 内核内存；通过 `cgroup_memory_kernel_available` 判断当前内核是否支持 |
+| `cgroup_memory_peak_bytes`                        | 历史峰值；通过 `cgroup_memory_peak_available` 判断内核是否支持       |
+| `cgroup_memory_limit_bytes`                       | cgroup 硬上限；`cgroup_memory_limit_enabled=0` 表示无限制            |
+| `cgroup_memory_collection_success`                | 最近一次内存采集是否成功                                             |
+| `cgroup_memory_collection_errors_total`           | 内存采集失败累计次数                                                 |
+| `cgroup_memory_last_collection_timestamp_seconds` | 最近一次成功采集的 Unix 时间戳                                       |
 
 CPU 指标也提供对应的 `cgroup_cpu_collection_success`、`cgroup_cpu_collection_errors_total` 和
 `cgroup_cpu_last_collection_timestamp_seconds`，因此采集失败时可以识别旧数据，而不会把旧值误认为当前值。
