@@ -135,7 +135,7 @@ pub struct Param {
     mitm_ca_key: Option<String>,
     #[arg(
         long = "mitm-dump",
-        help = "新建 MITM 数据库时默认开启明文抓取（不再向日志打印明文）"
+        help = "强制开启 MITM 明文抓取，并禁止通过控制台修改该开关（不向日志打印明文）"
     )]
     mitm_dump: bool,
     #[arg(
@@ -424,7 +424,7 @@ fn log_config(config: &Config) {
         info!("HTTPS MITM is enabled for suffixes: {:?}", config.mitm_domain_suffixes);
     }
     if config.mitm_dump {
-        info!("MITM plaintext capture seed is enabled");
+        info!("MITM plaintext capture is enabled and locked by --mitm-dump");
     }
     if !config.mitm_stub_specs.is_empty() {
         info!("MITM stubs are enabled");

@@ -505,8 +505,10 @@ function App() {
 
       <section className="control-strip">
         <Toggle
-          label="明文抓取"
+          label={settings?.capture_cli_managed ? '明文抓取（启动参数）' : '明文抓取'}
           checked={settings?.capture_enabled ?? false}
+          disabled={settings?.capture_cli_managed ?? false}
+          title={settings?.capture_cli_managed ? '由 --mitm-dump 启动参数锁定，需修改启动命令并重启' : undefined}
           onChange={(checked) => void updateSettings({ capture_enabled: checked })}
         />
         <label className="number-control">留存记录
@@ -793,8 +795,8 @@ function ClearableInput({
   )
 }
 
-function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
-  return <label className={`toggle-control ${disabled ? 'disabled' : ''}`}><span>{label}</span>
+function Toggle({ label, checked, disabled, title, onChange }: { label: string; checked: boolean; disabled?: boolean; title?: string; onChange: (value: boolean) => void }) {
+  return <label className={`toggle-control ${disabled ? 'disabled' : ''}`} title={title}><span>{label}</span>
     <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
     <i aria-hidden="true" />
   </label>

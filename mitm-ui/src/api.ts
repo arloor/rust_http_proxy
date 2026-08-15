@@ -1,5 +1,6 @@
 export type Settings = {
   capture_enabled: boolean
+  capture_cli_managed: boolean
   ca_available: boolean
   max_records: number
   body_limit_bytes: number

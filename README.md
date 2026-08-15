@@ -163,7 +163,7 @@ Options:
       --mitm-ca-key <KEY>
           MITM 动态签发证书使用的 CA 私钥 PEM 文件
       --mitm-dump
-          新建 MITM 数据库时默认开启明文抓取（不再向日志打印明文）
+          强制开启 MITM 明文抓取，并禁止通过控制台修改该开关（不向日志打印明文）
       --mitm-db-file <FILE_PATH>
           MITM 管理与明文记录 SQLite 文件。默认使用 <log-dir>/mitm.sqlite3
       --mitm-max-records <MITM_MAX_RECORDS>
@@ -241,7 +241,7 @@ rust_http_proxy -p 7788 \
 
 ![alt text](MITM-UI.png)
 
-每次启动时，命令行中全部 `--mitm-domain-suffix` 会原子替换 SQLite 中保存的目标列表；未传该参数会清空目标。启动参数目标会在面板中标记为“启动参数”，不能通过 API 或控制台删除；需要修改启动命令并重启。控制台新增的目标可以随时删除，但会在下次启动时被命令行列表覆盖。`--mitm-dump` 仅在新数据库第一次创建时初始化“明文抓取”开关，之后以 SQLite 中的持久化抓取设置为准，并且不会向普通日志输出明文。请求和响应的 `gzip`、`deflate`、`br`、`zstd` 以及多层 `Content-Encoding` 会在旁路解压后展示；二进制内容、WebSocket 数据帧和不支持的压缩格式不会保存 body，详情中会显示跳过原因。
+命令行中的 `--mitm-domain-suffix` 目标会在面板中标记为“启动参数”，不能通过 API 或控制台删除；它们只在本次运行中生效。控制台新增的目标持久保存在 SQLite 中，若与启动参数重名则在本次运行中同样被锁定。“明文抓取”开关也保存在 SQLite 中，未传 `--mitm-dump` 时使用数据库中的持久化设置。传入 `--mitm-dump` 会在本次运行中强制开启抓取，并锁定控制台与 API 中的该开关；需要移除启动参数并重启后才能再次修改。该运行时覆盖不会改写已有数据库中的开关值，并且明文不会输出到普通日志。请求和响应的 `gzip`、`deflate`、`br`、`zstd` 以及多层 `Content-Encoding` 会在旁路解压后展示；二进制内容、WebSocket 数据帧和不支持的压缩格式不会保存 body，详情中会显示跳过原因。
 
 > ⚠️ **安全提示**：记录会完整保存 `Authorization`、`Cookie`、`Set-Cookie` 等敏感头。Basic 认证本身不加密凭据，管理面板应使用 `--over-tls`、反向代理 TLS 或仅在可信网络监听，并妥善保护 SQLite 文件。
 

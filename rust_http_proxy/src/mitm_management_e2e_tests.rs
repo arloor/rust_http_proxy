@@ -141,6 +141,34 @@ async fn mitm_api_manages_targets_without_a_global_switch() -> Result<(), DynErr
 }
 
 #[tokio::test]
+async fn mitm_dump_cli_override_locks_capture_setting() -> Result<(), DynError> {
+    let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned(), "--mitm-dump".to_owned()]).await?;
+
+    let settings = request(
+        proxy.port,
+        &format!("GET /mitm/api/settings HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"),
+    )
+    .await?;
+    assert!(settings.starts_with("HTTP/1.1 200"));
+    assert!(settings.contains("\"capture_enabled\":true"));
+    assert!(settings.contains("\"capture_cli_managed\":true"));
+
+    let body = r#"{"capture_enabled":false}"#;
+    let rejected = request(
+        proxy.port,
+        &format!(
+            "PATCH /mitm/api/settings HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ),
+    )
+    .await?;
+    assert!(rejected.starts_with("HTTP/1.1 409"));
+    assert!(rejected.contains("--mitm-dump"));
+
+    proxy.shutdown().await
+}
+
+#[tokio::test]
 async fn mitm_json_apis_honor_accept_encoding_gzip() -> Result<(), DynError> {
     let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned()]).await?;
     let response = request(

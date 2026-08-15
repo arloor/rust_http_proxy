@@ -24,6 +24,7 @@ const WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct MitmSettings {
     pub capture_enabled: bool,
+    pub capture_cli_managed: bool,
     pub ca_available: bool,
     pub max_records: usize,
     pub body_limit_bytes: usize,
@@ -228,6 +229,8 @@ pub(crate) struct MitmManager {
     db_path: PathBuf,
     ca_available: bool,
     capture_enabled: AtomicBool,
+    stored_capture_enabled: AtomicBool,
+    capture_cli_managed: bool,
     max_records: AtomicUsize,
     body_limit_bytes: AtomicUsize,
     targets: RwLock<Vec<MitmTarget>>,
@@ -237,7 +240,7 @@ pub(crate) struct MitmManager {
 
 impl MitmManager {
     pub(crate) fn open(
-        db_path: PathBuf, ca_available: bool, configured_targets: &[String], seed_capture_enabled: bool,
+        db_path: PathBuf, ca_available: bool, configured_targets: &[String], cli_capture_enabled: bool,
         seed_max_records: usize, seed_body_limit_bytes: usize,
     ) -> Result<Arc<Self>, DynError> {
         if let Some(parent) = db_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
@@ -248,12 +251,13 @@ impl MitmManager {
         let cli_suffixes = initialize_schema(
             &connection,
             configured_targets,
-            seed_capture_enabled,
+            cli_capture_enabled,
             seed_max_records,
             seed_body_limit_bytes,
         )?;
         set_private_permissions(&db_path)?;
-        let (capture_enabled, max_records, body_limit_bytes) = load_settings(&connection)?;
+        let (stored_capture_enabled, max_records, body_limit_bytes) = load_settings(&connection)?;
+        let capture_enabled = cli_capture_enabled || stored_capture_enabled;
         let mut targets = load_targets(&connection)?;
         drop(connection);
         // DB 中没有的 CLI 目标只存在于内存（不落库），负数 id 避免与自增主键冲突
@@ -277,6 +281,8 @@ impl MitmManager {
             db_path: db_path.clone(),
             ca_available,
             capture_enabled: AtomicBool::new(capture_enabled),
+            stored_capture_enabled: AtomicBool::new(stored_capture_enabled),
+            capture_cli_managed: cli_capture_enabled,
             max_records: AtomicUsize::new(max_records),
             body_limit_bytes: AtomicUsize::new(body_limit_bytes),
             targets: RwLock::new(targets),
@@ -294,6 +300,7 @@ impl MitmManager {
     pub(crate) fn settings(&self) -> MitmSettings {
         MitmSettings {
             capture_enabled: self.capture_enabled.load(Ordering::Acquire),
+            capture_cli_managed: self.capture_cli_managed,
             ca_available: self.ca_available,
             max_records: self.max_records.load(Ordering::Acquire),
             body_limit_bytes: self.body_limit_bytes.load(Ordering::Acquire),
@@ -325,6 +332,11 @@ impl MitmManager {
     }
 
     pub(crate) async fn patch_settings(&self, patch: MitmSettingsPatch) -> Result<MitmSettings, ManagerError> {
+        if self.capture_cli_managed && patch.capture_enabled.is_some() {
+            return Err(ManagerError::Conflict(
+                "capture_enabled is managed by --mitm-dump and cannot be changed".to_owned(),
+            ));
+        }
         if patch.max_records == Some(0) {
             return Err(ManagerError::BadRequest("max_records must be greater than zero".to_owned()));
         }
@@ -335,14 +347,16 @@ impl MitmManager {
         }
 
         let current = self.settings();
-        let next_capture = patch.capture_enabled.unwrap_or(current.capture_enabled);
+        let stored_capture = self.stored_capture_enabled.load(Ordering::Acquire);
+        let next_stored_capture = patch.capture_enabled.unwrap_or(stored_capture);
+        let next_capture = self.capture_cli_managed || next_stored_capture;
         let next_max_records = patch.max_records.unwrap_or(current.max_records);
         let next_body_limit = patch.body_limit_bytes.unwrap_or(current.body_limit_bytes);
         let path = self.db_path.clone();
         run_db(path, move |connection| {
             connection.execute(
                 "UPDATE settings SET capture_enabled=?1, max_records=?2, body_limit_bytes=?3 WHERE id=1",
-                params![next_capture, next_max_records as i64, next_body_limit as i64],
+                params![next_stored_capture, next_max_records as i64, next_body_limit as i64],
             )?;
             if current.capture_enabled && !next_capture {
                 connection.execute(
@@ -354,6 +368,8 @@ impl MitmManager {
             Ok(())
         })
         .await?;
+        self.stored_capture_enabled
+            .store(next_stored_capture, Ordering::Release);
         self.capture_enabled.store(next_capture, Ordering::Release);
         self.max_records.store(next_max_records, Ordering::Release);
         self.body_limit_bytes.store(next_body_limit, Ordering::Release);
@@ -1490,6 +1506,54 @@ mod tests {
         assert!(!reopened_without_targets.should_mitm("www.override.example"));
         assert!(reopened_without_targets.should_mitm("www.second.example"));
         drop(reopened_without_targets);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cli_capture_override_is_locked_and_does_not_replace_stored_setting() -> Result<(), DynError> {
+        let path = test_db("capture_cli_override");
+        let manager = MitmManager::open(path.clone(), true, &[], false, 10_000, 65_536)?;
+        assert!(!manager.settings().capture_enabled);
+        assert!(!manager.settings().capture_cli_managed);
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let manager = MitmManager::open(path.clone(), true, &[], true, 10_000, 65_536)?;
+        let settings = manager.settings();
+        assert!(settings.capture_enabled);
+        assert!(settings.capture_cli_managed);
+        let error = manager
+            .patch_settings(MitmSettingsPatch {
+                capture_enabled: Some(false),
+                max_records: None,
+                body_limit_bytes: None,
+            })
+            .await
+            .err()
+            .ok_or("CLI-managed capture setting was unexpectedly changed")?;
+        assert!(matches!(error, ManagerError::Conflict(_)));
+        assert!(error.to_string().contains("--mitm-dump"));
+
+        let settings = manager
+            .patch_settings(MitmSettingsPatch {
+                capture_enabled: None,
+                max_records: Some(321),
+                body_limit_bytes: None,
+            })
+            .await?;
+        assert!(settings.capture_enabled);
+        assert_eq!(settings.max_records, 321);
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let manager = MitmManager::open(path.clone(), true, &[], false, 10_000, 65_536)?;
+        let settings = manager.settings();
+        assert!(!settings.capture_enabled);
+        assert!(!settings.capture_cli_managed);
+        assert_eq!(settings.max_records, 321);
+        drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);
         Ok(())
