@@ -56,6 +56,19 @@ jobs:
             after_install: ""
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: mitm-ui/package-lock.json
+      - name: Test and build embedded MITM UI
+        working-directory: mitm-ui
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Verify committed MITM UI dist is current
+        run: git diff --exit-code -- mitm-ui/dist
       - name: Set outputs
         id: vars
         run: echo "sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT

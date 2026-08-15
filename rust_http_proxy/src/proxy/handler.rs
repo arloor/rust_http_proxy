@@ -12,6 +12,7 @@ use crate::{
     dns_resolver::CustomGaiDNSResolver,
     forward_proxy_client::ForwardProxyClient,
     location::{DEFAULT_HOST, LocationConfig, Upstream},
+    mitm_manager::MitmManager,
 };
 
 use axum::extract::Request;
@@ -86,11 +87,14 @@ pub struct ProxyHandler {
     pub(super) forward_proxy_client: ForwardProxyClient<Incoming>,
     pub(super) mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
     pub(super) reverse_proxy_client: ReverseProxyClient,
+    pub(super) mitm_manager: Arc<MitmManager>,
 }
 
 impl ProxyHandler {
     #[allow(clippy::expect_used)]
-    pub fn new(config: Arc<Config>, shutdown_tx: broadcast::Sender<()>) -> Result<Self, crate::DynError> {
+    pub fn new(
+        config: Arc<Config>, mitm_manager: Arc<MitmManager>, shutdown_tx: broadcast::Sender<()>,
+    ) -> Result<Self, crate::DynError> {
         let reverse_client = build_hyper_legacy_client(config.ipv6_first);
         let http1_client = ForwardProxyClient::<Incoming>::new();
         let mitm_client = ForwardProxyClient::<BoxBody<Bytes, io::Error>>::new();
@@ -101,6 +105,7 @@ impl ProxyHandler {
             reverse_proxy_client: reverse_client,
             forward_proxy_client: http1_client,
             mitm_proxy_client: mitm_client,
+            mitm_manager,
         })
     }
 
@@ -116,6 +121,9 @@ impl ProxyHandler {
 
     /// 确定服务类型
     fn determine_service_type(&'_ self, req: &Request<Incoming>) -> Result<ServiceType<'_>, io::Error> {
+        if req.uri().host().is_none() && crate::mitm_web::is_management_path(req.uri().path()) {
+            return Ok(ServiceType::NonMatch);
+        }
         match (req.method(), req.version(), req.uri().host()) {
             // CONNECT 方法则判定为正向代理
             (&Method::CONNECT, _, _) => Ok(ServiceType::ForwardProxy),

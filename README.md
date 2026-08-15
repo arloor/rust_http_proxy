@@ -162,8 +162,14 @@ Options:
           MITM 动态签发证书使用的 CA 证书 PEM 文件
       --mitm-ca-key <KEY>
           MITM 动态签发证书使用的 CA 私钥 PEM 文件
-      --mitm-dump-plaintext
-          打印 MITM 解密后的请求/响应头和 body 前 16KB。仅用于调试
+      --mitm-dump
+          新建 MITM 数据库时默认开启明文抓取（不再向日志打印明文）
+      --mitm-db-file <FILE_PATH>
+          MITM 管理与明文记录 SQLite 文件。默认使用 <log-dir>/mitm.sqlite3
+      --mitm-max-records <MITM_MAX_RECORDS>
+          新 MITM 数据库的默认记录数量上限 [default: 10000]
+      --mitm-body-limit-bytes <MITM_BODY_LIMIT_BYTES>
+          新 MITM 数据库中单个请求或响应 body 的默认抓取字节上限 [default: 65536]
       --mitm-stub-config-file <FILE_PATH>
           MITM stub YAML 配置文件，按 authority + path 返回静态响应或转发到明文 HTTP upstream
   -h, --help
@@ -206,12 +212,48 @@ openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
 rust_http_proxy -p 7788 \
   --mitm-domain-suffix example.com \
   --mitm-domain-suffix example.org \
-  --mitm-dump-plaintext \
+  --mitm-dump \
   --mitm-ca-cert mitm-ca-cert.pem \
   --mitm-ca-key mitm-ca-key.pem
 ```
 
-客户端需要信任 `mitm-ca-cert.pem`，否则 HTTPS 校验会失败。`--mitm-dump-plaintext` 会把解密后的请求/响应头和 body 前 16KB 写入日志，请只在你有权限解密和代理的流量上使用该功能。
+客户端需要信任 `mitm-ca-cert.pem`，否则 HTTPS 校验会失败。请只在你有权限解密和代理的流量上使用该功能。
+
+#### MITM 管理与实时明文查看
+
+程序始终创建 MITM SQLite 数据库（默认 `<log-dir>/mitm.sqlite3`），React 管理面板内嵌在可执行文件中，可通过 `http(s)://代理地址/mitm` 访问。面板、静态资源、API 和实时 SSE 均使用 `--users` 配置的 Basic 账号认证；未配置账号时 `/mitm` 始终返回 `401`。
+
+```bash
+rust_http_proxy -p 7788 \
+  --users admin:change-me \
+  --mitm-ca-cert mitm-ca-cert.pem \
+  --mitm-ca-key mitm-ca-key.pem \
+  --mitm-db-file /var/lib/rust_http_proxy/mitm.sqlite3
+```
+
+面板支持：
+
+- 动态开启/关闭 MITM 和明文抓取，无需重启；关闭 MITM 或删除目标仅影响新的 CONNECT，已有连接自然结束。
+- 动态增删域名后缀。`example.com` 同时匹配 `example.com` 与其子域名。
+- 按域名、路径、方法、状态码和关键字查看最近请求；请求与响应 headers/body 使用同一个记录 ID 关联。
+- 实时显示流式响应。关闭抓取后，在途记录会保留已经捕获的部分并标记为 `capture_stopped`。
+- 默认保留最近 10,000 条记录，请求与响应 body 分别最多保存 64 KiB；可在面板中调整。
+
+每次启动时，命令行中全部 `--mitm-domain-suffix` 会原子替换 SQLite 中保存的目标列表；未传该参数会清空目标。`--mitm-dump` 仅在新数据库第一次创建时初始化“明文抓取”开关，之后以 SQLite 中的持久化抓取设置为准，并且不会向普通日志输出明文。响应 gzip 会在旁路解压后展示；二进制内容、WebSocket 数据帧和不支持的压缩格式不会保存 body，详情中会显示跳过原因。
+
+> ⚠️ **安全提示**：记录会完整保存 `Authorization`、`Cookie`、`Set-Cookie` 等敏感头。Basic 认证本身不加密凭据，管理面板应使用 `--over-tls`、反向代理 TLS 或仅在可信网络监听，并妥善保护 SQLite 文件。
+
+Docker 运行时请挂载数据库目录，否则容器删除后记录和动态配置会丢失：
+
+```bash
+docker run --rm --net host \
+  -v /srv/rust_http_proxy:/data \
+  quay.io/arloor/rust_http_proxy -p 7788 \
+  --users admin:change-me \
+  --mitm-db-file /data/mitm.sqlite3 \
+  --mitm-ca-cert /data/mitm-ca-cert.pem \
+  --mitm-ca-key /data/mitm-ca-key.pem
+```
 
 #### MITM Stub 响应
 

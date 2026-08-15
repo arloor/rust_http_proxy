@@ -24,7 +24,11 @@ mod location;
 mod metrics;
 mod mitm;
 #[cfg(test)]
+mod mitm_management_e2e_tests;
+mod mitm_manager;
+#[cfg(test)]
 mod mitm_stub_e2e_tests;
+mod mitm_web;
 mod proxy;
 mod static_serve;
 #[cfg(test)]
@@ -35,6 +39,7 @@ use tokio::sync::broadcast::{self, Receiver};
 
 use crate::axum_handler::{AppState, build_router};
 use crate::config::{Config, Param};
+use crate::mitm_manager::MitmManager;
 
 use axum_bootstrap::{InterceptResult, ReqInterceptor, TlsParam};
 use axum_handler::AppProxyError;
@@ -80,11 +85,15 @@ impl ReqInterceptor for ProxyInterceptor {
 }
 
 fn create_future(
-    port: u16, proxy_handler: Arc<ProxyHandler>, config: Arc<Config>, shutdown_rx: Receiver<()>,
+    port: u16, proxy_handler: Arc<ProxyHandler>, config: Arc<Config>, mitm_manager: Arc<MitmManager>,
+    shutdown_rx: Receiver<()>,
 ) -> impl Future<Output = Result<(), std::io::Error>> {
     let basic_auth = config.basic_auth.clone();
 
-    let router = build_router(AppState { basic_auth });
+    let router = build_router(AppState {
+        basic_auth,
+        mitm_manager,
+    });
     let server = axum_bootstrap::new_server(port, router, shutdown_rx);
     let server = if let Some(host) = config.host {
         server.with_listen_ip(host)
@@ -113,7 +122,15 @@ pub fn create_futures(
     let config = Arc::new(load_config(param)?);
     let ports = config.port.clone();
     let (shutdown_tx, _) = broadcast::channel(1);
-    let proxy_handler = Arc::new(ProxyHandler::new(config.clone(), shutdown_tx.clone())?);
+    let mitm_manager = MitmManager::open(
+        config.mitm_db_file.clone(),
+        config.mitm_authority.is_some(),
+        &config.mitm_domain_suffixes,
+        config.mitm_dump,
+        config.mitm_max_records,
+        config.mitm_body_limit_bytes,
+    )?;
+    let proxy_handler = Arc::new(ProxyHandler::new(config.clone(), mitm_manager.clone(), shutdown_tx.clone())?);
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();
     #[cfg(target_os = "linux")]
@@ -122,7 +139,13 @@ pub fn create_futures(
     let main_futures = ports
         .into_iter()
         .map(|port| {
-            let main_future = create_future(port, proxy_handler.clone(), config.clone(), shutdown_tx.subscribe());
+            let main_future = create_future(
+                port,
+                proxy_handler.clone(),
+                config.clone(),
+                mitm_manager.clone(),
+                shutdown_tx.subscribe(),
+            );
             let shutdown_tx_clone = shutdown_tx.clone();
             async move {
                 let res = main_future.await;

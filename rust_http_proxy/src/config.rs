@@ -6,6 +6,7 @@ use ipnetwork::IpNetwork;
 use log::{info, warn};
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -132,8 +133,25 @@ pub struct Param {
     mitm_ca_cert: Option<String>,
     #[arg(long, value_name = "KEY", help = "MITM 动态签发证书使用的 CA 私钥 PEM 文件")]
     mitm_ca_key: Option<String>,
-    #[arg(long, help = "打印 MITM 解密后的请求/响应头和 body 前 16KB。仅用于调试")]
-    mitm_dump_plaintext: bool,
+    #[arg(
+        long = "mitm-dump",
+        help = "新建 MITM 数据库时默认开启明文抓取（不再向日志打印明文）"
+    )]
+    mitm_dump: bool,
+    #[arg(
+        long,
+        value_name = "FILE_PATH",
+        help = "MITM 管理与明文记录 SQLite 文件。默认使用 <log-dir>/mitm.sqlite3"
+    )]
+    mitm_db_file: Option<PathBuf>,
+    #[arg(long, default_value = "10000", help = "新 MITM 数据库的默认记录数量上限")]
+    mitm_max_records: usize,
+    #[arg(
+        long,
+        default_value = "65536",
+        help = "新 MITM 数据库中单个请求或响应 body 的默认抓取字节上限"
+    )]
+    mitm_body_limit_bytes: usize,
     #[arg(
         long,
         value_name = "FILE_PATH",
@@ -158,7 +176,10 @@ pub(crate) struct Config {
     pub(crate) ipv6_first: Option<bool>,
     pub(crate) mitm_authority: Option<Arc<MitmAuthority>>,
     pub(crate) mitm_domain_suffixes: Vec<String>,
-    pub(crate) mitm_dump_plaintext: bool,
+    pub(crate) mitm_dump: bool,
+    pub(crate) mitm_db_file: PathBuf,
+    pub(crate) mitm_max_records: usize,
+    pub(crate) mitm_body_limit_bytes: usize,
     pub(crate) mitm_stub_specs: MitmStubSpecs,
 }
 
@@ -266,17 +287,23 @@ impl TryFrom<Param> for Config {
         let mitm_stub_specs = parse_mitm_stub_specs(&param.mitm_stub_config_file)?;
 
         let mitm_domain_suffixes = normalize_mitm_domain_suffixes(param.mitm_domain_suffix);
-        let mitm_authority =
-            match (mitm_domain_suffixes.is_empty(), param.mitm_ca_cert.as_ref(), param.mitm_ca_key.as_ref()) {
-                (false, Some(ca_cert), Some(ca_key)) => Some(Arc::new(MitmAuthority::load(ca_cert, ca_key)?)),
-                (false, _, _) => {
-                    return Err("--mitm-domain-suffix requires both --mitm-ca-cert and --mitm-ca-key".into());
-                }
-                (true, Some(_), _) | (true, _, Some(_)) => {
-                    return Err("--mitm-ca-cert/--mitm-ca-key require --mitm-domain-suffix".into());
-                }
-                (true, None, None) => None,
-            };
+        let mitm_authority = match (param.mitm_ca_cert.as_ref(), param.mitm_ca_key.as_ref()) {
+            (Some(ca_cert), Some(ca_key)) => Some(Arc::new(MitmAuthority::load(ca_cert, ca_key)?)),
+            (None, None) if mitm_domain_suffixes.is_empty() => None,
+            (None, None) => {
+                return Err("--mitm-domain-suffix requires both --mitm-ca-cert and --mitm-ca-key".into());
+            }
+            _ => return Err("--mitm-ca-cert and --mitm-ca-key must be configured together".into()),
+        };
+        if param.mitm_max_records == 0 {
+            return Err("--mitm-max-records must be greater than zero".into());
+        }
+        if !(1024..=1024 * 1024).contains(&param.mitm_body_limit_bytes) {
+            return Err("--mitm-body-limit-bytes must be between 1024 and 1048576".into());
+        }
+        let mitm_db_file = param
+            .mitm_db_file
+            .unwrap_or_else(|| PathBuf::from(&param.log_dir).join("mitm.sqlite3"));
 
         let mut allowed_networks = Vec::new();
         if !param.allow_serving_network.is_empty() {
@@ -308,7 +335,10 @@ impl TryFrom<Param> for Config {
             ipv6_first: param.ipv6_first,
             mitm_authority,
             mitm_domain_suffixes,
-            mitm_dump_plaintext: param.mitm_dump_plaintext,
+            mitm_dump: param.mitm_dump,
+            mitm_db_file,
+            mitm_max_records: param.mitm_max_records,
+            mitm_body_limit_bytes: param.mitm_body_limit_bytes,
             mitm_stub_specs,
         })
     }
@@ -393,8 +423,8 @@ fn log_config(config: &Config) {
     if config.mitm_authority.is_some() {
         info!("HTTPS MITM is enabled for suffixes: {:?}", config.mitm_domain_suffixes);
     }
-    if config.mitm_dump_plaintext {
-        info!("MITM plaintext dump is enabled");
+    if config.mitm_dump {
+        info!("MITM plaintext capture seed is enabled");
     }
     if !config.mitm_stub_specs.is_empty() {
         info!("MITM stubs are enabled");

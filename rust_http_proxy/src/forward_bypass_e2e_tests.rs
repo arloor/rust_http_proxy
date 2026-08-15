@@ -249,7 +249,8 @@ Connection: close, x-remove-for-h2\r\n\
 X-Remove-For-H2: yes\r\n\
 Transfer-Encoding: chunked\r\n\
 Upgrade: websocket\r\n\
-\r\n",
+\r\n\
+0\r\n\r\n",
                 upstream.addr.port()
             )
             .as_bytes(),

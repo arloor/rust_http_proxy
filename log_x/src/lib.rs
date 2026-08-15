@@ -3,7 +3,7 @@ use std::{fs, io, path};
 use flexi_logger::{
     Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, FlexiLoggerError, Logger, LoggerHandle, Naming,
 };
-use log::{info, Record};
+use log::{Record, info};
 
 pub fn init_log(log_dir: &str, log_file: &str, level: &str) -> Result<LoggerHandle, FlexiLoggerError> {
     // 转换成绝对路径

@@ -20,19 +20,15 @@ use super::http::{
     build_authenticate_resp, empty_body, full_body, get_client_ip, is_schema_secure, is_websocket_upgrade, origin_form,
 };
 use super::labels::{AccessLabel, TunnelHandshakeLabel};
-use super::mitm::host_matches_mitm_suffix;
 use super::padding::append_random_padding_headers;
 use super::tunnel::{spawn_websocket_tunnel, tunnel};
 
 impl ProxyHandler {
     fn should_mitm(&self, req: &Request<Incoming>) -> bool {
-        if self.config.mitm_authority.is_none() || self.config.mitm_domain_suffixes.is_empty() {
-            return false;
-        }
         let Some(addr) = host_addr(req.uri()) else {
             return false;
         };
-        host_matches_mitm_suffix(&addr.host(), &self.config.mitm_domain_suffixes)
+        self.mitm_manager.should_mitm(&addr.host())
     }
 
     pub(super) async fn handle_forward_proxy(

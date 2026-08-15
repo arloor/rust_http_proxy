@@ -29,6 +29,7 @@ pub(crate) struct RunningProxy {
     pub(crate) port: u16,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
     task: JoinHandle<Vec<Result<(), io::Error>>>,
+    mitm_db_path: PathBuf,
 }
 
 impl RunningProxy {
@@ -38,18 +39,32 @@ impl RunningProxy {
         for result in results {
             result?;
         }
+        for suffix in ["", "-wal", "-shm"] {
+            let path = PathBuf::from(format!("{}{suffix}", self.mitm_db_path.display()));
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
         Ok(())
     }
 }
 
 pub(crate) async fn start_proxy(extra_args: Vec<String>) -> Result<RunningProxy, DynError> {
     let port = unused_dual_stack_port()?;
+    let mitm_db_path = std::env::temp_dir().join(format!(
+        "rust_http_proxy_e2e_mitm_{}_{}_{:x}.sqlite3",
+        std::process::id(),
+        port,
+        rand::random::<u64>()
+    ));
     let mut args = vec![
         "rust_http_proxy".to_owned(),
         "--port".to_owned(),
         port.to_string(),
         "--ipv6-first".to_owned(),
         "false".to_owned(),
+        "--mitm-db-file".to_owned(),
+        mitm_db_path.to_string_lossy().into_owned(),
     ];
     args.extend(extra_args);
     let param = Param::parse_from(args);
@@ -60,6 +75,7 @@ pub(crate) async fn start_proxy(extra_args: Vec<String>) -> Result<RunningProxy,
         port,
         shutdown_tx,
         task,
+        mitm_db_path,
     })
 }
 
@@ -176,7 +192,7 @@ pub(crate) async fn start_tls_h2_http_server() -> Result<TestServer, DynError> {
             }
         };
         if let Err(err) = result {
-            if !is_tls_unexpected_eof(&err) {
+            if !is_expected_tls_shutdown(&err) {
                 return Err(err.into());
             }
         }
@@ -600,13 +616,12 @@ fn test_server_tls_config() -> Result<ServerConfig, DynError> {
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e).into())
 }
 
-fn is_tls_unexpected_eof(err: &(dyn std::error::Error + 'static)) -> bool {
+fn is_expected_tls_shutdown(err: &(dyn std::error::Error + 'static)) -> bool {
     let mut current = Some(err);
     while let Some(err) = current {
-        if err
-            .downcast_ref::<io::Error>()
-            .is_some_and(|err| err.kind() == ErrorKind::UnexpectedEof)
-            || err.to_string().contains("close_notify")
+        if err.downcast_ref::<io::Error>().is_some_and(|err| {
+            matches!(err.kind(), ErrorKind::UnexpectedEof | ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset)
+        }) || err.to_string().contains("close_notify")
         {
             return true;
         }

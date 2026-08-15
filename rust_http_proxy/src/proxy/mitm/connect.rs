@@ -72,7 +72,7 @@ impl ProxyHandler {
             forward_bypass: forward_bypass.clone(),
             stub_specs: self.config.mitm_stub_specs.clone(),
             stub_client: self.reverse_proxy_client.clone(),
-            dump_plaintext: self.config.mitm_dump_plaintext,
+            manager: self.mitm_manager.clone(),
         };
         tokio::task::spawn(async move {
             let access_tag = format!("{} -> {}", client_socket_addr.ip().to_canonical(), target);

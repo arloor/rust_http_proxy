@@ -24,9 +24,11 @@ use crate::linux_axum_handler;
 
 pub(crate) struct AppState {
     pub basic_auth: HashMap<String, String>,
+    pub mitm_manager: Arc<crate::mitm_manager::MitmManager>,
 }
 
 pub(crate) fn build_router(appstate: AppState) -> Router {
+    let mitm_router = crate::mitm_web::router(appstate.basic_auth.clone());
     // build our application with a route
     let router = Router::new()
         .route(
@@ -73,7 +75,7 @@ pub(crate) fn build_router(appstate: AppState) -> Router {
         CompressionLayer::new(),
     ));
 
-    router.with_state(Arc::new(appstate))
+    router.merge(mitm_router).with_state(Arc::new(appstate))
 }
 
 fn make_span(req: &http::Request<axum::body::Body>) -> tracing::Span {

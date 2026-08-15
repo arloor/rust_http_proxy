@@ -8,7 +8,7 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 
 use futures_util::Future;
-use tokio::time::{sleep, Instant, Sleep};
+use tokio::time::{Instant, Sleep, sleep};
 
 use prom_label::Label;
 
