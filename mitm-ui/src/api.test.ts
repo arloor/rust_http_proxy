@@ -33,10 +33,12 @@ describe('format helpers', () => {
   })
 
   it('omits the date when the record is from today', () => {
-    const now = Date.parse('2026-08-15T14:46:29.271+08:00')
+    // 用本地时间构造，避免测试结果依赖运行机器的时区
+    const now = new Date(2026, 7, 15, 14, 46, 29, 271).getTime()
     const text = formatTime(now, now)
     expect(text).toMatch(/14:46:29/)
     expect(text).not.toMatch(/08/)
+    expect(text).not.toMatch(/15/)
   })
 
   it('pretty-prints JSON and leaves other bodies alone', () => {
