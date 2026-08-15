@@ -43,10 +43,6 @@ const SERVICE_EXIT_CODE_ARGUMENT_ERROR: u32 = 100;
 const SERVICE_EXIT_CODE_EXITED_UNEXPECTEDLY: u32 = 101;
 const SERVICE_EXIT_CODE_CREATE_FAILED: u32 = 102;
 
-// 使用jemalloc作为全局内存分配器
-#[cfg(feature = "jemalloc")]
-#[global_allocator]
-static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

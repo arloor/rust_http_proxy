@@ -44,7 +44,6 @@ zstd = "0.13"
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 clap = { version = "4.4", features = ["derive"] }
 base64 = "0.23"
-jemallocator = { version = "0.5", optional = true }
 mimalloc = { version = "0.1", optional = true }
 regex = "1"
 log_x = { path = "../log_x" }
@@ -89,12 +88,15 @@ pnet = { version = "0.35", optional = true }
 axum-macros = "0.5"
 axum-extra = { version = "0.12", features = ["typed-header"] }
 
+[target.'cfg(unix)'.dependencies]
+jemallocator = { version = "0.5", optional = true }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-service = { version = "0.8", optional = true }
 
 [features]
 default = ["aws_lc_rs", "mimalloc"]
-jemalloc = ["jemallocator"]
+jemalloc = ["dep:jemallocator"]
 mimalloc = ["dep:mimalloc"]
 bpf = ["socket_filter", "cgroup_traffic"]
 bpf_vendored = ["bpf", "socket_filter/vendored", "cgroup_traffic/vendored"]

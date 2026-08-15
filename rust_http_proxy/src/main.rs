@@ -6,11 +6,11 @@
 use clap::Parser as _;
 use rust_http_proxy::{DynError, config::Param, create_futures};
 
-// 使用jemalloc作为全局内存分配器
-#[cfg(feature = "jemalloc")]
+// Unix 上显式启用 jemalloc feature 时优先使用 jemalloc。
+#[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
-#[cfg(feature = "mimalloc")]
+#[cfg(all(feature = "mimalloc", not(all(feature = "jemalloc", unix))))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

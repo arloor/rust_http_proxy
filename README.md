@@ -585,7 +585,7 @@ yum install -y libbpf zlib-devel elfutils-libelf-devel pkgconf-pkg-config \
 
 #### 🧠 Jemalloc 内存分配器
 
-使用 jemalloc 替代系统默认内存分配器，提供更好的并发性能和减少内存碎片。
+在 Unix 平台使用 jemalloc 替代系统默认内存分配器，提供更好的并发性能和减少内存碎片。`jemalloc` feature 在非 Unix 平台不会启用 jemalloc；Windows 仍使用默认启用的 mimalloc。
 
 **编译方式**：
 
