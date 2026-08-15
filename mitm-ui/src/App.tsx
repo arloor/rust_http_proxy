@@ -60,6 +60,7 @@ function App() {
   const [pinToLatest, setPinToLatest] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
+  // 详情的 Request/Response tab 提到这一层：切换记录时 Detail 会卸载（显示加载态），状态不能丢
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request')
   const detailRequestRef = useRef(0)
   const activeRecordIdRef = useRef<string | null>(null)
