@@ -229,7 +229,7 @@ impl MitmManager {
                 .map_err(|e| format!("failed to create MITM database directory {}: {e}", parent.display()))?;
         }
         let connection = open_connection(&db_path)?;
-        initialize_schema(
+        let cli_suffixes = initialize_schema(
             &connection,
             configured_targets,
             seed_capture_enabled,
@@ -238,8 +238,22 @@ impl MitmManager {
         )?;
         set_private_permissions(&db_path)?;
         let (capture_enabled, max_records, body_limit_bytes) = load_settings(&connection)?;
-        let targets = load_targets(&connection)?;
+        let mut targets = load_targets(&connection)?;
         drop(connection);
+        // DB 中没有的 CLI 目标只存在于内存（不落库），负数 id 避免与自增主键冲突
+        let mut synthetic_id = 0i64;
+        for suffix in &cli_suffixes {
+            if !targets.iter().any(|target| &target.suffix == suffix) {
+                synthetic_id -= 1;
+                targets.push(MitmTarget {
+                    id: synthetic_id,
+                    suffix: suffix.clone(),
+                    created_at_ms: now_ms(),
+                    cli_managed: true,
+                });
+            }
+        }
+        targets.sort_by(|left, right| left.suffix.cmp(&right.suffix));
 
         let (writer_tx, writer_rx) = mpsc::channel();
         let (events, _) = broadcast::channel(1024);
@@ -337,6 +351,16 @@ impl MitmManager {
     pub(crate) async fn add_target(&self, suffix: String) -> Result<MitmTarget, ManagerError> {
         let suffix = normalize_suffix(&suffix)
             .ok_or_else(|| ManagerError::BadRequest("target suffix must not be empty".to_owned()))?;
+        // 同名 CLI 目标当前仅在内存中时，落库后仍保持 CLI 管理标记
+        let keep_cli_managed = self
+            .targets
+            .read()
+            .map(|targets| {
+                targets
+                    .iter()
+                    .any(|target| target.suffix == suffix && target.cli_managed)
+            })
+            .unwrap_or(false);
         let path = self.db_path.clone();
         let db_suffix = suffix.clone();
         let target = run_db(path, move |connection| {
@@ -345,9 +369,12 @@ impl MitmManager {
                 "INSERT OR IGNORE INTO targets(suffix, created_at_ms, cli_managed) VALUES(?1, ?2, 0)",
                 params![db_suffix, created_at],
             )?;
+            if keep_cli_managed {
+                connection.execute("UPDATE targets SET cli_managed=1 WHERE suffix=?1", [&db_suffix])?;
+            }
             connection.query_row(
                 "SELECT id, suffix, created_at_ms, cli_managed FROM targets WHERE suffix=?1",
-                [db_suffix],
+                [&db_suffix],
                 |row| {
                     Ok(MitmTarget {
                         id: row.get(0)?,
@@ -359,9 +386,8 @@ impl MitmManager {
             )
         })
         .await?;
-        if let Ok(mut targets) = self.targets.write()
-            && !targets.iter().any(|item| item.id == target.id)
-        {
+        if let Ok(mut targets) = self.targets.write() {
+            targets.retain(|item| item.suffix != target.suffix);
             targets.push(target.clone());
             targets.sort_by(|left, right| left.suffix.cmp(&right.suffix));
         }
@@ -561,7 +587,7 @@ fn open_connection_with_mode(path: &Path, query_only: bool) -> Result<Connection
 fn initialize_schema(
     connection: &Connection, configured_targets: &[String], seed_capture_enabled: bool, seed_max_records: usize,
     seed_body_limit_bytes: usize,
-) -> Result<(), ManagerError> {
+) -> Result<Vec<String>, ManagerError> {
     let current_version = connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
     if current_version > SCHEMA_VERSION {
         return Err(ManagerError::Database(format!(
@@ -659,12 +685,11 @@ fn initialize_schema(
         ],
     )?;
     let transaction = connection.unchecked_transaction()?;
-    transaction.execute("DELETE FROM targets", [])?;
-    for suffix in normalized_targets {
-        transaction.execute(
-            "INSERT OR IGNORE INTO targets(suffix, created_at_ms, cli_managed) VALUES(?1, ?2, 1)",
-            params![suffix, now_ms()],
-        )?;
+    // 控制台添加的目标持久保存在 DB 中，跨重启保留，不再整体清空；
+    // CLI 目标不落库，仅把 DB 中已存在的同名行标记为 CLI 管理，其余行恢复为控制台目标
+    transaction.execute("UPDATE targets SET cli_managed=0", [])?;
+    for suffix in &normalized_targets {
+        transaction.execute("UPDATE targets SET cli_managed=1 WHERE suffix=?1", [suffix])?;
     }
     transaction.commit()?;
     // 重启后不存在仍在进行的抓取，把历史遗留的 capturing 记录统一收尾为 interrupted
@@ -676,7 +701,7 @@ fn initialize_schema(
     if current_version < SCHEMA_VERSION {
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
-    Ok(())
+    Ok(normalized_targets)
 }
 
 fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool, ManagerError> {
@@ -1330,7 +1355,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn persists_settings_and_replaces_targets_from_cli() -> Result<(), DynError> {
+    async fn persists_settings_and_console_targets_but_not_cli_ones() -> Result<(), DynError> {
         let path = test_db("settings");
         let manager = MitmManager::open(path.clone(), true, &["Example.COM".to_owned()], false, 10_000, 65_536)?;
         assert!(manager.should_mitm("api.example.com"));
@@ -1364,25 +1389,100 @@ mod tests {
         assert!(settings.capture_enabled);
         assert_eq!(settings.max_records, 321);
         assert_eq!(settings.body_limit_bytes, 16_384);
-        assert_eq!(reopened.targets().len(), 1);
-        assert_eq!(reopened.targets()[0].suffix, "override.example");
-        assert!(reopened.targets()[0].cli_managed);
-        let protected_id = reopened.targets()[0].id;
+        // 控制台添加的目标跨重启保留；上一轮的 CLI 目标（example.com）不落库，随之消失
+        assert_eq!(reopened.targets().len(), 2);
+        let targets = reopened.targets();
+        let cli_target = targets
+            .iter()
+            .find(|target| target.suffix == "override.example")
+            .ok_or("CLI target missing")?;
+        assert!(cli_target.cli_managed);
+        let cli_target_id = cli_target.id;
+        let console_target = targets
+            .iter()
+            .find(|target| target.suffix == "second.example")
+            .ok_or("console target was not persisted")?;
+        assert!(!console_target.cli_managed);
         let error = reopened
-            .delete_target(protected_id)
+            .delete_target(cli_target_id)
             .await
             .err()
             .ok_or("CLI target was unexpectedly deleted")?;
         assert!(error.to_string().contains("--mitm-domain-suffix"));
         assert!(reopened.should_mitm("www.override.example"));
-        assert!(!reopened.should_mitm("www.second.example"));
+        assert!(reopened.should_mitm("www.second.example"));
+        assert!(!reopened.should_mitm("api.example.com"));
         drop(reopened);
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         let reopened_without_targets = MitmManager::open(path.clone(), true, &[], false, 1, 1024)?;
-        assert!(reopened_without_targets.targets().is_empty());
+        // CLI 目标不落库已消失，控制台目标仍在
+        let targets = reopened_without_targets.targets();
+        let suffixes: Vec<&str> = targets.iter().map(|target| target.suffix.as_str()).collect();
+        assert_eq!(suffixes, ["second.example"]);
         assert!(!reopened_without_targets.should_mitm("www.override.example"));
+        assert!(reopened_without_targets.should_mitm("www.second.example"));
         drop(reopened_without_targets);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    // CLI 目标若已在 DB 中（之前由控制台添加），行保留并标记为 CLI 管理
+    #[tokio::test]
+    async fn cli_target_matching_db_row_keeps_row_and_mark() -> Result<(), DynError> {
+        let path = test_db("cli_db_overlap");
+        let manager = MitmManager::open(path.clone(), true, &[], false, 10_000, 65_536)?;
+        manager.add_target("shared.example".to_owned()).await?;
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let manager = MitmManager::open(path.clone(), true, &["shared.example".to_owned()], false, 10_000, 65_536)?;
+        assert_eq!(manager.targets().len(), 1);
+        assert!(manager.targets()[0].cli_managed);
+        assert!(manager.targets()[0].id > 0);
+        let error = manager
+            .delete_target(manager.targets()[0].id)
+            .await
+            .err()
+            .ok_or("CLI target was unexpectedly deleted")?;
+        assert!(error.to_string().contains("--mitm-domain-suffix"));
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // 再次重启且不带 CLI：行仍在，恢复为可删除的控制台目标
+        let manager = MitmManager::open(path.clone(), true, &[], false, 10_000, 65_536)?;
+        assert_eq!(manager.targets().len(), 1);
+        assert!(!manager.targets()[0].cli_managed);
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    // 控制台添加一个当前由 CLI 提供的同名后缀：落库、去重、仍按 CLI 管理
+    #[tokio::test]
+    async fn console_add_of_cli_suffix_persists_single_managed_row() -> Result<(), DynError> {
+        let path = test_db("console_add_cli_suffix");
+        let manager = MitmManager::open(path.clone(), true, &["dup.example".to_owned()], false, 10_000, 65_536)?;
+        let added = manager.add_target("dup.example".to_owned()).await?;
+        assert!(added.cli_managed);
+        assert_eq!(
+            manager
+                .targets()
+                .iter()
+                .filter(|target| target.suffix == "dup.example")
+                .count(),
+            1
+        );
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let manager = MitmManager::open(path.clone(), true, &[], false, 10_000, 65_536)?;
+        assert_eq!(manager.targets().len(), 1);
+        assert_eq!(manager.targets()[0].suffix, "dup.example");
+        assert!(!manager.targets()[0].cli_managed);
+        drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);
         Ok(())
