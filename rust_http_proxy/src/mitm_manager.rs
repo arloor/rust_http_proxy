@@ -13,15 +13,13 @@ use tokio::sync::broadcast;
 
 use crate::DynError;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const DEFAULT_PAGE_LIMIT: usize = 100;
 const MAX_PAGE_LIMIT: usize = 500;
 const WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct MitmSettings {
-    pub mitm_enabled: bool,
-    pub effective_mitm_enabled: bool,
     pub capture_enabled: bool,
     pub ca_available: bool,
     pub max_records: usize,
@@ -29,8 +27,8 @@ pub(crate) struct MitmSettings {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MitmSettingsPatch {
-    pub mitm_enabled: Option<bool>,
     pub capture_enabled: Option<bool>,
     pub max_records: Option<usize>,
     pub body_limit_bytes: Option<usize>,
@@ -41,6 +39,7 @@ pub(crate) struct MitmTarget {
     pub id: i64,
     pub suffix: String,
     pub created_at_ms: i64,
+    pub cli_managed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -201,7 +200,6 @@ struct PendingBody {
 pub(crate) struct MitmManager {
     db_path: PathBuf,
     ca_available: bool,
-    mitm_enabled: AtomicBool,
     capture_enabled: AtomicBool,
     max_records: AtomicUsize,
     body_limit_bytes: AtomicUsize,
@@ -228,7 +226,7 @@ impl MitmManager {
             seed_body_limit_bytes,
         )?;
         set_private_permissions(&db_path)?;
-        let (mitm_enabled, capture_enabled, max_records, body_limit_bytes) = load_settings(&connection)?;
+        let (capture_enabled, max_records, body_limit_bytes) = load_settings(&connection)?;
         let targets = load_targets(&connection)?;
         drop(connection);
 
@@ -237,7 +235,6 @@ impl MitmManager {
         let manager = Arc::new(Self {
             db_path: db_path.clone(),
             ca_available,
-            mitm_enabled: AtomicBool::new(mitm_enabled),
             capture_enabled: AtomicBool::new(capture_enabled),
             max_records: AtomicUsize::new(max_records),
             body_limit_bytes: AtomicUsize::new(body_limit_bytes),
@@ -254,10 +251,7 @@ impl MitmManager {
     }
 
     pub(crate) fn settings(&self) -> MitmSettings {
-        let enabled = self.mitm_enabled.load(Ordering::Acquire);
         MitmSettings {
-            mitm_enabled: enabled,
-            effective_mitm_enabled: enabled && self.ca_available,
             capture_enabled: self.capture_enabled.load(Ordering::Acquire),
             ca_available: self.ca_available,
             max_records: self.max_records.load(Ordering::Acquire),
@@ -274,7 +268,7 @@ impl MitmManager {
     }
 
     pub(crate) fn should_mitm(&self, host: &str) -> bool {
-        if !self.ca_available || !self.mitm_enabled.load(Ordering::Acquire) {
+        if !self.ca_available {
             return false;
         }
         let host = normalize_host(host);
@@ -289,9 +283,6 @@ impl MitmManager {
     }
 
     pub(crate) async fn patch_settings(&self, patch: MitmSettingsPatch) -> Result<MitmSettings, ManagerError> {
-        if patch.mitm_enabled == Some(true) && !self.ca_available {
-            return Err(ManagerError::Conflict("MITM CA certificate and key are not configured".to_owned()));
-        }
         if patch.max_records == Some(0) {
             return Err(ManagerError::BadRequest("max_records must be greater than zero".to_owned()));
         }
@@ -302,15 +293,14 @@ impl MitmManager {
         }
 
         let current = self.settings();
-        let next_mitm = patch.mitm_enabled.unwrap_or(current.mitm_enabled);
         let next_capture = patch.capture_enabled.unwrap_or(current.capture_enabled);
         let next_max_records = patch.max_records.unwrap_or(current.max_records);
         let next_body_limit = patch.body_limit_bytes.unwrap_or(current.body_limit_bytes);
         let path = self.db_path.clone();
         run_db(path, move |connection| {
             connection.execute(
-                "UPDATE settings SET mitm_enabled=?1, capture_enabled=?2, max_records=?3, body_limit_bytes=?4 WHERE id=1",
-                params![next_mitm, next_capture, next_max_records as i64, next_body_limit as i64],
+                "UPDATE settings SET capture_enabled=?1, max_records=?2, body_limit_bytes=?3 WHERE id=1",
+                params![next_capture, next_max_records as i64, next_body_limit as i64],
             )?;
             if current.capture_enabled && !next_capture {
                 connection.execute(
@@ -322,7 +312,6 @@ impl MitmManager {
             Ok(())
         })
         .await?;
-        self.mitm_enabled.store(next_mitm, Ordering::Release);
         self.capture_enabled.store(next_capture, Ordering::Release);
         self.max_records.store(next_max_records, Ordering::Release);
         self.body_limit_bytes.store(next_body_limit, Ordering::Release);
@@ -341,16 +330,21 @@ impl MitmManager {
         let target = run_db(path, move |connection| {
             let created_at = now_ms();
             connection.execute(
-                "INSERT OR IGNORE INTO targets(suffix, created_at_ms) VALUES(?1, ?2)",
+                "INSERT OR IGNORE INTO targets(suffix, created_at_ms, cli_managed) VALUES(?1, ?2, 0)",
                 params![db_suffix, created_at],
             )?;
-            connection.query_row("SELECT id, suffix, created_at_ms FROM targets WHERE suffix=?1", [db_suffix], |row| {
-                Ok(MitmTarget {
-                    id: row.get(0)?,
-                    suffix: row.get(1)?,
-                    created_at_ms: row.get(2)?,
-                })
-            })
+            connection.query_row(
+                "SELECT id, suffix, created_at_ms, cli_managed FROM targets WHERE suffix=?1",
+                [db_suffix],
+                |row| {
+                    Ok(MitmTarget {
+                        id: row.get(0)?,
+                        suffix: row.get(1)?,
+                        created_at_ms: row.get(2)?,
+                        cli_managed: row.get(3)?,
+                    })
+                },
+            )
         })
         .await?;
         if let Ok(mut targets) = self.targets.write()
@@ -364,6 +358,19 @@ impl MitmManager {
     }
 
     pub(crate) async fn delete_target(&self, id: i64) -> Result<bool, ManagerError> {
+        let target = self
+            .targets
+            .read()
+            .ok()
+            .and_then(|targets| targets.iter().find(|target| target.id == id).cloned());
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        if target.cli_managed {
+            return Err(ManagerError::Conflict(
+                "target is managed by --mitm-domain-suffix and cannot be deleted".to_owned(),
+            ));
+        }
         let path = self.db_path.clone();
         let deleted =
             run_db(path, move |connection| Ok(connection.execute("DELETE FROM targets WHERE id=?1", [id])? > 0))
@@ -534,7 +541,6 @@ fn initialize_schema(
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY CHECK(id=1),
-            mitm_enabled INTEGER NOT NULL,
             capture_enabled INTEGER NOT NULL,
             max_records INTEGER NOT NULL,
             body_limit_bytes INTEGER NOT NULL
@@ -542,7 +548,8 @@ fn initialize_schema(
         CREATE TABLE IF NOT EXISTS targets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             suffix TEXT NOT NULL UNIQUE,
-            created_at_ms INTEGER NOT NULL
+            created_at_ms INTEGER NOT NULL,
+            cli_managed INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS records (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -576,19 +583,45 @@ fn initialize_schema(
         CREATE INDEX IF NOT EXISTS records_started_idx ON records(started_at_ms DESC, sequence DESC);
         CREATE INDEX IF NOT EXISTS records_host_path_idx ON records(host, path, started_at_ms DESC);",
     )?;
+    let has_cli_managed = {
+        let mut statement = connection.prepare("PRAGMA table_info(targets)")?;
+        let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+        columns
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|column| column == "cli_managed")
+    };
+    if !has_cli_managed {
+        connection.execute("ALTER TABLE targets ADD COLUMN cli_managed INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    let has_legacy_mitm_enabled = {
+        let mut statement = connection.prepare("PRAGMA table_info(settings)")?;
+        let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+        columns
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|column| column == "mitm_enabled")
+    };
+    if has_legacy_mitm_enabled {
+        connection.execute("ALTER TABLE settings DROP COLUMN mitm_enabled", [])?;
+    }
     let normalized_targets: Vec<String> = configured_targets
         .iter()
         .filter_map(|value| normalize_suffix(value))
         .collect();
     connection.execute(
-        "INSERT OR IGNORE INTO settings(id, mitm_enabled, capture_enabled, max_records, body_limit_bytes) VALUES(1, ?1, ?2, ?3, ?4)",
-        params![!normalized_targets.is_empty(), seed_capture_enabled, seed_max_records as i64, seed_body_limit_bytes as i64],
+        "INSERT OR IGNORE INTO settings(id, capture_enabled, max_records, body_limit_bytes) VALUES(1, ?1, ?2, ?3)",
+        params![
+            seed_capture_enabled,
+            seed_max_records as i64,
+            seed_body_limit_bytes as i64
+        ],
     )?;
     let transaction = connection.unchecked_transaction()?;
     transaction.execute("DELETE FROM targets", [])?;
     for suffix in normalized_targets {
         transaction.execute(
-            "INSERT OR IGNORE INTO targets(suffix, created_at_ms) VALUES(?1, ?2)",
+            "INSERT OR IGNORE INTO targets(suffix, created_at_ms, cli_managed) VALUES(?1, ?2, 1)",
             params![suffix, now_ms()],
         )?;
     }
@@ -599,30 +632,27 @@ fn initialize_schema(
     Ok(())
 }
 
-fn load_settings(connection: &Connection) -> Result<(bool, bool, usize, usize), ManagerError> {
+fn load_settings(connection: &Connection) -> Result<(bool, usize, usize), ManagerError> {
     connection
-        .query_row(
-            "SELECT mitm_enabled, capture_enabled, max_records, body_limit_bytes FROM settings WHERE id=1",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    usize::try_from(row.get::<_, i64>(2)?).unwrap_or(10_000),
-                    usize::try_from(row.get::<_, i64>(3)?).unwrap_or(64 * 1024),
-                ))
-            },
-        )
+        .query_row("SELECT capture_enabled, max_records, body_limit_bytes FROM settings WHERE id=1", [], |row| {
+            Ok((
+                row.get(0)?,
+                usize::try_from(row.get::<_, i64>(1)?).unwrap_or(10_000),
+                usize::try_from(row.get::<_, i64>(2)?).unwrap_or(64 * 1024),
+            ))
+        })
         .map_err(ManagerError::from)
 }
 
 fn load_targets(connection: &Connection) -> Result<Vec<MitmTarget>, ManagerError> {
-    let mut statement = connection.prepare("SELECT id, suffix, created_at_ms FROM targets ORDER BY suffix")?;
+    let mut statement =
+        connection.prepare("SELECT id, suffix, created_at_ms, cli_managed FROM targets ORDER BY suffix")?;
     let rows = statement.query_map([], |row| {
         Ok(MitmTarget {
             id: row.get(0)?,
             suffix: row.get(1)?,
             created_at_ms: row.get(2)?,
+            cli_managed: row.get(3)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(ManagerError::from)
@@ -1097,14 +1127,55 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn migrates_cli_target_marker_from_schema_v1() -> Result<(), DynError> {
+        let path = test_db("schema_v1");
+        let connection = Connection::open(&path)?;
+        connection.execute_batch(
+            "CREATE TABLE settings (
+                id INTEGER PRIMARY KEY CHECK(id=1),
+                mitm_enabled INTEGER NOT NULL,
+                capture_enabled INTEGER NOT NULL,
+                max_records INTEGER NOT NULL,
+                body_limit_bytes INTEGER NOT NULL
+            );
+            INSERT INTO settings VALUES(1, 0, 1, 123, 4096);
+            CREATE TABLE targets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                suffix TEXT NOT NULL UNIQUE,
+                created_at_ms INTEGER NOT NULL
+            );
+            PRAGMA user_version=1;",
+        )?;
+        drop(connection);
+
+        let manager = MitmManager::open(path.clone(), true, &["cli.example".to_owned()], false, 10_000, 65_536)?;
+        assert_eq!(manager.targets().len(), 1);
+        assert!(manager.targets()[0].cli_managed);
+        assert!(manager.settings().capture_enabled);
+        assert_eq!(manager.settings().max_records, 123);
+        assert_eq!(manager.settings().body_limit_bytes, 4096);
+        drop(manager);
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn persists_settings_and_replaces_targets_from_cli() -> Result<(), DynError> {
         let path = test_db("settings");
         let manager = MitmManager::open(path.clone(), true, &["Example.COM".to_owned()], false, 10_000, 65_536)?;
         assert!(manager.should_mitm("api.example.com"));
+        assert!(manager.targets()[0].cli_managed);
+        let protected_id = manager.targets()[0].id;
+        let error = manager
+            .delete_target(protected_id)
+            .await
+            .err()
+            .ok_or("CLI target was unexpectedly deleted")?;
+        assert!(error.to_string().contains("--mitm-domain-suffix"));
         manager
             .patch_settings(MitmSettingsPatch {
-                mitm_enabled: None,
                 capture_enabled: Some(true),
                 max_records: Some(321),
                 body_limit_bytes: Some(16_384),
@@ -1112,6 +1183,10 @@ mod tests {
             .await?;
         let target = manager.add_target(".Second.Example.".to_owned()).await?;
         assert_eq!(target.suffix, "second.example");
+        assert!(!target.cli_managed);
+        assert!(manager.delete_target(target.id).await?);
+        let target = manager.add_target(".Second.Example.".to_owned()).await?;
+        assert!(!target.cli_managed);
         drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -1122,6 +1197,14 @@ mod tests {
         assert_eq!(settings.body_limit_bytes, 16_384);
         assert_eq!(reopened.targets().len(), 1);
         assert_eq!(reopened.targets()[0].suffix, "override.example");
+        assert!(reopened.targets()[0].cli_managed);
+        let protected_id = reopened.targets()[0].id;
+        let error = reopened
+            .delete_target(protected_id)
+            .await
+            .err()
+            .ok_or("CLI target was unexpectedly deleted")?;
+        assert!(error.to_string().contains("--mitm-domain-suffix"));
         assert!(reopened.should_mitm("www.override.example"));
         assert!(!reopened.should_mitm("www.second.example"));
         drop(reopened);

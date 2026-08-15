@@ -94,7 +94,7 @@ async fn mitm_routes_require_basic_auth_and_serve_embedded_ui() -> Result<(), Dy
 }
 
 #[tokio::test]
-async fn mitm_api_manages_targets_and_rejects_enable_without_ca() -> Result<(), DynError> {
+async fn mitm_api_manages_targets_without_a_global_switch() -> Result<(), DynError> {
     let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned()]).await?;
     let body = r#"{"suffix":".Example.COM."}"#;
     let created = request(
@@ -107,6 +107,7 @@ async fn mitm_api_manages_targets_and_rejects_enable_without_ca() -> Result<(), 
     .await?;
     assert!(created.starts_with("HTTP/1.1 201"));
     assert!(created.contains("\"suffix\":\"example.com\""));
+    assert!(created.contains("\"cli_managed\":false"));
 
     let targets = request(
         proxy.port,
@@ -116,17 +117,25 @@ async fn mitm_api_manages_targets_and_rejects_enable_without_ca() -> Result<(), 
     assert!(targets.starts_with("HTTP/1.1 200"));
     assert!(targets.contains("\"suffix\":\"example.com\""));
 
-    let patch = r#"{"mitm_enabled":true}"#;
-    let conflict = request(
+    let settings = request(
+        proxy.port,
+        &format!("GET /mitm/api/settings HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"),
+    )
+    .await?;
+    assert!(settings.starts_with("HTTP/1.1 200"));
+    assert!(settings.contains("\"ca_available\":false"));
+    assert!(!settings.contains("mitm_enabled"));
+
+    let legacy_patch = r#"{"mitm_enabled":false}"#;
+    let rejected = request(
         proxy.port,
         &format!(
-            "PATCH /mitm/api/settings HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{patch}",
-            patch.len()
+            "PATCH /mitm/api/settings HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{legacy_patch}",
+            legacy_patch.len()
         ),
     )
     .await?;
-    assert!(conflict.starts_with("HTTP/1.1 409"));
-    assert!(conflict.contains("not configured"));
+    assert!(rejected.starts_with("HTTP/1.1 422"));
 
     proxy.shutdown().await
 }

@@ -51,7 +51,7 @@ cd "${PROJECT_DIR}"
 
 required_commands=(kubectl ssh)
 if [[ "${skip_compile}" == false ]]; then
-    required_commands+=(cargo cargo-zigbuild install zig)
+    required_commands+=(cargo cargo-zigbuild install node npm zig)
 fi
 if [[ "${skip_compile}" == false || "${skip_image}" == false ]]; then
     required_commands+=(readelf)
@@ -73,6 +73,13 @@ if [[ "${skip_compile}" == false && "$(zig version)" != "${REQUIRED_ZIG_VERSION}
 fi
 
 if [[ "${skip_compile}" == false ]]; then
+    (
+        cd "${PROJECT_DIR}/mitm-ui"
+        npm ci
+        npm test
+        npm run build
+    )
+
     # 与 GitHub Actions 的 bpf-dyn-link 构建保持一致。cargo-zigbuild 会隐藏
     # /usr/include，因此只把 libbpf 构建所需的第三方头文件放回搜索路径。
     libbpf_zig_include="$(mktemp -d)"

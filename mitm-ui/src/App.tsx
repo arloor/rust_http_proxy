@@ -183,12 +183,6 @@ function App() {
 
       <section className="control-strip">
         <Toggle
-          label="MITM 解密"
-          checked={settings?.mitm_enabled ?? false}
-          disabled={!settings?.ca_available}
-          onChange={(checked) => void updateSettings({ mitm_enabled: checked })}
-        />
-        <Toggle
           label="明文抓取"
           checked={settings?.capture_enabled ?? false}
           onChange={(checked) => void updateSettings({ capture_enabled: checked })}
@@ -224,8 +218,8 @@ function App() {
           </form>
           <div className="target-list">
             {targets.map((target) => (
-              <div className="target" key={target.id}><span>{target.suffix}</span>
-                <button aria-label={`删除 ${target.suffix}`} onClick={() => void api<void>(`/targets/${target.id}`, { method: 'DELETE' }).then(refreshMeta).catch(handleError)}>×</button>
+              <div className="target" key={target.id}><div className="target-main"><span>{target.suffix}</span>{target.cli_managed && <em>启动参数</em>}</div>
+                {!target.cli_managed && <button aria-label={`删除 ${target.suffix}`} onClick={() => void api<void>(`/targets/${target.id}`, { method: 'DELETE' }).then(refreshMeta).catch(handleError)}>×</button>}
               </div>
             ))}
             {!targets.length && <p className="empty">尚未配置目标后缀</p>}

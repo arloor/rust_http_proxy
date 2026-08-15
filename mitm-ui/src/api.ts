@@ -1,13 +1,11 @@
 export type Settings = {
-  mitm_enabled: boolean
-  effective_mitm_enabled: boolean
   capture_enabled: boolean
   ca_available: boolean
   max_records: number
   body_limit_bytes: number
 }
 
-export type Target = { id: number; suffix: string; created_at_ms: number }
+export type Target = { id: number; suffix: string; created_at_ms: number; cli_managed: boolean }
 
 export type RecordSummary = {
   id: string
