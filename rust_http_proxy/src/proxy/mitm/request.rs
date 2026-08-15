@@ -63,6 +63,7 @@ pub(super) async fn handle_mitm_request(
         .unwrap_or_else(|_| request_authority.to_ascii_lowercase());
     let record_id = context.manager.begin_record(RecordMetadata {
         client_ip: access_label.client.clone(),
+        client_port: client_socket_addr.port(),
         proxy_username: access_label.username.clone(),
         authority: request_authority.clone(),
         host: request_host,

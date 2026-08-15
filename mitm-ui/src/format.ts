@@ -40,6 +40,12 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 }
 
+// 端口为 0 表示老记录没有端口数据，只显示 IP；IPv6 地址加方括号
+export function formatClientAddr(ip: string, port: number): string {
+  if (!port) return ip
+  return ip.includes(':') ? `[${ip}]:${port}` : `${ip}:${port}`
+}
+
 export function statusTone(status: number | null): string {
   if (status === null) return 'pending'
   return String(Math.floor(status / 100))

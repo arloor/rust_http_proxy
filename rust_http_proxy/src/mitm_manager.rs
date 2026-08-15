@@ -49,6 +49,7 @@ pub(crate) struct RecordStart {
     pub id: String,
     pub started_at_ms: i64,
     pub client_ip: String,
+    pub client_port: u16,
     pub proxy_username: String,
     pub authority: String,
     pub host: String,
@@ -61,6 +62,7 @@ pub(crate) struct RecordStart {
 
 pub(crate) struct RecordMetadata<'a> {
     pub client_ip: String,
+    pub client_port: u16,
     pub proxy_username: String,
     pub authority: String,
     pub host: String,
@@ -91,6 +93,7 @@ pub(crate) struct RecordSummary {
     pub started_at_ms: i64,
     pub completed_at_ms: Option<i64>,
     pub client_ip: String,
+    pub client_port: u16,
     pub proxy_username: String,
     pub authority: String,
     pub host: String,
@@ -400,6 +403,7 @@ impl MitmManager {
             id: id.clone(),
             started_at_ms: now_ms(),
             client_ip: metadata.client_ip,
+            client_port: metadata.client_port,
             proxy_username: metadata.proxy_username,
             authority: metadata.authority,
             host: metadata.host,
@@ -581,6 +585,7 @@ fn initialize_schema(
             started_at_ms INTEGER NOT NULL,
             completed_at_ms INTEGER,
             client_ip TEXT NOT NULL,
+            client_port INTEGER NOT NULL DEFAULT 0,
             proxy_username TEXT NOT NULL,
             authority TEXT NOT NULL,
             host TEXT NOT NULL,
@@ -635,6 +640,9 @@ fn initialize_schema(
         if !table_has_column(connection, "records", column)? {
             connection.execute(&format!("ALTER TABLE records ADD COLUMN {column} TEXT"), [])?;
         }
+    }
+    if !table_has_column(connection, "records", "client_port")? {
+        connection.execute("ALTER TABLE records ADD COLUMN client_port INTEGER NOT NULL DEFAULT 0", [])?;
     }
     let normalized_targets: Vec<String> = configured_targets
         .iter()
@@ -740,9 +748,9 @@ fn apply_store_command(
     match command {
         StoreCommand::Create(record) => {
             connection.execute(
-                "INSERT INTO records(id, started_at_ms, client_ip, proxy_username, authority, host, path, query, method, request_version, request_headers_json)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![record.id, record.started_at_ms, record.client_ip, record.proxy_username, record.authority, record.host,
+                "INSERT INTO records(id, started_at_ms, client_ip, client_port, proxy_username, authority, host, path, query, method, request_version, request_headers_json)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![record.id, record.started_at_ms, record.client_ip, record.client_port, record.proxy_username, record.authority, record.host,
                     record.path, record.query, record.method, record.request_version, record.request_headers_json],
             )?;
             let max_records = connection
@@ -964,7 +972,7 @@ where
 fn query_records(connection: &Connection, query: &RecordQuery) -> Result<RecordPage, rusqlite::Error> {
     let limit = query.limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT);
     let mut sql = String::from(
-        "SELECT id, started_at_ms, completed_at_ms, client_ip, proxy_username, authority, host, path, query,
+        "SELECT id, started_at_ms, completed_at_ms, client_ip, client_port, proxy_username, authority, host, path, query,
             method, response_status, duration_ms, capture_state, sequence FROM records WHERE 1=1",
     );
     let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1017,7 +1025,7 @@ fn query_records(connection: &Connection, query: &RecordQuery) -> Result<RecordP
     let mut sequences = Vec::new();
     while let Some(row) = rows.next()? {
         records.push(summary_from_row(row)?);
-        sequences.push(row.get::<_, i64>(13)?);
+        sequences.push(row.get::<_, i64>(14)?);
     }
     let has_more = records.len() > limit;
     if has_more {
@@ -1032,7 +1040,7 @@ fn query_records(connection: &Connection, query: &RecordQuery) -> Result<RecordP
 
 fn get_record(connection: &Connection, id: &str) -> Result<Option<RecordDetail>, rusqlite::Error> {
     let mut statement = connection.prepare_cached(
-        "SELECT id, started_at_ms, completed_at_ms, client_ip, proxy_username, authority, host, path, query,
+        "SELECT id, started_at_ms, completed_at_ms, client_ip, client_port, proxy_username, authority, host, path, query,
             method, response_status, duration_ms, capture_state, request_version, request_headers_json,
             request_body, request_body_bytes, request_body_truncated, request_body_note, request_body_image,
             response_version, response_headers_json, response_body, response_body_bytes, response_body_truncated,
@@ -1040,41 +1048,42 @@ fn get_record(connection: &Connection, id: &str) -> Result<Option<RecordDetail>,
     )?;
     statement
         .query_row([id], |row| {
-            let request_headers_json: String = row.get(14)?;
-            let response_headers_json: String = row.get(21)?;
+            let request_headers_json: String = row.get(15)?;
+            let response_headers_json: String = row.get(22)?;
             Ok(RecordDetail {
                 summary: RecordSummary {
                     id: row.get(0)?,
                     started_at_ms: row.get(1)?,
                     completed_at_ms: row.get(2)?,
                     client_ip: row.get(3)?,
-                    proxy_username: row.get(4)?,
-                    authority: row.get(5)?,
-                    host: row.get(6)?,
-                    path: row.get(7)?,
-                    query: row.get(8)?,
-                    method: row.get(9)?,
-                    status: row.get(10)?,
-                    duration_ms: row.get(11)?,
-                    capture_state: row.get(12)?,
+                    client_port: row.get(4)?,
+                    proxy_username: row.get(5)?,
+                    authority: row.get(6)?,
+                    host: row.get(7)?,
+                    path: row.get(8)?,
+                    query: row.get(9)?,
+                    method: row.get(10)?,
+                    status: row.get(11)?,
+                    duration_ms: row.get(12)?,
+                    capture_state: row.get(13)?,
                 },
-                request_version: row.get(13)?,
+                request_version: row.get(14)?,
                 request_headers: serde_json::from_str(&request_headers_json)
                     .unwrap_or(serde_json::Value::Array(Vec::new())),
-                request_body: row.get(15)?,
-                request_body_bytes: row.get(16)?,
-                request_body_truncated: row.get(17)?,
-                request_body_note: row.get(18)?,
-                request_body_image: row.get(19)?,
-                response_version: row.get(20)?,
+                request_body: row.get(16)?,
+                request_body_bytes: row.get(17)?,
+                request_body_truncated: row.get(18)?,
+                request_body_note: row.get(19)?,
+                request_body_image: row.get(20)?,
+                response_version: row.get(21)?,
                 response_headers: serde_json::from_str(&response_headers_json)
                     .unwrap_or(serde_json::Value::Array(Vec::new())),
-                response_body: row.get(22)?,
-                response_body_bytes: row.get(23)?,
-                response_body_truncated: row.get(24)?,
-                response_body_note: row.get(25)?,
-                response_body_image: row.get(26)?,
-                error: row.get(27)?,
+                response_body: row.get(23)?,
+                response_body_bytes: row.get(24)?,
+                response_body_truncated: row.get(25)?,
+                response_body_note: row.get(26)?,
+                response_body_image: row.get(27)?,
+                error: row.get(28)?,
             })
         })
         .optional()
@@ -1086,15 +1095,16 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> Result<RecordSummary, rusqlite::
         started_at_ms: row.get(1)?,
         completed_at_ms: row.get(2)?,
         client_ip: row.get(3)?,
-        proxy_username: row.get(4)?,
-        authority: row.get(5)?,
-        host: row.get(6)?,
-        path: row.get(7)?,
-        query: row.get(8)?,
-        method: row.get(9)?,
-        status: row.get(10)?,
-        duration_ms: row.get(11)?,
-        capture_state: row.get(12)?,
+        client_port: row.get(4)?,
+        proxy_username: row.get(5)?,
+        authority: row.get(6)?,
+        host: row.get(7)?,
+        path: row.get(8)?,
+        query: row.get(9)?,
+        method: row.get(10)?,
+        status: row.get(11)?,
+        duration_ms: row.get(12)?,
+        capture_state: row.get(13)?,
     })
 }
 
@@ -1371,6 +1381,7 @@ mod tests {
         let id = manager
             .begin_record(RecordMetadata {
                 client_ip: "127.0.0.1".to_owned(),
+                client_port: 54321,
                 proxy_username: "tester".to_owned(),
                 authority: "api.example.com:443".to_owned(),
                 host: "api.example.com".to_owned(),
@@ -1416,6 +1427,7 @@ mod tests {
         let id = manager
             .begin_record(RecordMetadata {
                 client_ip: "127.0.0.1".to_owned(),
+                client_port: 54321,
                 proxy_username: "tester".to_owned(),
                 authority: "api.example.com:443".to_owned(),
                 host: "api.example.com".to_owned(),

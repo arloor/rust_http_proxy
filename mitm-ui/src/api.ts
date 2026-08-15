@@ -12,6 +12,7 @@ export type RecordSummary = {
   started_at_ms: number
   completed_at_ms: number | null
   client_ip: string
+  client_port: number
   proxy_username: string
   authority: string
   host: string

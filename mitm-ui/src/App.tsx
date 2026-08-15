@@ -12,6 +12,7 @@ import {
 import {
   formatBytes,
   formatCaptureState,
+  formatClientAddr,
   formatDuration,
   formatTime,
   prettyBody,
@@ -376,6 +377,17 @@ function App() {
     setPinToLatest(true)
   }
 
+  // 点击列表中的客户端地址：已按该 IP 筛选则取消，否则加入筛选
+  function toggleClientIpFilter(ip: string) {
+    if (clientIp === ip) {
+      setClientIpInput('')
+      setClientIp('')
+    } else {
+      setClientIpInput(ip)
+      setClientIp(ip)
+    }
+  }
+
   function onTableScroll() {
     const el = tableWrapRef.current
     if (!el) return
@@ -584,7 +596,7 @@ function App() {
           )}
           <div className="table-wrap" ref={tableWrapRef} onScroll={onTableScroll}>
             <table>
-              <thead><tr><th>时间</th><th>方法</th><th>URL</th><th>状态</th><th>耗时</th><th>抓取</th></tr></thead>
+              <thead><tr><th>时间</th><th>方法</th><th>URL</th><th>客户端</th><th>状态</th><th>耗时</th><th>抓取</th></tr></thead>
               <tbody>
                 {records.map((record) => (
                   <tr
@@ -598,6 +610,16 @@ function App() {
                     <td className="mono muted">{formatTime(record.started_at_ms)}</td>
                     <td><span className={`method method-${record.method.toLowerCase()}`}>{record.method}</span></td>
                     <td className="url-cell"><strong>{record.host}</strong><span>{record.path}{record.query ? `?${record.query}` : ''}</span></td>
+                    <td className="client-cell">
+                      <button
+                        className={`client-addr ${clientIp === record.client_ip ? 'active' : ''}`}
+                        title={clientIp === record.client_ip ? '取消客户端 IP 筛选' : '按该客户端 IP 筛选'}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          toggleClientIpFilter(record.client_ip)
+                        }}
+                      >{formatClientAddr(record.client_ip, record.client_port)}</button>
+                    </td>
                     <td><span className={`status-badge status-${statusTone(record.status)}`}>{record.status ?? '…'}</span></td>
                     <td className="mono muted">{formatDuration(record.duration_ms)}</td>
                     <td><span className={`state state-${record.capture_state}`}>{formatCaptureState(record.capture_state)}</span></td>
@@ -748,7 +770,7 @@ function Detail({
         </div>
       </div>
       <div className="detail-meta">
-        <span>{detail.client_ip}</span>
+        <span>{formatClientAddr(detail.client_ip, detail.client_port)}</span>
         <span>{detail.proxy_username}</span>
         <span>{formatDuration(detail.duration_ms)}</span>
         {detail.request_version && <span>{detail.request_version}</span>}

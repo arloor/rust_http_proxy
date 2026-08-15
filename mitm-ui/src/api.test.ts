@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fullUrl } from './api'
-import { formatBytes, formatCaptureState, formatDuration, formatTime, prettyBody, statusTone, toCurl } from './format'
+import { formatBytes, formatCaptureState, formatClientAddr, formatDuration, formatTime, prettyBody, statusTone, toCurl } from './format'
 
 describe('fullUrl', () => {
   it('includes query when present', () => {
@@ -26,6 +26,12 @@ describe('format helpers', () => {
     expect(formatBytes(10485760)).toBe('10.0 MiB')
   })
 
+  it('formats client address with port', () => {
+    expect(formatClientAddr('127.0.0.1', 54321)).toBe('127.0.0.1:54321')
+    expect(formatClientAddr('2001:db8::1', 443)).toBe('[2001:db8::1]:443')
+    expect(formatClientAddr('127.0.0.1', 0)).toBe('127.0.0.1')
+  })
+
   it('omits the date when the record is from today', () => {
     const now = Date.parse('2026-08-15T14:46:29.271+08:00')
     const text = formatTime(now, now)
@@ -49,6 +55,7 @@ describe('format helpers', () => {
       started_at_ms: 0,
       completed_at_ms: 1,
       client_ip: '127.0.0.1',
+      client_port: 54321,
       proxy_username: 'admin',
       authority: 'httpbin.org',
       host: 'httpbin.org',

@@ -702,6 +702,7 @@ mod tests {
         let id = manager
             .begin_record(crate::mitm_manager::RecordMetadata {
                 client_ip: "127.0.0.1".to_owned(),
+                client_port: 54321,
                 proxy_username: "tester".to_owned(),
                 authority: "example.com:443".to_owned(),
                 host: "example.com".to_owned(),
@@ -749,6 +750,7 @@ mod tests {
         let id = manager
             .begin_record(crate::mitm_manager::RecordMetadata {
                 client_ip: "127.0.0.1".to_owned(),
+                client_port: 54321,
                 proxy_username: "tester".to_owned(),
                 authority: "example.com:443".to_owned(),
                 host: "example.com".to_owned(),
@@ -960,6 +962,7 @@ mod tests {
         let id = manager
             .begin_record(crate::mitm_manager::RecordMetadata {
                 client_ip: "127.0.0.1".to_owned(),
+                client_port: 54321,
                 proxy_username: "tester".to_owned(),
                 authority: "example.com:443".to_owned(),
                 host: "example.com".to_owned(),

@@ -108,7 +108,7 @@ body.col-resizing * { cursor: col-resize !important; }
 .group[aria-expanded="true"] > span::before { transform: rotate(45deg); }
 
 /* ---------- Records table ---------- */
-.records-panel { background: #f8fafc; display: flex; flex-direction: column; }
+.records-panel { background: #f8fafc; display: flex; flex-direction: column; container-type: inline-size; }
 .filters { min-height: 56px; display: flex; flex-wrap: wrap; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .filters .clearable:first-child { flex: 1; min-width: 180px; }
 .filters .client-ip-input { width: 136px; }
@@ -124,9 +124,13 @@ body.col-resizing * { cursor: col-resize !important; }
 .table-wrap { overflow: auto; flex: 1; }
 table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
 th { position: sticky; top: 0; z-index: 2; background: var(--panel); color: var(--text-3); text-align: left; font: 600 11px var(--font-sans); padding: 9px 10px; border-bottom: 1px solid var(--line); }
-th:nth-child(1) { width: 120px } th:nth-child(2) { width: 82px } th:nth-child(4) { width: 66px } th:nth-child(5) { width: 74px } th:nth-child(6) { width: 76px }
+th:nth-child(1) { width: 120px } th:nth-child(2) { width: 82px } th:nth-child(4) { width: 152px } th:nth-child(5) { width: 66px } th:nth-child(6) { width: 74px } th:nth-child(7) { width: 76px }
 .workspace.has-detail th:nth-child(1), .workspace.has-detail td:nth-child(1),
-.workspace.has-detail th:nth-child(5), .workspace.has-detail td:nth-child(5) { display: none; }
+.workspace.has-detail th:nth-child(6), .workspace.has-detail td:nth-child(6) { display: none; }
+/* 记录列表宽度不足时折叠客户端列（打开详情面板后列表变窄也会触发） */
+@container (max-width: 640px) {
+  th:nth-child(4), td:nth-child(4) { display: none; }
+}
 td { padding: 10px; border-bottom: 1px solid #eef2f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #334155; }
 tbody tr { cursor: pointer; background: var(--panel); transition: background .12s; }
 tbody tr:hover { background: #f1f5f9; }
@@ -136,6 +140,9 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .url-cell strong, .url-cell span { display: block; overflow: hidden; text-overflow: ellipsis; }
 .url-cell strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .url-cell span { color: var(--text-2); font: 12px var(--font-mono); margin-top: 3px; }
+.client-addr { display: block; max-width: 100%; border: 0; background: transparent; padding: 2px 5px; margin: -2px -5px; border-radius: 4px; color: var(--text-2); font: 12px var(--font-mono); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.client-addr:hover { background: #f1f5f9; color: #0f172a; }
+.client-addr.active { background: var(--select); color: var(--teal-text); font-weight: 600; }
 
 /* ---------- Badges ---------- */
 .method { display: inline-flex; min-width: 46px; justify-content: center; padding: 3px 7px; border-radius: 4px; background: #dbeafe; color: #1e40af; font: 700 11px var(--font-mono); }
