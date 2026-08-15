@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 
 use crate::DynError;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const DEFAULT_PAGE_LIMIT: usize = 100;
 const MAX_PAGE_LIMIT: usize = 500;
 const WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
@@ -112,12 +112,14 @@ pub(crate) struct RecordDetail {
     pub request_body_bytes: i64,
     pub request_body_truncated: bool,
     pub request_body_note: Option<String>,
+    pub request_body_image: Option<String>,
     pub response_version: Option<String>,
     pub response_headers: serde_json::Value,
     pub response_body: String,
     pub response_body_bytes: i64,
     pub response_body_truncated: bool,
     pub response_body_note: Option<String>,
+    pub response_body_image: Option<String>,
     pub error: Option<String>,
 }
 
@@ -177,6 +179,7 @@ enum StoreCommand {
         id: String,
         direction: BodyDirection,
         note: Option<String>,
+        image: Option<String>,
     },
     FinishRecord {
         id: String,
@@ -291,9 +294,9 @@ impl MitmManager {
             return Err(ManagerError::BadRequest("max_records must be greater than zero".to_owned()));
         }
         if let Some(limit) = patch.body_limit_bytes
-            && !(1024..=1024 * 1024).contains(&limit)
+            && !(1024..=10 * 1024 * 1024).contains(&limit)
         {
-            return Err(ManagerError::BadRequest("body_limit_bytes must be between 1024 and 1048576".to_owned()));
+            return Err(ManagerError::BadRequest("body_limit_bytes must be between 1024 and 10485760".to_owned()));
         }
 
         let current = self.settings();
@@ -435,11 +438,12 @@ impl MitmManager {
         });
     }
 
-    pub(crate) fn finish_body(&self, id: &str, direction: BodyDirection, note: Option<String>) {
+    pub(crate) fn finish_body(&self, id: &str, direction: BodyDirection, note: Option<String>, image: Option<String>) {
         self.send(StoreCommand::FinishBody {
             id: id.to_owned(),
             direction,
             note,
+            image,
         });
     }
 
@@ -589,6 +593,7 @@ fn initialize_schema(
             request_body_bytes INTEGER NOT NULL DEFAULT 0,
             request_body_truncated INTEGER NOT NULL DEFAULT 0,
             request_body_note TEXT,
+            request_body_image TEXT,
             response_status INTEGER,
             response_version TEXT,
             response_headers_json TEXT NOT NULL DEFAULT '[]',
@@ -596,6 +601,7 @@ fn initialize_schema(
             response_body_bytes INTEGER NOT NULL DEFAULT 0,
             response_body_truncated INTEGER NOT NULL DEFAULT 0,
             response_body_note TEXT,
+            response_body_image TEXT,
             duration_ms INTEGER,
             capture_state TEXT NOT NULL DEFAULT 'capturing',
             error TEXT
@@ -624,6 +630,11 @@ fn initialize_schema(
     };
     if has_legacy_mitm_enabled {
         connection.execute("ALTER TABLE settings DROP COLUMN mitm_enabled", [])?;
+    }
+    for column in ["request_body_image", "response_body_image"] {
+        if !table_has_column(connection, "records", column)? {
+            connection.execute(&format!("ALTER TABLE records ADD COLUMN {column} TEXT"), [])?;
+        }
     }
     let normalized_targets: Vec<String> = configured_targets
         .iter()
@@ -656,6 +667,15 @@ fn initialize_schema(
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
+}
+
+fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool, ManagerError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    Ok(columns
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == column))
 }
 
 fn load_settings(connection: &Connection) -> Result<(bool, usize, usize), ManagerError> {
@@ -767,14 +787,21 @@ fn apply_store_command(
                 }
             }
         }
-        StoreCommand::FinishBody { id, direction, note } => {
+        StoreCommand::FinishBody {
+            id,
+            direction,
+            note,
+            image,
+        } => {
             flush_one(connection, pending, &id, events, false)?;
-            let (column, note_column) = match direction {
-                BodyDirection::Request => ("request_body_note", "request_body_note"),
-                BodyDirection::Response => ("response_body_note", "response_body_note"),
+            let (note_column, image_column) = match direction {
+                BodyDirection::Request => ("request_body_note", "request_body_image"),
+                BodyDirection::Response => ("response_body_note", "response_body_image"),
             };
-            let sql = format!("UPDATE records SET {column}=COALESCE(?1, {note_column}) WHERE id=?2");
-            connection.execute(&sql, params![note, id])?;
+            let sql = format!(
+                "UPDATE records SET {note_column}=COALESCE(?1, {note_column}), {image_column}=COALESCE(?2, {image_column}) WHERE id=?3"
+            );
+            connection.execute(&sql, params![note, image, id])?;
             emit(events, "record_updated", Some(id));
         }
         StoreCommand::FinishRecord { id, state } => {
@@ -1007,14 +1034,14 @@ fn get_record(connection: &Connection, id: &str) -> Result<Option<RecordDetail>,
     let mut statement = connection.prepare_cached(
         "SELECT id, started_at_ms, completed_at_ms, client_ip, proxy_username, authority, host, path, query,
             method, response_status, duration_ms, capture_state, request_version, request_headers_json,
-            request_body, request_body_bytes, request_body_truncated, request_body_note, response_version,
-            response_headers_json, response_body, response_body_bytes, response_body_truncated,
-            response_body_note, error FROM records WHERE id=?1",
+            request_body, request_body_bytes, request_body_truncated, request_body_note, request_body_image,
+            response_version, response_headers_json, response_body, response_body_bytes, response_body_truncated,
+            response_body_note, response_body_image, error FROM records WHERE id=?1",
     )?;
     statement
         .query_row([id], |row| {
             let request_headers_json: String = row.get(14)?;
-            let response_headers_json: String = row.get(20)?;
+            let response_headers_json: String = row.get(21)?;
             Ok(RecordDetail {
                 summary: RecordSummary {
                     id: row.get(0)?,
@@ -1038,14 +1065,16 @@ fn get_record(connection: &Connection, id: &str) -> Result<Option<RecordDetail>,
                 request_body_bytes: row.get(16)?,
                 request_body_truncated: row.get(17)?,
                 request_body_note: row.get(18)?,
-                response_version: row.get(19)?,
+                request_body_image: row.get(19)?,
+                response_version: row.get(20)?,
                 response_headers: serde_json::from_str(&response_headers_json)
                     .unwrap_or(serde_json::Value::Array(Vec::new())),
-                response_body: row.get(21)?,
-                response_body_bytes: row.get(22)?,
-                response_body_truncated: row.get(23)?,
-                response_body_note: row.get(24)?,
-                error: row.get(25)?,
+                response_body: row.get(22)?,
+                response_body_bytes: row.get(23)?,
+                response_body_truncated: row.get(24)?,
+                response_body_note: row.get(25)?,
+                response_body_image: row.get(26)?,
+                error: row.get(27)?,
             })
         })
         .optional()
@@ -1353,7 +1382,7 @@ mod tests {
             })
             .ok_or("capture unexpectedly disabled")?;
         manager.body_chunk(&id, BodyDirection::Request, br#"{"request":true}"#, 16, false);
-        manager.finish_body(&id, BodyDirection::Request, None);
+        manager.finish_body(&id, BodyDirection::Request, None, None);
         manager.response_head(
             &id,
             ResponseHead {
@@ -1364,7 +1393,7 @@ mod tests {
             },
         );
         manager.body_chunk(&id, BodyDirection::Response, br#"{"ok":true}"#, 11, false);
-        manager.finish_body(&id, BodyDirection::Response, None);
+        manager.finish_body(&id, BodyDirection::Response, None, None);
         manager.finish_record(&id, "complete");
         tokio::time::sleep(Duration::from_millis(400)).await;
 
@@ -1400,7 +1429,7 @@ mod tests {
         manager.body_chunk(&id, BodyDirection::Request, b"hello", 5, false);
         tokio::time::sleep(Duration::from_millis(400)).await;
         manager.body_chunk(&id, BodyDirection::Request, b" world", 11, false);
-        manager.finish_body(&id, BodyDirection::Request, None);
+        manager.finish_body(&id, BodyDirection::Request, None, None);
         manager.finish_record(&id, "complete");
         tokio::time::sleep(Duration::from_millis(400)).await;
 

@@ -23,6 +23,7 @@ describe('format helpers', () => {
     expect(formatDuration(1194)).toBe('1.19s')
     expect(formatBytes(80)).toBe('80 B')
     expect(formatBytes(2048)).toBe('2.0 KiB')
+    expect(formatBytes(10485760)).toBe('10.0 MiB')
   })
 
   it('omits the date when the record is from today', () => {
@@ -67,12 +68,14 @@ describe('format helpers', () => {
       request_body_bytes: 17,
       request_body_truncated: false,
       request_body_note: null,
+      request_body_image: null,
       response_version: 'HTTP/2',
       response_headers: [],
       response_body: '',
       response_body_bytes: 0,
       response_body_truncated: false,
       response_body_note: null,
+      response_body_image: null,
       error: null,
     })
     expect(curl).toContain("curl 'https://httpbin.org/post'")

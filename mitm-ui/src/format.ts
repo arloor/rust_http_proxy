@@ -36,7 +36,8 @@ export function formatDuration(ms: number | null): string {
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
-  return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 }
 
 export function statusTone(status: number | null): string {

@@ -183,10 +183,12 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .heading-actions { float: right; display: flex; align-items: center; gap: 8px; }
 .pretty-toggle { display: flex; align-items: center; gap: 4px; color: #64748b; font: 400 10px ui-sans-serif, system-ui; text-transform: none; letter-spacing: 0; cursor: pointer; }
 .header-list { background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.header-row { display: grid; grid-template-columns: minmax(88px, 32%) 1fr; gap: 8px; padding: 7px 11px; border-bottom: 1px solid #e2e8f0; font: 12px/1.55 var(--font-mono); }
+.header-row { display: grid; grid-template-columns: minmax(88px, 32%) 1fr auto; gap: 8px; padding: 7px 11px; border-bottom: 1px solid #e2e8f0; font: 12px/1.55 var(--font-mono); align-items: start; }
 .header-row:last-child { border-bottom: 0; }
 .header-name { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
 .header-value { color: var(--text-2); overflow-wrap: anywhere; }
+.header-copy { visibility: hidden; align-self: center; }
+.header-row:hover .header-copy, .header-copy:focus-visible { visibility: visible; }
 .header-row.sensitive { background: #fffbeb; box-shadow: inset 3px 0 #d97706; }
 .header-row.sensitive .header-name { color: #92400e; font-weight: 700; }
 .header-row.sensitive .header-value { color: #78350f; }
@@ -199,6 +201,7 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .detail h3 small { float: right; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .detail pre { background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; padding: 11px; color: var(--text-2); font: 12.5px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 215px; overflow: auto; }
 .detail .body-content { max-height: 340px; color: var(--text); }
+.detail .body-image-preview { display: block; max-width: 100%; max-height: 340px; object-fit: contain; background: repeating-conic-gradient(#f1f5f9 0 25%, #fff 0 50%) 0 0 / 16px 16px; border: 1px solid var(--line); border-radius: 6px; }
 .loading-detail-url { margin-top: 18px; color: var(--text-2); }
 .detail-loading-message { display: flex; align-items: center; gap: 11px; margin: 26px 0 22px; color: var(--text-2); }
 .detail-loading-message strong { display: block; font-size: 13px; font-weight: 600; }

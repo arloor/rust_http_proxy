@@ -298,8 +298,8 @@ impl TryFrom<Param> for Config {
         if param.mitm_max_records == 0 {
             return Err("--mitm-max-records must be greater than zero".into());
         }
-        if !(1024..=1024 * 1024).contains(&param.mitm_body_limit_bytes) {
-            return Err("--mitm-body-limit-bytes must be between 1024 and 1048576".into());
+        if !(1024..=10 * 1024 * 1024).contains(&param.mitm_body_limit_bytes) {
+            return Err("--mitm-body-limit-bytes must be between 1024 and 10485760".into());
         }
         let mitm_db_file = param
             .mitm_db_file

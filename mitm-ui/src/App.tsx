@@ -471,6 +471,7 @@ function App() {
           >
             <option value={16384}>16 KiB</option><option value={65536}>64 KiB</option>
             <option value={262144}>256 KiB</option><option value={1048576}>1 MiB</option>
+            <option value={4194304}>4 MiB</option><option value={10485760}>10 MiB</option>
           </select>
         </label>
         <div className="status-line">
@@ -725,6 +726,9 @@ function Detail({
   const note = request ? detail.request_body_note : detail.response_body_note
   const bytes = request ? detail.request_body_bytes : detail.response_body_bytes
   const truncated = request ? detail.request_body_truncated : detail.response_body_truncated
+  const imageMediaType = request ? detail.request_body_image : detail.response_body_image
+  // 后端只对完整（未截断）的图片 body 落 base64，此时可直接预览
+  const imagePreview = imageMediaType && rawBody && !truncated ? `data:${imageMediaType};base64,${rawBody}` : null
   const url = fullUrl(detail)
   return (
     <aside className="detail">
@@ -767,22 +771,32 @@ function Detail({
           <div className={`header-row ${SENSITIVE_HEADERS.has(name.toLowerCase()) ? 'sensitive' : ''}`} key={`${name}-${index}`}>
             <span className="header-name">{name}</span>
             <span className="header-value">{value}</span>
+            <button
+              className="ghost compact header-copy"
+              aria-label={`复制 ${name}`}
+              title="复制（key 和 value 以换行分隔）"
+              onClick={() => void onCopy(`${name}\n${value}`, name)}
+            >复制</button>
           </div>
         ))}
       </div>
       <h3>
         Body
         <span className="heading-actions">
-          <small>{formatBytes(bytes)}{truncated ? ' · 已截断' : ''}</small>
-          <label className="pretty-toggle">
-            <input type="checkbox" checked={pretty} onChange={(event) => setPretty(event.target.checked)} />
-            格式化
-          </label>
+          <small>{formatBytes(bytes)}{truncated ? ' · 已截断' : ''}{imageMediaType ? ` · ${imageMediaType}` : ''}</small>
+          {!imagePreview && (
+            <label className="pretty-toggle">
+              <input type="checkbox" checked={pretty} onChange={(event) => setPretty(event.target.checked)} />
+              格式化
+            </label>
+          )}
           <button className="ghost compact" disabled={!rawBody} onClick={() => void onCopy(body || rawBody, 'Body')}>复制</button>
         </span>
       </h3>
       {note && <div className="note">{note}</div>}
-      <pre className="body-content">{body || '(empty)'}</pre>
+      {imagePreview
+        ? <img className="body-image-preview" src={imagePreview} alt={`${imageMediaType} 预览`} />
+        : <pre className="body-content">{body || '(empty)'}</pre>}
       {detail.error && <div className="note error-note">{detail.error}</div>}
     </aside>
   )

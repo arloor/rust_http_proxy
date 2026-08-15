@@ -2,6 +2,7 @@ use std::io::{self, ErrorKind, Write as _};
 use std::sync::Arc;
 
 use axum::extract::Request;
+use base64::Engine as _;
 use http::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use http_body::Body as _;
 use http_body_util::{BodyExt, combinators::BoxBody};
@@ -63,10 +64,17 @@ pub(super) async fn capture_and_drain_mitm_request_body(
                     ),
                     Err(error) => mode = CaptureMode::Skip(format!("content decode failed: {error}")),
                 },
+                CaptureMode::Image(image) => match image.decode(data) {
+                    Ok(decoded) => {
+                        image.push(&decoded, manager.body_limit_bytes(), &mut captured, &mut total, &mut truncated)
+                    }
+                    Err(error) => mode = CaptureMode::Skip(format!("content decode failed: {error}")),
+                },
                 CaptureMode::Skip(_) => {}
             }
         }
     }
+    let mut image_media_type = None;
     let note = match &mut mode {
         CaptureMode::Decoded(decoder) => match decoder.finish() {
             Ok(decoded) => {
@@ -83,10 +91,23 @@ pub(super) async fn capture_and_drain_mitm_request_body(
             }
             Err(error) => Some(format!("content decode finish failed: {error}")),
         },
+        CaptureMode::Image(image) => {
+            let (note, media_type) = finish_image_capture(
+                &manager,
+                &id,
+                BodyDirection::Request,
+                image,
+                &mut captured,
+                &mut total,
+                &mut truncated,
+            );
+            image_media_type = media_type;
+            note
+        }
         CaptureMode::Skip(reason) => Some(reason.clone()),
         CaptureMode::Plaintext => truncated.then(|| "body truncated at configured limit".to_owned()),
     };
-    manager.finish_body(&id, BodyDirection::Request, note);
+    manager.finish_body(&id, BodyDirection::Request, note, image_media_type);
     Ok(())
 }
 
@@ -118,25 +139,61 @@ pub(super) fn map_boxed_mitm_response_body(
 enum CaptureMode {
     Plaintext,
     Decoded(DecoderPipeline),
+    Image(ImageCapture),
     Skip(String),
+}
+
+// 图片 body 不按文本抓取：先按原始字节缓冲（遵守 body 上限），
+// 完整收完后 base64 编码存入 body 列，media type 记入 *_body_image 列供 UI 预览。
+struct ImageCapture {
+    media_type: String,
+    decoder: Option<DecoderPipeline>,
+    buffer: Vec<u8>,
+}
+
+impl ImageCapture {
+    fn decode(&mut self, data: &[u8]) -> io::Result<Bytes> {
+        match &mut self.decoder {
+            Some(decoder) => decoder.decode_chunk(data),
+            None => Ok(Bytes::copy_from_slice(data)),
+        }
+    }
+
+    fn finish(&mut self) -> io::Result<Bytes> {
+        match &mut self.decoder {
+            Some(decoder) => decoder.finish(),
+            None => Ok(Bytes::new()),
+        }
+    }
+
+    fn push(&mut self, data: &[u8], limit: usize, captured: &mut usize, total: &mut usize, truncated: &mut bool) {
+        *total = total.saturating_add(data.len());
+        let remaining = limit.saturating_sub(*captured);
+        let take = remaining.min(data.len());
+        if take > 0 {
+            self.buffer.extend_from_slice(&data[..take]);
+            *captured += take;
+        }
+        *truncated |= take < data.len();
+    }
 }
 
 fn body_capture_mode(headers: &http::HeaderMap) -> CaptureMode {
     let content_encoding = non_identity_content_encodings(headers);
-    let encoding_mode = if content_encoding.is_empty() {
-        CaptureMode::Plaintext
+    let decoder = if content_encoding.is_empty() {
+        None
     } else {
         match DecoderPipeline::new(&content_encoding) {
-            Ok(decoder) => CaptureMode::Decoded(decoder),
+            Ok(decoder) => Some(decoder),
             Err(reason) => return CaptureMode::Skip(reason),
         }
     };
 
     let Some(content_type) = headers.get(CONTENT_TYPE) else {
-        return encoding_mode;
+        return decoder.map_or(CaptureMode::Plaintext, CaptureMode::Decoded);
     };
     let Ok(content_type) = content_type.to_str() else {
-        return encoding_mode;
+        return decoder.map_or(CaptureMode::Plaintext, CaptureMode::Decoded);
     };
     let media_type = content_type
         .split_once(';')
@@ -144,7 +201,13 @@ fn body_capture_mode(headers: &http::HeaderMap) -> CaptureMode {
         .trim()
         .to_ascii_lowercase();
     if is_human_readable_media_type(&media_type) {
-        encoding_mode
+        decoder.map_or(CaptureMode::Plaintext, CaptureMode::Decoded)
+    } else if is_previewable_image_media_type(&media_type) {
+        CaptureMode::Image(ImageCapture {
+            media_type,
+            decoder,
+            buffer: Vec::new(),
+        })
     } else {
         CaptureMode::Skip(format!("non-text content-type: {media_type}"))
     }
@@ -181,6 +244,11 @@ fn is_human_readable_media_type(media_type: &str) -> bool {
         )
         || media_type.ends_with("+json")
         || media_type.ends_with("+xml")
+}
+
+fn is_previewable_image_media_type(media_type: &str) -> bool {
+    // svg 是文本，走 is_human_readable_media_type 按文本抓取
+    media_type.starts_with("image/") && media_type != "image/svg+xml"
 }
 
 struct DecoderPipeline {
@@ -326,6 +394,7 @@ pin_project_lite::pin_project! {
                     this.record_id,
                     *this.direction,
                     Some("connection closed before body stream ended".to_owned()),
+                    None,
                 );
             }
             if matches!(*this.direction, BodyDirection::Response) {
@@ -372,6 +441,7 @@ impl http_body::Body for MitmCaptureBody {
                             this.record_id,
                             *this.direction,
                             Some("capture stopped by runtime setting".to_owned()),
+                            None,
                         );
                     }
                 } else if let Some(data) = frame.data_ref() {
@@ -391,6 +461,18 @@ impl http_body::Body for MitmCaptureBody {
                                 this.record_id,
                                 *this.direction,
                                 &decoded,
+                                this.captured_bytes,
+                                this.total_bytes,
+                                this.truncated,
+                            ),
+                            Err(error) => {
+                                *this.mode = CaptureMode::Skip(format!("content decode failed: {error}"));
+                            }
+                        },
+                        CaptureMode::Image(image) => match image.decode(data) {
+                            Ok(decoded) => image.push(
+                                &decoded,
+                                this.manager.body_limit_bytes(),
                                 this.captured_bytes,
                                 this.total_bytes,
                                 this.truncated,
@@ -471,6 +553,7 @@ fn finish_capture(
     }
     *completed = true;
     let mut note = None;
+    let mut image_media_type = None;
     if !*stopped {
         match mode {
             CaptureMode::Decoded(decoder) => match decoder.finish() {
@@ -479,17 +562,50 @@ fn finish_capture(
                 }
                 Err(error) => note = Some(format!("content decode finish failed: {error}")),
             },
+            CaptureMode::Image(image) => {
+                let (image_note, media_type) =
+                    finish_image_capture(manager, record_id, direction, image, captured_bytes, total_bytes, truncated);
+                note = image_note;
+                image_media_type = media_type;
+            }
             CaptureMode::Skip(reason) => note = Some(reason.clone()),
             CaptureMode::Plaintext => {}
         }
         if *truncated {
             note = Some("body truncated at configured limit".to_owned());
         }
-        manager.finish_body(record_id, direction, note);
+        manager.finish_body(record_id, direction, note, image_media_type);
     }
     if matches!(direction, BodyDirection::Response) {
         manager.finish_record(record_id, "complete");
     }
+}
+
+// 图片抓取收尾：截断时只记字节数不存内容；完整时 base64 落库并返回 media type
+#[allow(clippy::too_many_arguments)]
+fn finish_image_capture(
+    manager: &MitmManager, record_id: &str, direction: BodyDirection, image: &mut ImageCapture, captured: &mut usize,
+    total: &mut usize, truncated: &mut bool,
+) -> (Option<String>, Option<String>) {
+    let mut note = None;
+    let mut usable = true;
+    match image.finish() {
+        Ok(decoded) => image.push(&decoded, manager.body_limit_bytes(), captured, total, truncated),
+        Err(error) => {
+            usable = false;
+            note = Some(format!("content decode finish failed: {error}"));
+        }
+    }
+    let mut media_type = None;
+    if *truncated {
+        manager.body_chunk(record_id, direction, &[], *total, true);
+        note = Some("body truncated at configured limit".to_owned());
+    } else if usable && !image.buffer.is_empty() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&image.buffer);
+        manager.body_chunk(record_id, direction, encoded.as_bytes(), *total, false);
+        media_type = Some(image.media_type.clone());
+    }
+    (note, media_type)
 }
 
 fn capture_bytes(
@@ -664,8 +780,98 @@ mod tests {
     #[test]
     fn response_mode_skips_binary() {
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
         assert!(matches!(body_capture_mode(&headers), CaptureMode::Skip(_)));
+    }
+
+    #[test]
+    fn response_mode_buffers_images_but_not_svg() {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
+        assert!(matches!(body_capture_mode(&headers), CaptureMode::Image(_)));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"));
+        assert!(matches!(body_capture_mode(&headers), CaptureMode::Plaintext));
+    }
+
+    // 完整的图片 body 应以 base64 落库，并把 media type 写入 response_body_image 供 UI 预览
+    #[tokio::test]
+    async fn complete_image_body_is_stored_as_base64() -> Result<(), crate::DynError> {
+        const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
+        let (manager, path, id) = open_capture_record("image")?;
+        let body = http_body_util::Full::new(Bytes::from_static(PNG))
+            .map_err(|never: std::convert::Infallible| match never {})
+            .boxed();
+        let mut wrapped = MitmCaptureBody::new(
+            body,
+            manager.clone(),
+            id.clone(),
+            BodyDirection::Response,
+            CaptureMode::Image(ImageCapture {
+                media_type: "image/png".to_owned(),
+                decoder: None,
+                buffer: Vec::new(),
+            }),
+        );
+        while let Some(frame) = wrapped.frame().await {
+            frame?;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "complete");
+        assert_eq!(detail.response_body, base64::engine::general_purpose::STANDARD.encode(PNG));
+        assert_eq!(detail.response_body_bytes, PNG.len() as i64);
+        assert!(!detail.response_body_truncated);
+        assert_eq!(detail.response_body_note, None);
+        assert_eq!(detail.response_body_image.as_deref(), Some("image/png"));
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    // 超过抓取上限的图片不完整，无法预览：只记字节数和截断标记，不落 base64
+    #[tokio::test]
+    async fn truncated_image_body_is_not_stored() -> Result<(), crate::DynError> {
+        let (manager, path, id) = open_capture_record("image_truncated")?;
+        manager
+            .patch_settings(crate::mitm_manager::MitmSettingsPatch {
+                capture_enabled: None,
+                max_records: None,
+                body_limit_bytes: Some(1024),
+            })
+            .await?;
+        let data = vec![7u8; 2048];
+        let body = http_body_util::Full::new(Bytes::from(data))
+            .map_err(|never: std::convert::Infallible| match never {})
+            .boxed();
+        let mut wrapped = MitmCaptureBody::new(
+            body,
+            manager.clone(),
+            id.clone(),
+            BodyDirection::Response,
+            CaptureMode::Image(ImageCapture {
+                media_type: "image/png".to_owned(),
+                decoder: None,
+                buffer: Vec::new(),
+            }),
+        );
+        while let Some(frame) = wrapped.frame().await {
+            frame?;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.response_body, "");
+        assert_eq!(detail.response_body_bytes, 2048);
+        assert!(detail.response_body_truncated);
+        assert_eq!(detail.response_body_image, None);
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
     }
 
     #[test]

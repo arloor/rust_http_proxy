@@ -30,12 +30,14 @@ export type RecordDetail = RecordSummary & {
   request_body_bytes: number
   request_body_truncated: boolean
   request_body_note: string | null
+  request_body_image: string | null
   response_version: string | null
   response_headers: [string, string][]
   response_body: string
   response_body_bytes: number
   response_body_truncated: boolean
   response_body_note: string | null
+  response_body_image: string | null
   error: string | null
 }
 
