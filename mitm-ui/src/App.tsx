@@ -1,4 +1,4 @@
-import { FormEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   fullUrl,
@@ -40,7 +40,7 @@ function App() {
   const [search, setSearch] = useState('')
   const [groupFilter, setGroupFilter] = useState('')
   const [sidebarWidth, setSidebarWidth] = useState(250)
-  const [detailWidth, setDetailWidth] = useState(420)
+  const [detailWidth, setDetailWidth] = useState(800)
   const [newTarget, setNewTarget] = useState('')
   const [error, setError] = useState('')
   const [live, setLive] = useState(false)
@@ -52,6 +52,7 @@ function App() {
   const copyTimer = useRef<number | null>(null)
   const recordsRef = useRef<RecordSummary[]>([])
   const tableWrapRef = useRef<HTMLDivElement>(null)
+  const workspaceRef = useRef<HTMLElement>(null)
   const pinToLatestRef = useRef(true)
   const nextBeforeRef = useRef<number | null>(null)
   const loadingMoreRef = useRef(false)
@@ -108,12 +109,13 @@ function App() {
   }, [])
 
   // 栏宽拖拽：direction=1 表示向右拖变宽（左栏），-1 表示向左拖变宽（右栏）
+  // max 按工作区当前宽度动态计算，避免列宽之和超过视口
   const startColumnResize = useCallback(
-    (event: ReactMouseEvent, startWidth: number, direction: 1 | -1, min: number, max: number, apply: (width: number) => void) => {
+    (event: ReactMouseEvent, startWidth: number, direction: 1 | -1, min: number, max: () => number, apply: (width: number) => void) => {
       event.preventDefault()
       const startX = event.clientX
       const onMove = (moveEvent: MouseEvent) => {
-        apply(Math.min(max, Math.max(min, startWidth + direction * (moveEvent.clientX - startX))))
+        apply(Math.min(max(), Math.max(min, startWidth + direction * (moveEvent.clientX - startX))))
       }
       const onUp = () => {
         document.body.classList.remove('col-resizing')
@@ -126,6 +128,24 @@ function App() {
     },
     [],
   )
+
+  // 窗口尺寸变化（或详情开合）时夹取列宽，保证三栏不超出视口
+  useEffect(() => {
+    const clampColumns = () => {
+      const el = workspaceRef.current
+      if (!el) return
+      const available = el.clientWidth - (showDetail ? 12 : 6) - (showDetail ? 360 : 470)
+      const maxSidebar = Math.max(180, Math.min(480, available - (showDetail ? detailWidth : 0)))
+      if (sidebarWidth > maxSidebar) setSidebarWidth(maxSidebar)
+      if (showDetail) {
+        const maxDetail = Math.max(320, Math.min(800, available - Math.min(sidebarWidth, maxSidebar)))
+        if (detailWidth > maxDetail) setDetailWidth(maxDetail)
+      }
+    }
+    clampColumns()
+    window.addEventListener('resize', clampColumns)
+    return () => window.removeEventListener('resize', clampColumns)
+  }, [sidebarWidth, detailWidth, showDetail])
 
   const copyText = useCallback(async (value: string, label: string) => {
     try {
@@ -464,6 +484,7 @@ function App() {
       </section>
 
       <section
+        ref={workspaceRef}
         className={`workspace ${showDetail ? 'has-detail' : ''}`}
         style={{
           gridTemplateColumns: showDetail
@@ -474,7 +495,7 @@ function App() {
         <aside className="sidebar">
           <div className="panel-title"><span>目标域名</span><b>{targets.length}</b></div>
           <form className="target-form" onSubmit={addTarget}>
-            <input aria-label="新目标后缀" placeholder="example.com" value={newTarget} onChange={(e) => setNewTarget(e.target.value)} />
+            <ClearableInput aria-label="新目标后缀" placeholder="example.com" value={newTarget} onChange={setNewTarget} />
             <button type="submit">添加</button>
           </form>
           <div className="target-list">
@@ -496,12 +517,12 @@ function App() {
             {!targets.length && <p className="empty">尚未配置目标后缀</p>}
           </div>
           <div className="panel-title group-title"><span>URL 分类</span><b>{groupQuery ? `${filteredGroups.length}/${groups.length}` : groups.length}</b></div>
-          <input
+          <ClearableInput
             aria-label="搜索 URL 分类"
             className="group-search"
             placeholder="搜索 host / path…"
             value={groupFilter}
-            onChange={(e) => setGroupFilter(e.target.value)}
+            onChange={setGroupFilter}
           />
           <button className={!host ? 'group active' : 'group'} onClick={() => { setHost(''); setExpandedHost(''); setPath('') }}>全部请求</button>
           {filteredGroups.map((group) => {
@@ -535,15 +556,18 @@ function App() {
           role="separator"
           aria-orientation="vertical"
           aria-label="调整侧栏宽度"
-          onMouseDown={(event) => startColumnResize(event, sidebarWidth, 1, 180, 480, setSidebarWidth)}
+          onMouseDown={(event) => startColumnResize(event, sidebarWidth, 1, 180, () => {
+            const w = workspaceRef.current?.clientWidth ?? window.innerWidth
+            return Math.max(180, Math.min(480, w - (showDetail ? 360 + 12 + detailWidth : 470 + 6)))
+          }, setSidebarWidth)}
         />
 
         <section className="records-panel">
           <div className="filters">
-            <input aria-label="搜索 URL" placeholder="搜索 URL…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
-            <input aria-label="客户端 IP" className="client-ip-input" placeholder="客户端 IP" value={clientIpInput} onChange={(e) => setClientIpInput(e.target.value)} />
+            <ClearableInput aria-label="搜索 URL" placeholder="搜索 URL…" value={searchInput} onChange={setSearchInput} />
+            <ClearableInput aria-label="客户端 IP" className="client-ip-input" placeholder="客户端 IP" value={clientIpInput} onChange={setClientIpInput} />
             <select aria-label="请求方法" value={method} onChange={(e) => setMethod(e.target.value)}>{methods.map((item) => <option key={item} value={item}>{item || '全部方法'}</option>)}</select>
-            <input aria-label="状态码" className="status-input" placeholder="状态码" value={status} onChange={(e) => setStatus(e.target.value.replace(/\D/g, '').slice(0, 3))} />
+            <ClearableInput aria-label="状态码" className="status-input" placeholder="状态码" value={status} onChange={(value) => setStatus(value.replace(/\D/g, '').slice(0, 3))} />
             <button className="danger" onClick={() => void clearRecords()}>清空</button>
           </div>
           {hasFilters && (
@@ -597,7 +621,10 @@ function App() {
             role="separator"
             aria-orientation="vertical"
             aria-label="调整详情宽度"
-            onMouseDown={(event) => startColumnResize(event, detailWidth, -1, 320, 800, setDetailWidth)}
+            onMouseDown={(event) => startColumnResize(event, detailWidth, -1, 320, () => {
+              const w = workspaceRef.current?.clientWidth ?? window.innerWidth
+              return Math.max(320, Math.min(800, w - 360 - 12 - sidebarWidth))
+            }, setDetailWidth)}
           />
         )}
         {detailLoadingId
@@ -619,6 +646,25 @@ function fallbackCopy(value: string) {
   const ok = document.execCommand('copy')
   document.body.removeChild(area)
   if (!ok) throw new Error('复制失败，请手动选择文本')
+}
+
+function ClearableInput({
+  value,
+  onChange,
+  className,
+  ...props
+}: {
+  value: string
+  onChange: (value: string) => void
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'className'> & { className?: string }) {
+  return (
+    <span className={className ? `clearable ${className}` : 'clearable'}>
+      <input {...props} value={value} onChange={(event) => onChange(event.target.value)} />
+      {value && (
+        <button type="button" className="input-clear" aria-label="清空" tabIndex={-1} onClick={() => onChange('')}>×</button>
+      )}
+    </span>
+  )
 }
 
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
