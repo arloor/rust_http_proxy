@@ -30,6 +30,7 @@ function App() {
   const [nextBefore, setNextBefore] = useState<number | null>(null)
   const [selected, setSelected] = useState<RecordDetail | null>(null)
   const [host, setHost] = useState('')
+  const [expandedHost, setExpandedHost] = useState('')
   const [path, setPath] = useState('')
   const [method, setMethod] = useState('')
   const [status, setStatus] = useState('')
@@ -51,10 +52,23 @@ function App() {
   const loadingMoreRef = useRef(false)
   const [pinToLatest, setPinToLatest] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
+  const detailRequestRef = useRef(0)
+  const activeRecordIdRef = useRef<string | null>(null)
+
+  const activeRecordId = detailLoadingId ?? selected?.id ?? null
+  const loadingRecord = detailLoadingId
+    ? records.find((record) => record.id === detailLoadingId) ?? null
+    : null
+  const showDetail = detailLoadingId !== null || selected !== null
 
   useEffect(() => {
     selectedIdRef.current = selected?.id ?? null
   }, [selected])
+
+  useEffect(() => {
+    activeRecordIdRef.current = activeRecordId
+  }, [activeRecordId])
 
   useEffect(() => {
     recordsRef.current = records
@@ -239,13 +253,29 @@ function App() {
   }
 
   async function selectRecord(id: string) {
+    const requestId = ++detailRequestRef.current
+    activeRecordIdRef.current = id
+    setDetailLoadingId(id)
     try {
-      setSelected(await api<RecordDetail>(`/records/${id}`))
+      const detail = await api<RecordDetail>(`/records/${id}`)
+      if (requestId !== detailRequestRef.current) return
+      setSelected(detail)
       setError('')
     } catch (value) {
+      if (requestId !== detailRequestRef.current) return
+      activeRecordIdRef.current = selectedIdRef.current
       handleError(value)
+    } finally {
+      if (requestId === detailRequestRef.current) setDetailLoadingId(null)
     }
   }
+
+  const closeDetail = useCallback(() => {
+    detailRequestRef.current += 1
+    activeRecordIdRef.current = null
+    setDetailLoadingId(null)
+    setSelected(null)
+  }, [])
 
   const loadMore = useCallback(async () => {
     const before = nextBeforeRef.current
@@ -283,6 +313,7 @@ function App() {
 
   function resetFilters() {
     setHost('')
+    setExpandedHost('')
     setPath('')
     setMethod('')
     setStatus('')
@@ -313,7 +344,7 @@ function App() {
   const moveSelection = useCallback((delta: number) => {
     const list = recordsRef.current
     if (!list.length) return
-    const index = list.findIndex((record) => record.id === selectedIdRef.current)
+    const index = list.findIndex((record) => record.id === activeRecordIdRef.current)
     const next = list[Math.min(list.length - 1, Math.max(0, (index < 0 ? 0 : index) + delta))]
     if (next) void selectRecord(next.id)
   }, [])
@@ -323,7 +354,7 @@ function App() {
       const target = event.target as HTMLElement
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return
       if (event.key === 'Escape') {
-        setSelected(null)
+        closeDetail()
         return
       }
       if (event.key === 'ArrowDown' || event.key === 'j') {
@@ -336,7 +367,7 @@ function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [moveSelection])
+  }, [closeDetail, moveSelection])
 
   const hasFilters = Boolean(host || path || method || status || search)
   const emptyHint = hasFilters ? '没有匹配的记录' : '等待 MITM 流量'
@@ -374,14 +405,16 @@ function App() {
           </select>
         </label>
         <div className="status-line">
-          <span className={`dot ${settings?.ca_available ? 'online' : 'offline'}`} />
-          {settings?.ca_available ? 'CA READY' : 'CA UNAVAILABLE'}
-          <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● LIVE' : '○ RECONNECTING'}</span>
+          <span className={`ca-pill ${settings?.ca_available ? 'online' : 'offline'}`}>
+            <span className={`dot ${settings?.ca_available ? 'online' : 'offline'}`} />
+            {settings?.ca_available ? 'CA 可用' : 'CA 不可用'}
+          </span>
+          <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● 实时' : '○ 重连中'}</span>
           <span className="record-count">{records.length} 条记录</span>
         </div>
       </section>
 
-      <section className={`workspace ${selected ? 'has-detail' : ''}`}>
+      <section className={`workspace ${showDetail ? 'has-detail' : ''}`}>
         <aside className="sidebar">
           <div className="panel-title"><span>目标域名</span><b>{targets.length}</b></div>
           <form className="target-form" onSubmit={addTarget}>
@@ -391,7 +424,7 @@ function App() {
           <div className="target-list">
             {targets.map((target) => (
               <div className={`target ${host === target.suffix ? 'active' : ''}`} key={target.id}>
-                <button className="target-main" onClick={() => { setHost(target.suffix); setPath('') }} title="按该后缀筛选">
+                <button className="target-main" onClick={() => { setHost(target.suffix); setExpandedHost(''); setPath('') }} title="按该后缀筛选">
                   <span>{target.suffix}</span>
                   {target.cli_managed && <em>启动参数</em>}
                 </button>
@@ -407,13 +440,21 @@ function App() {
             {!targets.length && <p className="empty">尚未配置目标后缀</p>}
           </div>
           <div className="panel-title group-title"><span>URL 分类</span><b>{groups.length}</b></div>
-          <button className={!host ? 'group active' : 'group'} onClick={() => { setHost(''); setPath('') }}>全部请求</button>
+          <button className={!host ? 'group active' : 'group'} onClick={() => { setHost(''); setExpandedHost(''); setPath('') }}>全部请求</button>
           {groups.map((group) => (
             <div key={group.host} className="group-block">
-              <button className={host === group.host && !path ? 'group active' : 'group'} onClick={() => { setHost(group.host); setPath('') }}>
+              <button
+                className={host === group.host && !path ? 'group active' : 'group'}
+                aria-expanded={expandedHost === group.host}
+                onClick={() => {
+                  setHost(group.host)
+                  setPath('')
+                  setExpandedHost((current) => current === group.host ? '' : group.host)
+                }}
+              >
                 <span>{group.host}</span><b>{group.count}</b>
               </button>
-              {host === group.host && group.paths.map((item) => (
+              {expandedHost === group.host && group.paths.map((item) => (
                 <button key={item.path} className={path === item.path ? 'path active' : 'path'} onClick={() => setPath(item.path)}>
                   <span>{item.path}</span><b>{item.count}</b>
                 </button>
@@ -431,7 +472,7 @@ function App() {
           </div>
           {hasFilters && (
             <div className="filter-chips">
-              {host && <button onClick={() => { setHost(''); setPath('') }}>host: {host} ×</button>}
+              {host && <button onClick={() => { setHost(''); setExpandedHost(''); setPath('') }}>host: {host} ×</button>}
               {path && <button onClick={() => setPath('')}>path: {path} ×</button>}
               {method && <button onClick={() => setMethod('')}>{method} ×</button>}
               {status && <button onClick={() => setStatus('')}>状态 {status} ×</button>}
@@ -446,16 +487,16 @@ function App() {
                 {records.map((record) => (
                   <tr
                     key={record.id}
-                    className={selected?.id === record.id ? 'selected' : ''}
+                    className={activeRecordId === record.id ? 'selected' : ''}
                     onClick={() => {
-                      if (selected?.id === record.id) setSelected(null)
+                      if (activeRecordId === record.id) closeDetail()
                       else void selectRecord(record.id)
                     }}
                   >
                     <td className="mono muted">{formatTime(record.started_at_ms)}</td>
                     <td><span className={`method method-${record.method.toLowerCase()}`}>{record.method}</span></td>
                     <td className="url-cell"><strong>{record.host}</strong><span>{record.path}{record.query ? `?${record.query}` : ''}</span></td>
-                    <td className={`mono status-${statusTone(record.status)}`}>{record.status ?? '…'}</td>
+                    <td><span className={`status-badge status-${statusTone(record.status)}`}>{record.status ?? '…'}</span></td>
                     <td className="mono muted">{formatDuration(record.duration_ms)}</td>
                     <td><span className={`state state-${record.capture_state}`}>{formatCaptureState(record.capture_state)}</span></td>
                   </tr>
@@ -473,7 +514,9 @@ function App() {
           </div>
         </section>
 
-        {selected && <Detail detail={selected} onClose={() => setSelected(null)} onCopy={copyText} />}
+        {detailLoadingId
+          ? <DetailLoading record={loadingRecord} onClose={closeDetail} />
+          : selected && <Detail detail={selected} onClose={closeDetail} onCopy={copyText} />}
       </section>
     </main>
   )
@@ -497,6 +540,38 @@ function Toggle({ label, checked, disabled, onChange }: { label: string; checked
     <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
     <i aria-hidden="true" />
   </label>
+}
+
+function DetailLoading({ record, onClose }: { record: RecordSummary | null; onClose: () => void }) {
+  return (
+    <aside className="detail detail-loading" aria-busy="true" aria-live="polite">
+      <div className="detail-head">
+        <div>
+          {record && <span className={`method method-${record.method.toLowerCase()}`}>{record.method}</span>}
+          {record && <span className={`status-badge status-${statusTone(record.status)}`}>{record.status ?? '…'}</span>}
+        </div>
+        <button aria-label="关闭详情" onClick={onClose}>×</button>
+      </div>
+      {record && <p className="detail-url loading-detail-url">{fullUrl(record)}</p>}
+      <div className="detail-loading-message">
+        <span className="loading-spinner" aria-hidden="true" />
+        <span><strong>正在加载详情</strong><small>正在读取 Headers 和 Body…</small></span>
+      </div>
+      <div className="skeleton-section" aria-hidden="true">
+        <span className="skeleton-heading" />
+        <span className="skeleton-line" />
+        <span className="skeleton-line short" />
+        <span className="skeleton-line" />
+      </div>
+      <div className="skeleton-section body-skeleton" aria-hidden="true">
+        <span className="skeleton-heading" />
+        <span className="skeleton-line" />
+        <span className="skeleton-line medium" />
+        <span className="skeleton-line short" />
+        <span className="skeleton-line medium" />
+      </div>
+    </aside>
+  )
 }
 
 function Detail({
@@ -524,7 +599,7 @@ function Detail({
       <div className="detail-head">
         <div>
           <span className={`method method-${detail.method.toLowerCase()}`}>{detail.method}</span>
-          <b className={`status-${statusTone(detail.status)}`}>{detail.status ?? 'PENDING'}</b>
+          <b className={`status-badge status-${statusTone(detail.status)}`}>{detail.status ?? 'PENDING'}</b>
           <span className={`state state-${detail.capture_state}`}>{formatCaptureState(detail.capture_state)}</span>
         </div>
         <button aria-label="关闭详情" onClick={onClose}>×</button>
