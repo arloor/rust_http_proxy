@@ -137,7 +137,7 @@ body.col-resizing * { cursor: col-resize !important; }
 .table-wrap { overflow: auto; flex: 1; }
 table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
 th { position: sticky; top: 0; z-index: 2; background: var(--panel); color: var(--text-3); text-align: left; font: 600 11px var(--font-sans); padding: 9px 10px; border-bottom: 1px solid var(--line); }
-th:nth-child(1) { width: 120px } th:nth-child(2) { width: 82px } th:nth-child(4) { width: 152px } th:nth-child(5) { width: 66px } th:nth-child(6) { width: 74px } th:nth-child(7) { width: 76px }
+th:nth-child(1) { width: 162px } th:nth-child(2) { width: 82px } th:nth-child(4) { width: 152px } th:nth-child(5) { width: 66px } th:nth-child(6) { width: 74px } th:nth-child(7) { width: 76px }
 .workspace.has-detail th:nth-child(1), .workspace.has-detail td:nth-child(1),
 .workspace.has-detail th:nth-child(6), .workspace.has-detail td:nth-child(6) { display: none; }
 /* 记录列表宽度不足时折叠客户端列（打开详情面板后列表变窄也会触发） */
