@@ -11,8 +11,8 @@ use crate::e2e_test_support::{
     SSH_BANNER, WS_PAYLOAD, assert_ok, assert_switching_protocols, connect_to_mitm_target, connect_to_mitm_target_h2,
     read_exact_bytes, read_http_head, read_ws_frame_payload, recv_connect_target, recv_forward_request_target,
     start_forward_bypass_proxy, start_forward_request_proxy, start_plain_http_server, start_proxy,
-    start_tcp_banner_server, start_tcp_echo_server, start_tls_h2_http_server, start_tls_http_server,
-    start_tls_websocket_echo_server, start_websocket_echo_server, timeout_step, unique_temp_dir,
+    start_tcp_banner_server, start_tcp_echo_server, start_tls_h2_http_server, start_tls_h2_routing_server,
+    start_tls_http_server, start_tls_websocket_echo_server, start_websocket_echo_server, timeout_step, unique_temp_dir,
     write_masked_text_frame, write_test_ca,
 };
 
@@ -263,6 +263,46 @@ Upgrade: websocket\r\n\
     drop(tls_stream);
     proxy.shutdown().await?;
     upstream.task.await??;
+    tokio::fs::remove_dir_all(temp_dir).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn mitm_h2_preserves_authority_without_forwarding_host() -> Result<(), DynError> {
+    let upstream = start_tls_h2_routing_server("localhost", "localhost").await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_mitm_h2_authority")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let proxy = start_proxy(vec![
+        "--mitm-domain-suffix".to_owned(),
+        "localhost".to_owned(),
+        "--mitm-ca-cert".to_owned(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".to_owned(),
+        ca.key_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    let tls_stream = connect_to_mitm_target_h2(proxy.port, upstream.addr.port(), ca.cert_der).await?;
+    let (mut sender, connection) = timeout_step(
+        "MITM HTTP/2 client handshake",
+        http2::Builder::new(TokioExecutor::new()).handshake(TokioIo::new(tls_stream)),
+    )
+    .await?;
+    let connection_task = tokio::spawn(connection);
+    let request = Request::builder()
+        .version(Version::HTTP_2)
+        .uri("https://localhost/backend/check")
+        .body(Empty::<Bytes>::new())?;
+
+    let response = timeout_step("MITM HTTP/2 authority response", sender.send_request(request)).await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.into_body().collect().await?.to_bytes(), Bytes::from_static(b"ok"));
+    drop(sender);
+    connection_task.abort();
+    let _ = connection_task.await;
+    upstream.task.await??;
+    proxy.shutdown().await?;
     tokio::fs::remove_dir_all(temp_dir).await?;
     Ok(())
 }

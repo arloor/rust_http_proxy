@@ -432,6 +432,7 @@ let upstream_url = upstream.url_base.clone() + remaining;
 `H1` 和 `H2` 使用彼此独立且严格限定协议的客户端。HTTPS upstream 的 `AUTO` 沿用入口请求版本后再分流，明文 HTTP upstream 则使用 H1；若对 `http://` upstream 显式指定 `H2`，使用的是 h2c prior knowledge，上游必须直接接受明文 HTTP/2。H2 不发送普通 `Host`，但会把 `authority` 写入 `:authority`，因此仍支持独立于连接目标和 TLS SNI 的虚拟主机。为兼容旧配置，未设置 `authority` 时，`headers.Host` 会作为 authority 使用。
 
 `connect_to` 和 `tls_server_name` 不接受 `#{host}`，避免外部请求的 Host 控制代理的 DNS/TCP 或 TLS 目标。需要动态虚拟主机时只配置 `authority: "#{host}"`（或兼容写法 `headers.Host: "#{host}"`）；连接目标与证书校验名应保持静态。
+`#{host}` 会保留原请求的非默认端口，但会省略与原请求 scheme 匹配的默认端口（HTTP 的 80、HTTPS 的 443）。H2 使用解析后的值生成 `:authority`，不会额外发送普通 `Host` 请求头。
 
 ### 🌐 内置反向代理功能
 

@@ -1,7 +1,10 @@
 use std::{io, io::ErrorKind, net::SocketAddr, sync::Arc};
 
 use axum::extract::Request;
-use http::header::{CONTENT_LENGTH, HOST, TRANSFER_ENCODING};
+use http::{
+    Uri,
+    header::{CONTENT_LENGTH, HOST, TRANSFER_ENCODING},
+};
 use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::{
     Response,
@@ -56,7 +59,7 @@ pub(super) async fn handle_mitm_request(
     };
     let is_websocket = is_websocket_upgrade(&req);
     let request_authority = request_authority(&req, &access_label.target);
-    mod_mitm_proxy_req(&mut req, &access_label.target)?;
+    mod_mitm_proxy_req(&mut req, &request_authority)?;
     let request_host = request_authority
         .parse::<http::uri::Authority>()
         .map(|authority| authority.host().to_ascii_lowercase())
@@ -368,12 +371,25 @@ fn record_response_head<B>(
     }
 }
 
-fn mod_mitm_proxy_req(req: &mut Request<Incoming>, target_authority: &str) -> io::Result<()> {
+fn mod_mitm_proxy_req<B>(req: &mut Request<B>, request_authority: &str) -> io::Result<()> {
     req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
     req.headers_mut().remove("Proxy-Connection");
+    if req.version() == http::Version::HTTP_2 {
+        if req.uri().scheme().is_none() || req.uri().authority().is_none() {
+            let mut parts = req.uri().clone().into_parts();
+            parts.scheme = Some(http::uri::Scheme::HTTPS);
+            parts.authority = Some(
+                request_authority
+                    .parse()
+                    .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?,
+            );
+            *req.uri_mut() = Uri::from_parts(parts).map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
+        }
+        return Ok(());
+    }
     if !req.headers().contains_key(HOST) {
         let host_header =
-            HeaderValue::from_str(target_authority).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+            HeaderValue::from_str(request_authority).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         req.headers_mut().insert(HOST, host_header);
     }
     if req.uri().scheme().is_some() || req.uri().authority().is_some() {
@@ -392,6 +408,35 @@ mod tests {
         assert_eq!(origin.scheme, "https");
         assert_eq!(origin.host, "api.example.com");
         assert_eq!(origin.port, Some(8443));
+        Ok(())
+    }
+
+    #[test]
+    fn mitm_http2_request_preserves_original_authority_without_host() -> Result<(), crate::DynError> {
+        let mut request = Request::builder()
+            .uri("https://api.bilibili.com/space")
+            .version(http::Version::HTTP_2)
+            .body(())?;
+
+        mod_mitm_proxy_req(&mut request, "api.bilibili.com")?;
+
+        assert_eq!(request.uri().scheme_str(), Some("https"));
+        assert_eq!(request.uri().authority().map(http::uri::Authority::as_str), Some("api.bilibili.com"));
+        assert!(!request.headers().contains_key(HOST));
+        Ok(())
+    }
+
+    #[test]
+    fn mitm_http2_origin_form_uses_captured_authority_without_host() -> Result<(), crate::DynError> {
+        let mut request = Request::builder()
+            .uri("/space")
+            .version(http::Version::HTTP_2)
+            .body(())?;
+
+        mod_mitm_proxy_req(&mut request, "api.bilibili.com")?;
+
+        assert_eq!(request.uri().to_string(), "https://api.bilibili.com/space");
+        assert!(!request.headers().contains_key(HOST));
         Ok(())
     }
 }

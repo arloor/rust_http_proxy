@@ -153,12 +153,10 @@ pub(crate) fn build_upstream_req<B>(
             .find(|(key, _)| key.eq_ignore_ascii_case(header::HOST.as_str()))
             .map(|(_, value)| value.as_str())
     });
+    let configured_authority = upstream.authority.as_deref().or(configured_host);
+    let authority_is_inferred = configured_authority.is_none();
     let authority = resolve_upstream_template(
-        upstream
-            .authority
-            .as_deref()
-            .or(configured_host)
-            .unwrap_or(upstream_authority.as_str()),
+        configured_authority.unwrap_or(upstream_authority.as_str()),
         original_scheme_host_port,
     );
     let authority = authority
@@ -196,6 +194,11 @@ pub(crate) fn build_upstream_req<B>(
         DirectProtocol::Http2
     } else {
         DirectProtocol::Http1
+    };
+    let authority = if protocol == DirectProtocol::Http1 && authority_is_inferred {
+        normalize_inferred_http1_authority(authority, upstream_scheme)?
+    } else {
+        authority
     };
     let mut uri_parts = upstream_uri.into_parts();
     uri_parts.authority = Some(authority.clone());
@@ -237,15 +240,7 @@ pub(crate) fn build_upstream_req<B>(
             if key.eq_ignore_ascii_case(header::HOST.as_str()) {
                 continue;
             }
-            let mut header_value = value.clone();
-            if value == "#{host}" {
-                // TIPS: 即使本程序在反向代理的request中增加Host头部，如果upstream在H2协议中不读取Host头部，则仍然会使用uri中的host进行跨域检测，容易出现origin not allowed的问题
-                if let Some(port) = original_scheme_host_port.port {
-                    header_value = format!("{}:{port}", original_scheme_host_port.host);
-                } else {
-                    header_value = original_scheme_host_port.host.clone();
-                }
-            }
+            let header_value = resolve_upstream_template(value, original_scheme_host_port);
             if let Some(old_value) = header_map.insert(
                 HeaderName::from_str(key).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
                 HeaderValue::from_str(&header_value).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
@@ -281,12 +276,20 @@ fn resolve_upstream_template(value: &str, original: &SchemeHostPort) -> String {
         } else {
             original.host.clone()
         };
-        match original.port {
+        match normalized_origin_port(original) {
             Some(port) => format!("{host}:{port}"),
             None => host,
         }
     } else {
         value.to_owned()
+    }
+}
+
+fn normalized_origin_port(original: &SchemeHostPort) -> Option<u16> {
+    match (original.scheme.as_str(), original.port) {
+        (scheme, Some(443)) if scheme.eq_ignore_ascii_case("https") => None,
+        (scheme, Some(80)) if scheme.eq_ignore_ascii_case("http") => None,
+        (_, port) => port,
     }
 }
 
@@ -299,6 +302,30 @@ fn socket_target(authority: &str, scheme: &str) -> io::Result<String> {
     }
     let default_port = if scheme.eq_ignore_ascii_case("https") { 443 } else { 80 };
     Ok(format!("{authority}:{default_port}"))
+}
+
+fn normalize_inferred_http1_authority(
+    authority: http::uri::Authority, scheme: &str,
+) -> io::Result<http::uri::Authority> {
+    let default_port = if scheme.eq_ignore_ascii_case("https") {
+        443
+    } else if scheme.eq_ignore_ascii_case("http") {
+        80
+    } else {
+        return Ok(authority);
+    };
+    if authority.port_u16() != Some(default_port) {
+        return Ok(authority);
+    }
+
+    let host = authority.host();
+    let host = if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    };
+    host.parse()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("invalid upstream authority: {e}")))
 }
 
 pub(crate) fn validate_tls_server_name(value: &str) -> io::Result<()> {
@@ -951,13 +978,32 @@ default_host:
 
     #[test]
     fn host_template_brackets_ipv6_authority() -> Result<(), crate::DynError> {
-        let original = SchemeHostPort {
-            scheme: "https".to_owned(),
-            host: "::1".to_owned(),
-            port: None,
-        };
+        for (port, expected) in [(None, "[::1]"), (Some(443), "[::1]"), (Some(8443), "[::1]:8443")] {
+            let original = SchemeHostPort {
+                scheme: "https".to_owned(),
+                host: "::1".to_owned(),
+                port,
+            };
+            assert_eq!(resolve_upstream_template("#{host}", &original), expected);
+        }
+        Ok(())
+    }
 
-        assert_eq!(resolve_upstream_template("#{host}", &original), "[::1]");
+    #[test]
+    fn host_template_omits_only_scheme_default_port() -> Result<(), crate::DynError> {
+        for (scheme, port, expected) in [
+            ("https", Some(443), "public.example.com"),
+            ("http", Some(80), "public.example.com"),
+            ("https", Some(8443), "public.example.com:8443"),
+            ("http", Some(8080), "public.example.com:8080"),
+        ] {
+            let original = SchemeHostPort {
+                scheme: scheme.to_owned(),
+                host: "public.example.com".to_owned(),
+                port,
+            };
+            assert_eq!(resolve_upstream_template("#{host}", &original), expected);
+        }
         Ok(())
     }
 
@@ -986,7 +1032,7 @@ default_host:
         let original = SchemeHostPort {
             scheme: "https".to_owned(),
             host: "public.example.com".to_owned(),
-            port: None,
+            port: Some(443),
         };
 
         let upstream_request = build_upstream_req("/grafana/", &upstream, request, &original)?;
@@ -999,6 +1045,119 @@ default_host:
         assert_eq!(upstream_request.connection_key.connect_to, "in.example.com:3000");
         assert_eq!(upstream_request.connection_key.tls_server_name.as_deref(), Some("in.example.com"));
         assert_eq!(upstream_request.connection_key.authority, "public.example.com");
+        Ok(())
+    }
+
+    #[test]
+    fn inferred_http1_authority_omits_only_default_port() -> Result<(), crate::DynError> {
+        let original = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "public.example.com".to_owned(),
+            port: None,
+        };
+        for (url_base, expected_authority, expected_connect_to) in [
+            ("https://backend.example:443/", "backend.example", "backend.example:443"),
+            ("http://backend.example:80/", "backend.example", "backend.example:80"),
+            ("https://backend.example:8443/", "backend.example:8443", "backend.example:8443"),
+            ("https://[::1]:443/", "[::1]", "[::1]:443"),
+        ] {
+            let upstream = Upstream {
+                url_base: url_base.to_owned(),
+                version: Version::H1,
+                connect_to: None,
+                tls_server_name: None,
+                authority: None,
+                headers: None,
+            };
+            let request = Request::builder().uri("/").version(http::Version::HTTP_11).body(())?;
+
+            let built = build_upstream_req("/", &upstream, request, &original)?;
+
+            assert_eq!(
+                built
+                    .request
+                    .headers()
+                    .get(header::HOST)
+                    .and_then(|value| value.to_str().ok()),
+                Some(expected_authority)
+            );
+            assert_eq!(built.connection_key.authority, expected_authority);
+            assert_eq!(built.connection_key.connect_to, expected_connect_to);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inferred_http2_authority_preserves_default_port() -> Result<(), crate::DynError> {
+        let upstream = Upstream {
+            url_base: "https://backend.example:443/".to_owned(),
+            version: Version::H2,
+            connect_to: None,
+            tls_server_name: None,
+            authority: None,
+            headers: None,
+        };
+        let request = Request::builder().uri("/").version(http::Version::HTTP_2).body(())?;
+        let original = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "public.example.com".to_owned(),
+            port: None,
+        };
+
+        let built = build_upstream_req("/", &upstream, request, &original)?;
+
+        assert_eq!(built.request.uri().authority().map(http::uri::Authority::as_str), Some("backend.example:443"));
+        assert!(!built.request.headers().contains_key(header::HOST));
+        assert_eq!(built.connection_key.authority, "backend.example:443");
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_http1_authority_preserves_default_port() -> Result<(), crate::DynError> {
+        let upstream = Upstream {
+            url_base: "https://backend.example:443/".to_owned(),
+            version: Version::H1,
+            connect_to: None,
+            tls_server_name: None,
+            authority: Some("virtual.example:443".to_owned()),
+            headers: None,
+        };
+        let request = Request::builder().uri("/").version(http::Version::HTTP_11).body(())?;
+        let original = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "public.example.com".to_owned(),
+            port: None,
+        };
+
+        let built = build_upstream_req("/", &upstream, request, &original)?;
+
+        assert_eq!(built.request.headers().get(header::HOST), Some(&HeaderValue::from_static("virtual.example:443")));
+        assert_eq!(built.connection_key.authority, "virtual.example:443");
+        Ok(())
+    }
+
+    #[test]
+    fn authority_host_template_omits_default_port() -> Result<(), crate::DynError> {
+        let upstream = Upstream {
+            url_base: "https://backend.example:443/".to_owned(),
+            version: Version::H2,
+            connect_to: None,
+            tls_server_name: None,
+            authority: Some("#{host}".to_owned()),
+            headers: None,
+        };
+        let request = Request::builder().uri("/").version(http::Version::HTTP_2).body(())?;
+        let original = SchemeHostPort {
+            scheme: "https".to_owned(),
+            host: "public.example.com".to_owned(),
+            port: Some(443),
+        };
+
+        let built = build_upstream_req("/", &upstream, request, &original)?;
+
+        assert_eq!(built.request.uri().authority().map(http::uri::Authority::as_str), Some("public.example.com"));
+        assert!(!built.request.headers().contains_key(header::HOST));
+        assert_eq!(built.connection_key.authority, "public.example.com");
         Ok(())
     }
 
@@ -1020,7 +1179,7 @@ default_host:
         let original = SchemeHostPort {
             scheme: "https".to_owned(),
             host: "public.example.com".to_owned(),
-            port: None,
+            port: Some(443),
         };
 
         let upstream_request = build_upstream_req("/grafana/", &upstream, request, &original)?;

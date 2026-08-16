@@ -766,8 +766,19 @@ fn ensure_http2_uri<B>(req: &mut Request<B>, access_label: &AccessLabel) {
         return;
     }
 
-    let path = req.uri().path_and_query().map(|path| path.as_str()).unwrap_or("/");
-    if let Ok(uri) = format!("https://{}{path}", access_label.target).parse() {
+    let authority = req
+        .headers()
+        .get(HOST)
+        .and_then(|host| host.to_str().ok())
+        .filter(|host| !host.is_empty())
+        .unwrap_or(&access_label.target);
+    let Ok(authority) = authority.parse() else {
+        return;
+    };
+    let mut parts = req.uri().clone().into_parts();
+    parts.scheme = Some(http::uri::Scheme::HTTPS);
+    parts.authority = Some(authority);
+    if let Ok(uri) = Uri::from_parts(parts) {
         *req.uri_mut() = uri;
     }
 }
@@ -901,5 +912,43 @@ mod tests {
 
         assert!(!headers.contains_key(HOST));
         assert_eq!(headers.get("accept"), Some(&HeaderValue::from_static("*/*")));
+    }
+
+    #[test]
+    fn http2_uri_uses_logical_host_before_connection_target() -> Result<(), crate::DynError> {
+        let mut request = Request::builder()
+            .uri("/space?season=1")
+            .header(HOST, "api.bilibili.com")
+            .body(())?;
+        let access_label = AccessLabel {
+            client: "127.0.0.1".to_owned(),
+            target: "api.bilibili.com:443".to_owned(),
+            username: String::new(),
+            relay_over_tls: Some(true),
+        };
+
+        ensure_http2_uri(&mut request, &access_label);
+        sanitize_http2_request_headers(request.headers_mut());
+
+        assert_eq!(request.uri().scheme_str(), Some("https"));
+        assert_eq!(request.uri().authority().map(http::uri::Authority::as_str), Some("api.bilibili.com"));
+        assert!(!request.headers().contains_key(HOST));
+        Ok(())
+    }
+
+    #[test]
+    fn http2_uri_preserves_existing_authority() -> Result<(), crate::DynError> {
+        let mut request = Request::builder().uri("https://logical.example/resource").body(())?;
+        let access_label = AccessLabel {
+            client: "127.0.0.1".to_owned(),
+            target: "connected.example:443".to_owned(),
+            username: String::new(),
+            relay_over_tls: Some(true),
+        };
+
+        ensure_http2_uri(&mut request, &access_label);
+
+        assert_eq!(request.uri().authority().map(http::uri::Authority::as_str), Some("logical.example"));
+        Ok(())
     }
 }
