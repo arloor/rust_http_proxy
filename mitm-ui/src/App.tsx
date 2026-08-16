@@ -978,39 +978,54 @@ function Detail({
           />
         )
         : eventStream && pretty
-          ? <SseBody body={rawBody} />
+          ? <SseBody body={rawBody} onCopy={onCopy} />
           : <pre className="body-content">{body || '(empty)'}</pre>}
       {detail.error && <div className="note error-note">{detail.error}</div>}
     </aside>
   )
 }
 
-function SseBody({ body }: { body: string }) {
+function SseBody({ body, onCopy }: { body: string; onCopy: (value: string, label: string) => void }) {
   const frames = parseSseFrames(body)
   const containerRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
+  const seenRef = useRef(frames.length)
   const [atLatest, setAtLatest] = useState(true)
+  const [unseen, setUnseen] = useState(0)
   useEffect(() => {
     const el = containerRef.current
     if (el && pinnedRef.current) {
       el.scrollTop = el.scrollHeight
+      seenRef.current = frames.length
       setAtLatest(true)
+      setUnseen(0)
+    } else {
+      setUnseen(Math.max(0, frames.length - seenRef.current))
     }
-  }, [body])
+  }, [body, frames.length])
   const onScroll = () => {
     const el = containerRef.current
-    if (el) {
-      const latest = el.scrollHeight - el.scrollTop - el.clientHeight <= 8
-      pinnedRef.current = latest
-      setAtLatest(latest)
+    if (!el) return
+    const latest = el.scrollHeight - el.scrollTop - el.clientHeight <= 8
+    if (latest) {
+      pinnedRef.current = true
+      seenRef.current = frames.length
+      setUnseen(0)
+    } else {
+      if (pinnedRef.current) seenRef.current = frames.length
+      pinnedRef.current = false
+      setUnseen(Math.max(0, frames.length - seenRef.current))
     }
+    setAtLatest(latest)
   }
   const jumpToLatest = () => {
     const el = containerRef.current
     if (!el) return
     pinnedRef.current = true
-    el.scrollTop = el.scrollHeight
+    seenRef.current = frames.length
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     setAtLatest(true)
+    setUnseen(0)
   }
 
   if (!frames.length) return <div className="sse-empty">等待首个事件…</div>
@@ -1025,6 +1040,13 @@ function SseBody({ body }: { body: string }) {
               {frame.id !== null && <span>id: {frame.id || '(empty)'}</span>}
               {frame.retry !== null && <span>retry: {frame.retry}ms</span>}
               {frame.pending && <em>接收中</em>}
+              {(frame.hasData || frame.comments.length > 0) && (
+                <button
+                  className="ghost compact sse-copy"
+                  title="复制该事件内容"
+                  onClick={() => void onCopy(frame.hasData ? prettyBody(frame.data) : frame.comments.join('\n'), `事件 #${index + 1}`)}
+                >复制</button>
+              )}
             </div>
             {frame.comments.map((comment, commentIndex) => (
               <div className="sse-comment" key={commentIndex}>: {comment || '(heartbeat)'}</div>
@@ -1038,7 +1060,11 @@ function SseBody({ body }: { body: string }) {
       </div>
       {!atLatest && (
         <button className="sse-jump-latest" onClick={jumpToLatest} title="滚动到底部并恢复自动吸附">
-          ↓ 回到最新事件
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 4l5 5 5-5" />
+            <path d="M3 8.5l5 5 5-5" />
+          </svg>
+          <span>{unseen > 0 ? `${unseen} 条新事件` : '回到最新事件'}</span>
         </button>
       )}
     </div>
