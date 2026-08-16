@@ -157,7 +157,7 @@ try {
         $binParts.Add('-u')
         $binParts.Add((Quote-ServiceArgument -Value $user))
     }
-    $binParts.Add('--mitm-dump')
+    # $binParts.Add('--mitm-dump')
     $binParts.Add('--mitm-ca-cert')
     $binParts.Add((Quote-ServiceArgument -Value $CaCert))
     $binParts.Add('--mitm-ca-key')
