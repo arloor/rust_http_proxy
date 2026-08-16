@@ -989,6 +989,7 @@ function SseBody({ body, onCopy }: { body: string; onCopy: (value: string, label
   const frames = parseSseFrames(body)
   const containerRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
+  const jumpingRef = useRef(false)
   const seenRef = useRef(frames.length)
   const [atLatest, setAtLatest] = useState(true)
   const [unseen, setUnseen] = useState(0)
@@ -1008,20 +1009,24 @@ function SseBody({ body, onCopy }: { body: string; onCopy: (value: string, label
     if (!el) return
     const latest = el.scrollHeight - el.scrollTop - el.clientHeight <= 8
     if (latest) {
+      jumpingRef.current = false
       pinnedRef.current = true
       seenRef.current = frames.length
       setUnseen(0)
-    } else {
+      setAtLatest(true)
+    } else if (!jumpingRef.current) {
+      // 平滑跳转途中的中间位置不算用户主动离开底部
       if (pinnedRef.current) seenRef.current = frames.length
       pinnedRef.current = false
       setUnseen(Math.max(0, frames.length - seenRef.current))
+      setAtLatest(false)
     }
-    setAtLatest(latest)
   }
   const jumpToLatest = () => {
     const el = containerRef.current
     if (!el) return
     pinnedRef.current = true
+    jumpingRef.current = true
     seenRef.current = frames.length
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     setAtLatest(true)
