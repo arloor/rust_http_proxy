@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fullUrl } from './api'
-import { formatBytes, formatCaptureState, formatClientAddr, formatDuration, formatTime, prettyBody, statusTone, toCurl } from './format'
+import { formatBytes, formatCaptureState, formatClientAddr, formatDuration, formatTime, parsePositiveInt, prettyBody, statusTone, toCurl } from './format'
 
 describe('fullUrl', () => {
   it('includes query when present', () => {
@@ -15,6 +15,15 @@ describe('format helpers', () => {
     expect(formatCaptureState('complete')).toBe('完成')
     expect(formatCaptureState('interrupted')).toBe('中断')
     expect(formatCaptureState('unknown')).toBe('unknown')
+  })
+
+  it('parses completed positive integers for settings inputs', () => {
+    expect(parsePositiveInt('10000')).toBe(10000)
+    expect(parsePositiveInt(' 12 ')).toBe(12)
+    expect(parsePositiveInt('')).toBeNull()
+    expect(parsePositiveInt('0')).toBeNull()
+    expect(parsePositiveInt('1.5')).toBeNull()
+    expect(parsePositiveInt('1e3')).toBeNull()
   })
 
   it('formats duration and bytes', () => {

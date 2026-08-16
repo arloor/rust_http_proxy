@@ -40,6 +40,14 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 }
 
+// 留存记录等设置框：只接受 ≥1 的整数，空值/小数/科学计数都视为未完成输入
+export function parsePositiveInt(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const n = Number(trimmed)
+  return Number.isInteger(n) && n >= 1 ? n : null
+}
+
 // 端口为 0 表示老记录没有端口数据，只显示 IP；IPv6 地址加方括号
 export function formatClientAddr(ip: string, port: number): string {
   if (!port) return ip

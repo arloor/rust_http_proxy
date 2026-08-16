@@ -59,6 +59,12 @@ main { min-height: 100vh; display: flex; flex-direction: column; }
 .number-control { font-size: 13px; color: var(--text-2); display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .number-control input, .number-control select { width: 104px; color: var(--text); border: 1px solid var(--line); background: var(--panel-2); border-radius: 6px; padding: 7px 8px; outline: none; transition: border-color .15s, box-shadow .15s; }
 .number-control input:focus, .number-control select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px #99f6e455; background: #fff; }
+.number-control.dirty input { border-color: #d97706; background: #fffbeb; }
+.number-control.dirty input:focus { border-color: #d97706; box-shadow: 0 0 0 3px #fde68a88; }
+.apply-setting { background: var(--teal); color: #fff; border: 1px solid var(--teal); border-radius: 6px; cursor: pointer; padding: 6px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.apply-setting:hover { background: #0f766e; }
+.apply-setting:disabled { opacity: .6; cursor: wait; }
+.setting-saved { color: #047857; font-size: 12px; font-weight: 600; }
 .record-count { color: var(--text-3); font: 600 12px var(--font-mono); font-variant-numeric: tabular-nums; }
 .ca-alert-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c; font: 700 12px var(--font-sans); cursor: pointer; }
 .ca-alert-pill:hover { background: #fee2e2; }

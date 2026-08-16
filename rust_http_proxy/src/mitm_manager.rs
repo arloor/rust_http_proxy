@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use http::{HeaderMap, Version};
-use log::error;
+use log::{error, warn};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -364,7 +364,13 @@ impl MitmManager {
                     [now_ms()],
                 )?;
             }
-            prune_records(connection, next_max_records)?;
+            let deleted = prune_records(connection, next_max_records)?;
+            // DELETE 只回收页到空闲列表，文件体积不变；用户下调上限时再 VACUUM
+            if next_max_records < current.max_records && deleted > 0
+                && let Err(error) = compact_database(connection)
+            {
+                warn!("failed to compact MITM database after lowering max_records: {error}");
+            }
             Ok(())
         })
         .await?;
@@ -974,7 +980,7 @@ fn apply_store_command(
             pending.clear();
             let result = connection
                 .execute("DELETE FROM records", [])
-                .map(|_| ())
+                .and_then(|_| compact_database(connection))
                 .map_err(|error| error.to_string());
             let succeeded = result.is_ok();
             let _ = sender.send(result);
@@ -1043,13 +1049,18 @@ fn elapsed_ms_for(connection: &Connection, id: &str) -> i64 {
         .unwrap_or_default()
 }
 
-fn prune_records(connection: &Connection, max_records: usize) -> Result<(), rusqlite::Error> {
+fn prune_records(connection: &Connection, max_records: usize) -> Result<usize, rusqlite::Error> {
     connection.execute(
         "DELETE FROM records WHERE sequence IN (
             SELECT sequence FROM records ORDER BY sequence DESC LIMIT -1 OFFSET ?1
         )",
         [max_records as i64],
-    )?;
+    )
+}
+
+fn compact_database(connection: &Connection) -> Result<(), rusqlite::Error> {
+    connection.execute_batch("VACUUM")?;
+    connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
     Ok(())
 }
 
@@ -1694,6 +1705,61 @@ mod tests {
         assert_eq!(detail.summary.capture_state, "complete");
         assert_eq!(detail.request_body, r#"{"request":true}"#);
         assert_eq!(detail.response_body, r#"{"ok":true}"#);
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lowering_max_records_prunes_old_rows_and_shrinks_db() -> Result<(), DynError> {
+        let path = test_db("prune_compact");
+        let manager = MitmManager::open(path.clone(), true, &["example.com".to_owned()], true, 10_000, 65_536)?;
+        let request_headers = HeaderMap::new();
+        let payload = "x".repeat(48 * 1024);
+        for index in 0..6 {
+            let id = manager
+                .begin_record(RecordMetadata {
+                    client_ip: "127.0.0.1".to_owned(),
+                    client_port: 54321,
+                    proxy_username: "tester".to_owned(),
+                    authority: "api.example.com:443".to_owned(),
+                    host: "api.example.com".to_owned(),
+                    path: format!("/item/{index}"),
+                    query: None,
+                    method: "POST".to_owned(),
+                    request_version: Version::HTTP_11,
+                    request_headers: &request_headers,
+                })
+                .ok_or("capture unexpectedly disabled")?;
+            manager.body_chunk(&id, BodyDirection::Request, payload.as_bytes(), payload.len(), false);
+            manager.finish_body(&id, BodyDirection::Request, None, None);
+            manager.finish_record(&id, "complete");
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        let before = manager.settings().db_bytes;
+        let settings = manager
+            .patch_settings(MitmSettingsPatch {
+                capture_enabled: None,
+                max_records: Some(2),
+                body_limit_bytes: None,
+            })
+            .await?;
+        assert_eq!(settings.max_records, 2);
+        let page = manager
+            .list_records(RecordQuery {
+                limit: Some(20),
+                ..RecordQuery::default()
+            })
+            .await?;
+        assert_eq!(page.total, 2);
+        assert_eq!(page.records.len(), 2);
+        assert!(
+            settings.db_bytes < before,
+            "expected VACUUM to shrink {} bytes to less than the pre-prune size {before}",
+            settings.db_bytes
+        );
         drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);

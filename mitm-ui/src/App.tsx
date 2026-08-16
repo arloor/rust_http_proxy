@@ -16,6 +16,7 @@ import {
   formatClientAddr,
   formatDuration,
   formatTime,
+  parsePositiveInt,
   prettyBody,
   statusTone,
   toCurl,
@@ -333,8 +334,10 @@ function App() {
     try {
       setSettings(await api<Settings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) }))
       setError('')
+      return true
     } catch (value) {
       handleError(value)
+      return false
     }
   }
 
@@ -512,16 +515,10 @@ function App() {
           title={settings?.capture_cli_managed ? '由 --mitm-dump 启动参数锁定，需修改启动命令并重启' : undefined}
           onChange={(checked) => void updateSettings({ capture_enabled: checked })}
         />
-        <label className="number-control">留存记录
-          <input
-            aria-label="留存记录"
-            type="number"
-            min="1"
-            value={settings?.max_records ?? 10000}
-            onChange={(event) => setSettings((current) => current && { ...current, max_records: Number(event.target.value) })}
-            onBlur={(event) => void updateSettings({ max_records: Number(event.target.value) })}
-          />
-        </label>
+        <MaxRecordsControl
+          value={settings?.max_records ?? 10000}
+          onCommit={(max_records) => updateSettings({ max_records })}
+        />
         <label className="number-control">Body 上限
           <select
             aria-label="Body 上限"
@@ -547,7 +544,7 @@ function App() {
           )}
           <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● 实时' : '○ 重连中'}</span>
           <span className="record-count" title="数据库中的记录总条数">{recordsTotal} 条记录</span>
-          <span className="record-count" title="mitm.sqlite3 主库 + WAL + SHM 总大小，每 10 秒刷新">DB {formatBytes(settings?.db_bytes ?? 0)}</span>
+          <span className="record-count" title="mitm.sqlite3 主库 + WAL + SHM 总大小；下调留存并应用后会压缩。每 10 秒刷新">DB {formatBytes(settings?.db_bytes ?? 0)}</span>
         </div>
         {showTlsErrors && tlsErrorTotal > 0 && (
           <div className="tls-error-panel">
@@ -801,6 +798,96 @@ function ClearableInput({
         <button type="button" className="input-clear" aria-label="清空" tabIndex={-1} onClick={() => onChange('')}>×</button>
       )}
     </span>
+  )
+}
+
+function MaxRecordsControl({
+  value,
+  onCommit,
+}: {
+  value: number
+  onCommit: (next: number) => Promise<boolean>
+}) {
+  const [draft, setDraft] = useState(String(value))
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const savedTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!dirty && !saving) setDraft(String(value))
+  }, [value, dirty, saving])
+
+  async function commit(raw = draft) {
+    const parsed = parsePositiveInt(raw)
+    if (parsed === null) {
+      setDraft(String(value))
+      setDirty(false)
+      return
+    }
+    setDraft(String(parsed))
+    if (parsed === value) {
+      setDirty(false)
+      return
+    }
+    setSaving(true)
+    const ok = await onCommit(parsed)
+    setSaving(false)
+    if (!ok) {
+      setDirty(true)
+      return
+    }
+    setDirty(false)
+    setSaved(true)
+    if (savedTimer.current !== null) window.clearTimeout(savedTimer.current)
+    savedTimer.current = window.setTimeout(() => setSaved(false), 1600)
+  }
+
+  return (
+    <label
+      className={`number-control${dirty ? ' dirty' : ''}`}
+      title="回车或点击「应用」后生效；降低条数会立即删除旧记录并压缩数据库"
+    >
+      留存记录
+      <input
+        aria-label="留存记录"
+        type="number"
+        min="1"
+        step="1"
+        disabled={saving}
+        value={draft}
+        onChange={(event) => {
+          setDraft(event.target.value)
+          setDirty(event.target.value !== String(value))
+          setSaved(false)
+        }}
+        onBlur={() => {
+          if (dirty && !saving) void commit()
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            void commit()
+          } else if (event.key === 'Escape') {
+            setDraft(String(value))
+            setDirty(false)
+            event.currentTarget.blur()
+          }
+        }}
+      />
+      {dirty && (
+        <button
+          type="button"
+          className="apply-setting"
+          disabled={saving}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void commit()}
+        >
+          {saving ? '保存中' : '应用'}
+        </button>
+      )}
+      {saved && !dirty && <span className="setting-saved">已保存</span>}
+    </label>
   )
 }
 
