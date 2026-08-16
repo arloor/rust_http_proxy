@@ -694,6 +694,25 @@ cargo build --bin rust_http_proxy_service --features winservice --release
 
 ### 安装与管理
 
+#### 使用仓库更新脚本
+
+管理员 PowerShell 中可使用仓库内脚本重新编译、覆盖服务参数并重启服务：
+
+```powershell
+.\deploy\update_windows_service.ps1 `
+  -ProxyUser @('username:password', 'another-user:password')
+```
+
+脚本会异步发送停止命令并显式等待服务状态，避免 `Stop-Service` 自身的等待行为干扰更新。首次从旧版本升级时，如果服务在 45 秒内仍无法退出，可允许脚本仅针对 SCM 返回的服务 PID 强制终止旧进程：
+
+```powershell
+.\deploy\update_windows_service.ps1 `
+  -ProxyUser @('username:password', 'another-user:password') `
+  -ForceTerminateOnStopTimeout
+```
+
+新版本服务收到停止控制后会立即上报 `StopPending`，优雅关闭最多等待 20 秒，再清理剩余异步连接并上报 `Stopped`。
+
 #### 使用 sc.exe
 
 ```powershell

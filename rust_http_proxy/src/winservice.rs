@@ -21,14 +21,10 @@
 //! sc.exe delete rust_http_proxy
 //! ```
 
-use std::{
-    ffi::OsString,
-    sync::atomic::{AtomicU32, Ordering},
-    time::Duration,
-};
+use std::{ffi::OsString, time::Duration};
 
 use clap::Parser;
-use log::error;
+use log::{error, warn};
 use rust_http_proxy::{config::Param, create_futures};
 use tokio::sync::oneshot;
 use windows_service::{
@@ -42,6 +38,9 @@ const SERVICE_NAME: &str = "rust_http_proxy";
 const SERVICE_EXIT_CODE_ARGUMENT_ERROR: u32 = 100;
 const SERVICE_EXIT_CODE_EXITED_UNEXPECTEDLY: u32 = 101;
 const SERVICE_EXIT_CODE_CREATE_FAILED: u32 = 102;
+const SERVICE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(20);
+const SERVICE_STOP_WAIT_HINT: Duration = Duration::from_secs(25);
+const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -55,34 +54,63 @@ fn run_service(
         .enable_all()
         .build()
         .expect("failed to create tokio runtime");
-    let _guard = runtime.enter();
-
-    let create_service_result = create_futures(param);
+    let create_service_result = {
+        let _guard = runtime.enter();
+        create_futures(param)
+    };
     match create_service_result {
         Ok((service_future, shutdown_tx)) => {
             // Report running state
             set_service_status(&status_handle, ServiceState::Running, ServiceExitCode::Win32(0), Duration::default())?;
 
-            runtime.spawn(async move {
-                // Wait for stop signal
-                let _ = stop_receiver.await;
-                // Send shutdown signal to all server tasks
-                let _ = shutdown_tx.send(());
-            });
-            // Run it right now.
-            let results = runtime.block_on(service_future);
-            let exited_by_ctrl = results.iter().all(|res| {
-                if let Err(err) = res {
-                    log::error!("HTTP Proxy server exited with error: {err:?}");
+            let (results, stop_requested) = runtime.block_on(async move {
+                tokio::pin!(service_future);
+                tokio::select! {
+                    results = &mut service_future => (Some(results), false),
+                    _ = stop_receiver => {
+                        // Acknowledge the stop before waiting for active HTTP/SSE connections.
+                        if let Err(status_error) = set_service_status(
+                            &status_handle,
+                            ServiceState::StopPending,
+                            ServiceExitCode::Win32(0),
+                            SERVICE_STOP_WAIT_HINT,
+                        ) {
+                            error!("Failed to report Windows service stop-pending state: {status_error}");
+                        }
+                        let _ = shutdown_tx.send(());
+                        match tokio::time::timeout(SERVICE_SHUTDOWN_TIMEOUT, &mut service_future).await {
+                            Ok(results) => (Some(results), true),
+                            Err(_) => {
+                                warn!(
+                                    "Windows service graceful shutdown exceeded {SERVICE_SHUTDOWN_TIMEOUT:?}; aborting remaining tasks"
+                                );
+                                (None, true)
+                            }
+                        }
+                    }
                 }
-                res.is_ok()
             });
+            let mut exited_cleanly = true;
+            if let Some(results) = results {
+                for result in results {
+                    if let Err(run_error) = result {
+                        exited_cleanly = false;
+                        if stop_requested {
+                            warn!("HTTP Proxy server exited with error while stopping: {run_error:?}");
+                        } else {
+                            error!("HTTP Proxy server exited unexpectedly: {run_error:?}");
+                        }
+                    }
+                }
+            }
+            // Abort any detached connection tasks before SCM observes the stable Stopped state.
+            runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
 
             // Report stopped state
             set_service_status(
                 &status_handle,
                 ServiceState::Stopped,
-                if exited_by_ctrl {
+                if stop_requested || exited_cleanly {
                     ServiceExitCode::Win32(0)
                 } else {
                     ServiceExitCode::ServiceSpecific(SERVICE_EXIT_CODE_EXITED_UNEXPECTEDLY)
@@ -92,6 +120,7 @@ fn run_service(
         }
         Err(err) => {
             error!("Failed to create service: {:?}", err);
+            runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
 
             // Report stopped state with error
             set_service_status(
@@ -182,26 +211,27 @@ fn service_main(arguments: Vec<OsString>) -> Result<(), windows_service::Error> 
 fn set_service_status(
     handle: &ServiceStatusHandle, current_state: ServiceState, exit_code: ServiceExitCode, wait_hint: Duration,
 ) -> Result<(), windows_service::Error> {
-    static SERVICE_STATE_CHECKPOINT: AtomicU32 = AtomicU32::new(0);
+    handle.set_service_status(build_service_status(current_state, exit_code, wait_hint))
+}
 
-    let next_status = ServiceStatus {
+fn build_service_status(current_state: ServiceState, exit_code: ServiceExitCode, wait_hint: Duration) -> ServiceStatus {
+    ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state,
-        controls_accepted: if current_state == ServiceState::StartPending {
-            ServiceControlAccept::empty()
-        } else {
+        controls_accepted: if current_state == ServiceState::Running {
             ServiceControlAccept::STOP
+        } else {
+            ServiceControlAccept::empty()
         },
         exit_code,
-        checkpoint: if matches!(current_state, ServiceState::Running | ServiceState::Stopped) {
-            SERVICE_STATE_CHECKPOINT.fetch_add(1, Ordering::AcqRel)
+        checkpoint: if matches!(current_state, ServiceState::StartPending | ServiceState::StopPending) {
+            1
         } else {
             0
         },
         wait_hint,
         process_id: None,
-    };
-    handle.set_service_status(next_status)
+    }
 }
 
 fn service_entry(arguments: Vec<OsString>) {
@@ -215,4 +245,33 @@ define_windows_service!(ffi_service_entry, service_entry);
 fn main() -> Result<(), windows_service::Error> {
     service_dispatcher::start(SERVICE_NAME, ffi_service_entry)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn running_status_accepts_stop_without_a_checkpoint() {
+        let status = build_service_status(ServiceState::Running, ServiceExitCode::Win32(0), Duration::default());
+        assert_eq!(status.controls_accepted, ServiceControlAccept::STOP);
+        assert_eq!(status.checkpoint, 0);
+        assert_eq!(status.wait_hint, Duration::default());
+    }
+
+    #[test]
+    fn stop_pending_status_has_wait_hint_and_rejects_new_controls() {
+        let status = build_service_status(ServiceState::StopPending, ServiceExitCode::Win32(0), SERVICE_STOP_WAIT_HINT);
+        assert_eq!(status.controls_accepted, ServiceControlAccept::empty());
+        assert_eq!(status.checkpoint, 1);
+        assert_eq!(status.wait_hint, SERVICE_STOP_WAIT_HINT);
+    }
+
+    #[test]
+    fn stopped_status_is_stable_and_rejects_controls() {
+        let status = build_service_status(ServiceState::Stopped, ServiceExitCode::Win32(0), Duration::default());
+        assert_eq!(status.controls_accepted, ServiceControlAccept::empty());
+        assert_eq!(status.checkpoint, 0);
+        assert_eq!(status.wait_hint, Duration::default());
+    }
 }

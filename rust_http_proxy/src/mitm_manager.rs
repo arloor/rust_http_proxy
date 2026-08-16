@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock, mpsc};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use http::{HeaderMap, Version};
 use log::error;
@@ -828,17 +828,28 @@ fn writer_loop(db_path: PathBuf, receiver: mpsc::Receiver<StoreCommand>, events:
         }
     };
     let mut pending = HashMap::<String, PendingBody>::new();
+    let mut next_flush = Instant::now() + WRITER_FLUSH_INTERVAL;
     loop {
-        match receiver.recv_timeout(WRITER_FLUSH_INTERVAL) {
+        match receiver.recv_timeout(next_flush.saturating_duration_since(Instant::now())) {
             Ok(command) => {
                 if let Err(error) = apply_store_command(&connection, command, &mut pending, &events) {
                     error!("failed to persist MITM capture update: {error}");
+                }
+                // Use a fixed cadence instead of an inactivity timeout. A continuously busy
+                // stream (notably text/event-stream) must still become visible in the UI while
+                // data keeps arriving.
+                if Instant::now() >= next_flush {
+                    if let Err(error) = flush_pending(&connection, &mut pending, &events) {
+                        error!("failed to flush MITM capture bodies: {error}");
+                    }
+                    next_flush = Instant::now() + WRITER_FLUSH_INTERVAL;
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Err(error) = flush_pending(&connection, &mut pending, &events) {
                     error!("failed to flush MITM capture bodies: {error}");
                 }
+                next_flush = Instant::now() + WRITER_FLUSH_INTERVAL;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 let _ = flush_pending(&connection, &mut pending, &events);
@@ -1718,6 +1729,71 @@ mod tests {
         let detail = manager.get_record(id).await?.ok_or("record not found")?;
         assert_eq!(detail.request_body, "hello world");
         assert_eq!(detail.request_body_bytes, 11);
+        drop(manager);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn continuously_arriving_response_body_flushes_while_stream_is_open() -> Result<(), DynError> {
+        let path = test_db("continuous_response_body");
+        let manager = MitmManager::open(path.clone(), true, &["example.com".to_owned()], true, 10_000, 65_536)?;
+        let request_headers = HeaderMap::new();
+        let id = manager
+            .begin_record(RecordMetadata {
+                client_ip: "127.0.0.1".to_owned(),
+                client_port: 54321,
+                proxy_username: "tester".to_owned(),
+                authority: "api.example.com:443".to_owned(),
+                host: "api.example.com".to_owned(),
+                path: "/v1/events".to_owned(),
+                query: None,
+                method: "GET".to_owned(),
+                request_version: Version::HTTP_11,
+                request_headers: &request_headers,
+            })
+            .ok_or("capture unexpectedly disabled")?;
+        manager.response_head(
+            &id,
+            ResponseHead {
+                status: 200,
+                version: "HTTP/1.1".to_owned(),
+                headers_json: r#"[["content-type","text/event-stream"]]"#.to_owned(),
+                body_note: None,
+            },
+        );
+
+        let producer_manager = manager.clone();
+        let producer_id = id.clone();
+        let producer = tokio::spawn(async move {
+            let chunk = b"data: tick\n\n";
+            for index in 0..20 {
+                producer_manager.body_chunk(
+                    &producer_id,
+                    BodyDirection::Response,
+                    chunk,
+                    (index + 1) * chunk.len(),
+                    false,
+                );
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+            producer_manager.finish_body(&producer_id, BodyDirection::Response, None, None);
+            producer_manager.finish_record(&producer_id, "complete");
+        });
+
+        // The producer is still sending often enough that an inactivity-based flush never fires.
+        tokio::time::sleep(Duration::from_millis(450)).await;
+        let streaming_detail = manager.get_record(id.clone()).await?.ok_or("record not found")?;
+        assert_eq!(streaming_detail.summary.capture_state, "capturing");
+        assert!(streaming_detail.response_body.starts_with("data: tick\n\n"));
+        assert!(streaming_detail.response_body_bytes > 0);
+
+        producer.await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let complete_detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(complete_detail.summary.capture_state, "complete");
+        assert_eq!(complete_detail.response_body.matches("data: tick\n\n").count(), 20);
         drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);

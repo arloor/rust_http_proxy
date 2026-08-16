@@ -20,6 +20,8 @@ import {
   statusTone,
   toCurl,
 } from './format'
+import { isEventStream, parseSseFrames } from './sse'
+import { filterUrlGroups } from './urlGroups'
 
 const methods = ['', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 const SENSITIVE_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'proxy-authorization'])
@@ -35,6 +37,7 @@ function App() {
   const [nextBefore, setNextBefore] = useState<number | null>(null)
   const [selected, setSelected] = useState<RecordDetail | null>(null)
   const [host, setHost] = useState('')
+  const [targetSuffixFilter, setTargetSuffixFilter] = useState('')
   const [expandedHost, setExpandedHost] = useState('')
   const [path, setPath] = useState('')
   const [method, setMethod] = useState('')
@@ -91,6 +94,12 @@ function App() {
     recordsRef.current = records
     if (pinToLatestRef.current) tableWrapRef.current?.scrollTo({ top: 0 })
   }, [records])
+
+  useEffect(() => {
+    if (targetSuffixFilter && !targets.some((target) => target.suffix === targetSuffixFilter)) {
+      setTargetSuffixFilter('')
+    }
+  }, [targets, targetSuffixFilter])
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 280)
@@ -484,19 +493,11 @@ function App() {
 
   // URL 分类前端搜索：host 命中保留全部 path，仅 path 命中则只展示匹配的 path
   const groupQuery = groupFilter.trim().toLowerCase()
-  const filteredGroups = useMemo(() => {
-    if (!groupQuery) return groups
-    const result: HostGroup[] = []
-    for (const group of groups) {
-      if (group.host.toLowerCase().includes(groupQuery)) {
-        result.push(group)
-        continue
-      }
-      const paths = group.paths.filter((item) => item.path.toLowerCase().includes(groupQuery))
-      if (paths.length) result.push({ ...group, paths })
-    }
-    return result
-  }, [groups, groupQuery])
+  const filteredGroups = useMemo(
+    () => filterUrlGroups(groups, groupQuery, targetSuffixFilter),
+    [groups, groupQuery, targetSuffixFilter],
+  )
+  const groupListFiltered = Boolean(groupQuery || targetSuffixFilter)
 
   return (
     <main>
@@ -585,8 +586,16 @@ function App() {
           </form>
           <div className="target-list">
             {targets.map((target) => (
-              <div className={`target ${host === target.suffix ? 'active' : ''}`} key={target.id}>
-                <button className="target-main" onClick={() => { setHost(target.suffix); setExpandedHost(''); setPath('') }} title="按该后缀筛选">
+              <div className={`target ${targetSuffixFilter === target.suffix ? 'active' : ''}`} key={target.id}>
+                <button
+                  className="target-main"
+                  aria-pressed={targetSuffixFilter === target.suffix}
+                  onClick={() => {
+                    setTargetSuffixFilter((current) => current === target.suffix ? '' : target.suffix)
+                    setExpandedHost('')
+                  }}
+                  title="筛选 URL 分类，再次点击取消"
+                >
                   <span>{target.suffix}</span>
                   {target.cli_managed && <em>启动参数</em>}
                 </button>
@@ -601,7 +610,7 @@ function App() {
             ))}
             {!targets.length && <p className="empty">尚未配置目标后缀</p>}
           </div>
-          <div className="panel-title group-title"><span>URL 分类</span><b>{groupQuery ? `${filteredGroups.length}/${groups.length}` : groups.length}</b></div>
+          <div className="panel-title group-title"><span>URL 分类</span><b>{groupListFiltered ? `${filteredGroups.length}/${groups.length}` : groups.length}</b></div>
           <ClearableInput
             aria-label="搜索 URL 分类"
             className="group-search"
@@ -633,7 +642,7 @@ function App() {
             </div>
             )
           })}
-          {groupQuery && !filteredGroups.length && <p className="empty">没有匹配的分类</p>}
+          {groupListFiltered && !filteredGroups.length && <p className="empty">没有匹配的分类</p>}
         </aside>
 
         <div
@@ -887,6 +896,7 @@ function Detail({
   const bytes = request ? detail.request_body_bytes : detail.response_body_bytes
   const truncated = request ? detail.request_body_truncated : detail.response_body_truncated
   const imageMediaType = request ? detail.request_body_image : detail.response_body_image
+  const eventStream = !request && isEventStream(headers)
   // 后端只对完整（未截断）的图片 body 落 base64，此时可直接预览
   const imagePreview = imageMediaType && rawBody && !truncated ? `data:${imageMediaType};base64,${rawBody}` : null
   const url = fullUrl(detail)
@@ -947,7 +957,7 @@ function Detail({
           {!imagePreview && (
             <label className="pretty-toggle">
               <input type="checkbox" checked={pretty} onChange={(event) => setPretty(event.target.checked)} />
-              格式化
+              {eventStream ? '事件视图' : '格式化'}
             </label>
           )}
           {imagePreview
@@ -967,9 +977,71 @@ function Detail({
             onLoad={scrollToBottomIfPinned}
           />
         )
-        : <pre className="body-content">{body || '(empty)'}</pre>}
+        : eventStream && pretty
+          ? <SseBody body={rawBody} />
+          : <pre className="body-content">{body || '(empty)'}</pre>}
       {detail.error && <div className="note error-note">{detail.error}</div>}
     </aside>
+  )
+}
+
+function SseBody({ body }: { body: string }) {
+  const frames = parseSseFrames(body)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const pinnedRef = useRef(true)
+  const [atLatest, setAtLatest] = useState(true)
+  useEffect(() => {
+    const el = containerRef.current
+    if (el && pinnedRef.current) {
+      el.scrollTop = el.scrollHeight
+      setAtLatest(true)
+    }
+  }, [body])
+  const onScroll = () => {
+    const el = containerRef.current
+    if (el) {
+      const latest = el.scrollHeight - el.scrollTop - el.clientHeight <= 8
+      pinnedRef.current = latest
+      setAtLatest(latest)
+    }
+  }
+  const jumpToLatest = () => {
+    const el = containerRef.current
+    if (!el) return
+    pinnedRef.current = true
+    el.scrollTop = el.scrollHeight
+    setAtLatest(true)
+  }
+
+  if (!frames.length) return <div className="sse-empty">等待首个事件…</div>
+  return (
+    <div className="sse-body">
+      <div className="sse-events" ref={containerRef} onScroll={onScroll}>
+        {frames.map((frame, index) => (
+          <article className={`sse-event${frame.pending ? ' pending' : ''}`} key={index}>
+            <div className="sse-event-head">
+              <span className="sse-sequence">#{index + 1}</span>
+              <b>{frame.comments.length > 0 && !frame.hasData ? 'heartbeat' : frame.event}</b>
+              {frame.id !== null && <span>id: {frame.id || '(empty)'}</span>}
+              {frame.retry !== null && <span>retry: {frame.retry}ms</span>}
+              {frame.pending && <em>接收中</em>}
+            </div>
+            {frame.comments.map((comment, commentIndex) => (
+              <div className="sse-comment" key={commentIndex}>: {comment || '(heartbeat)'}</div>
+            ))}
+            {frame.unknownFields.map(([name, value], fieldIndex) => (
+              <div className="sse-field" key={`${name}-${fieldIndex}`}><span>{name}</span>{value}</div>
+            ))}
+            {frame.hasData && <pre>{frame.data ? prettyBody(frame.data) : '(empty data)'}</pre>}
+          </article>
+        ))}
+      </div>
+      {!atLatest && (
+        <button className="sse-jump-latest" onClick={jumpToLatest} title="滚动到底部并恢复自动吸附">
+          ↓ 回到最新事件
+        </button>
+      )}
+    </div>
   )
 }
 
