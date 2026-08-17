@@ -24,7 +24,7 @@ import {
   toHttpResponse,
   exportFilename,
 } from './format'
-import { isEventStream, parseSseFrames } from './sse'
+import { isEventStream, isLargeSseData, limitPrettyLines, parseSseFrames, summarizeSseData, SSE_PREVIEW_LINES, type SseFrame } from './sse'
 import { filterUrlGroups } from './urlGroups'
 
 const methods = ['', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE']
@@ -318,7 +318,10 @@ function App() {
       needRecords = needMeta = needGroups = includeDetail = true
       schedule()
     }
-    source.addEventListener('open', () => setLive(true))
+    source.addEventListener('open', () => {
+      setLive(true)
+      setError('')
+    })
     source.addEventListener('record_created', onRecordEvent)
     source.addEventListener('record_updated', onRecordEvent)
     source.addEventListener('settings', onMetaEvent)
@@ -1067,7 +1070,7 @@ function Detail({
           />
         )
         : eventStream && pretty
-          ? <SseBody body={rawBody} onCopy={onCopy} />
+          ? <SseBody key={detail.id} body={rawBody} onCopy={onCopy} />
           : <pre className="body-content">{body || '(empty)'}</pre>}
       {detail.error && <div className="note error-note">{detail.error}</div>}
     </aside>
@@ -1127,29 +1130,7 @@ function SseBody({ body, onCopy }: { body: string; onCopy: (value: string, label
     <div className="sse-body">
       <div className="sse-events" ref={containerRef} onScroll={onScroll}>
         {frames.map((frame, index) => (
-          <article className={`sse-event${frame.pending ? ' pending' : ''}`} key={index}>
-            <div className="sse-event-head">
-              <span className="sse-sequence">#{index + 1}</span>
-              <b>{frame.comments.length > 0 && !frame.hasData ? 'heartbeat' : frame.event}</b>
-              {frame.id !== null && <span>id: {frame.id || '(empty)'}</span>}
-              {frame.retry !== null && <span>retry: {frame.retry}ms</span>}
-              {frame.pending && <em>接收中</em>}
-              {(frame.hasData || frame.comments.length > 0) && (
-                <button
-                  className="ghost compact sse-copy"
-                  title="复制该事件内容"
-                  onClick={() => void onCopy(frame.hasData ? prettyBody(frame.data) : frame.comments.join('\n'), `事件 #${index + 1}`)}
-                >复制</button>
-              )}
-            </div>
-            {frame.comments.map((comment, commentIndex) => (
-              <div className="sse-comment" key={commentIndex}>: {comment || '(heartbeat)'}</div>
-            ))}
-            {frame.unknownFields.map(([name, value], fieldIndex) => (
-              <div className="sse-field" key={`${name}-${fieldIndex}`}><span>{name}</span>{value}</div>
-            ))}
-            {frame.hasData && <pre>{frame.data ? prettyBody(frame.data) : '(empty data)'}</pre>}
-          </article>
+          <SseEventCard key={index} frame={frame} index={index} onCopy={onCopy} />
         ))}
       </div>
       {!atLatest && (
@@ -1162,6 +1143,97 @@ function SseBody({ body, onCopy }: { body: string; onCopy: (value: string, label
         </button>
       )}
     </div>
+  )
+}
+
+function SseEventCard({
+  frame,
+  index,
+  onCopy,
+}: {
+  frame: SseFrame
+  index: number
+  onCopy: (value: string, label: string) => void
+}) {
+  const raw = frame.hasData ? frame.data : ''
+  const large = frame.hasData && isLargeSseData(raw)
+  const [expanded, setExpanded] = useState(false)
+  const [showAll, setShowAll] = useState(false)
+  const pretty = useMemo(() => {
+    if (!raw || (large && !expanded)) return ''
+    return prettyBody(raw)
+  }, [raw, large, expanded])
+  const summary = useMemo(() => (large ? summarizeSseData(raw) : null), [large, raw])
+  const preview = useMemo(() => {
+    if (!pretty) return null
+    return showAll ? { text: pretty, hiddenLines: 0, totalLines: pretty.split('\n').length } : limitPrettyLines(pretty, SSE_PREVIEW_LINES)
+  }, [pretty, showAll])
+
+  return (
+    <article className={`sse-event${frame.pending ? ' pending' : ''}${large ? ' large' : ''}${large && !expanded ? ' collapsed' : ''}`}>
+      <div className="sse-event-head">
+        <span className="sse-sequence">#{index + 1}</span>
+        <b>{frame.comments.length > 0 && !frame.hasData ? 'heartbeat' : frame.event}</b>
+        {large && <span className="sse-size">{formatBytes(raw.length)}</span>}
+        {frame.id !== null && <span>id: {frame.id || '(empty)'}</span>}
+        {frame.retry !== null && <span>retry: {frame.retry}ms</span>}
+        {frame.pending && <em>接收中</em>}
+        <span className="sse-actions">
+          {large && (
+            <button
+              className="ghost compact"
+              aria-expanded={expanded}
+              title={expanded ? '收起大事件' : '展开查看内容'}
+              onClick={() => {
+                setExpanded((current) => !current)
+                if (expanded) setShowAll(false)
+              }}
+            >{expanded ? '收起' : '展开'}</button>
+          )}
+          {(frame.hasData || frame.comments.length > 0) && (
+            <button
+              className="ghost compact sse-copy"
+              title="复制该事件内容"
+              onClick={() => void onCopy(frame.hasData ? prettyBody(raw) : frame.comments.join('\n'), `事件 #${index + 1}`)}
+            >复制</button>
+          )}
+        </span>
+      </div>
+      {frame.comments.map((comment, commentIndex) => (
+        <div className="sse-comment" key={commentIndex}>: {comment || '(heartbeat)'}</div>
+      ))}
+      {frame.unknownFields.map(([name, value], fieldIndex) => (
+        <div className="sse-field" key={`${name}-${fieldIndex}`}><span>{name}</span>{value}</div>
+      ))}
+      {large && !expanded && summary && (summary.facts.length > 0 || summary.largeFields.length > 0) && (
+        <div className="sse-summary">
+          {summary.facts.map((fact) => <span className="sse-fact" key={fact}>{fact}</span>)}
+          {summary.largeFields.map((field) => (
+            <span className="sse-fact heavy" key={field.name}>{field.name} {formatBytes(field.bytes)}</span>
+          ))}
+        </div>
+      )}
+      {frame.hasData && (!large || expanded) && (
+        <>
+          <pre>{preview?.text || '(empty data)'}</pre>
+          {preview && (preview.hiddenLines > 0 || showAll || (large && preview.totalLines > SSE_PREVIEW_LINES)) && (
+            <div className="sse-event-foot">
+              <span>
+                {preview.hiddenLines > 0
+                  ? `预览前 ${preview.totalLines - preview.hiddenLines} 行 · 共 ${preview.totalLines} 行`
+                  : `共 ${preview.totalLines} 行`}
+              </span>
+              {preview.hiddenLines > 0 && (
+                <button className="ghost compact" onClick={() => setShowAll(true)}>显示全部</button>
+              )}
+              {showAll && preview.totalLines > SSE_PREVIEW_LINES && (
+                <button className="ghost compact" onClick={() => setShowAll(false)}>仅预览</button>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </article>
   )
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isEventStream, parseSseFrames } from './sse'
+import { isEventStream, isLargeSseData, limitPrettyLines, parseSseFrames, summarizeSseData } from './sse'
 
 describe('isEventStream', () => {
   it('matches content type case-insensitively and ignores parameters', () => {
@@ -97,5 +97,51 @@ describe('parseSseFrames', () => {
         pending: false,
       },
     ])
+  })
+})
+
+describe('large SSE payloads', () => {
+  it('treats multi-kilobyte data as large and leaves small frames expanded', () => {
+    expect(isLargeSseData('x'.repeat(8192))).toBe(true)
+    expect(isLargeSseData('{"type":"delta"}')).toBe(false)
+  })
+
+  it('summarizes response objects and nested oversized fields', () => {
+    const tools = 't'.repeat(9000)
+    const instructions = 'i'.repeat(8500)
+    const data = JSON.stringify({
+      type: 'response.created',
+      response: {
+        status: 'in_progress',
+        model: 'grok-4.6-build',
+        output: [],
+        tools,
+        instructions,
+      },
+    })
+    expect(summarizeSseData(data)).toEqual({
+      facts: ['in_progress', 'grok-4.6-build', 'output ×0'],
+      largeFields: [
+        { name: 'tools', bytes: 9000 },
+        { name: 'instructions', bytes: 8500 },
+      ],
+    })
+  })
+
+  it('summarizes function-call items without treating the wrapper as a large field', () => {
+    const args = 'a'.repeat(9000)
+    expect(summarizeSseData(JSON.stringify({
+      type: 'response.output_item.done',
+      item: { type: 'function_call', name: 'exec', arguments: args },
+    }))).toEqual({
+      facts: ['function_call', 'exec'],
+      largeFields: [{ name: 'arguments', bytes: 9000 }],
+    })
+  })
+
+  it('limits pretty-printed lines without splitting the whole payload first', () => {
+    expect(limitPrettyLines('a\nb\nc\nd', 2)).toEqual({ text: 'a\nb', hiddenLines: 2, totalLines: 4 })
+    expect(limitPrettyLines('only', 8)).toEqual({ text: 'only', hiddenLines: 0, totalLines: 1 })
+    expect(limitPrettyLines('', 8)).toEqual({ text: '', hiddenLines: 0, totalLines: 0 })
   })
 })
