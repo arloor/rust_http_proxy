@@ -93,7 +93,8 @@ pub struct Param {
     #[arg(
         long,
         value_name = "CIDR",
-        help = "允许访问静态文件托管的网段白名单，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8\n\
+        help = "允许访问静态文件托管的网段白名单，格式为CIDR，例如: 192.168.1.0/24, 10.0.0.0/8, ::1/128\n\
+        IPv6 不要加方括号（错误: [::1]/128，正确: ::1/128）\n\
         可以多次指定来允许多个网段\n\
         如未设置任何网段，则允许所有IP访问静态文件"
     )]
@@ -308,7 +309,7 @@ impl TryFrom<Param> for Config {
         let mut allowed_networks = Vec::new();
         if !param.allow_serving_network.is_empty() {
             for network_str in &param.allow_serving_network {
-                match IpNetwork::from_str(network_str) {
+                match parse_ip_network(network_str) {
                     Ok(network) => {
                         allowed_networks.push(network);
                     }
@@ -376,6 +377,23 @@ pub(crate) fn normalize_static_auth_path_prefixes(path_prefixes: Vec<String>) ->
         }
     }
     normalized
+}
+
+/// Accept both `::1/128` and URL-style `[::1]/128`.
+fn parse_ip_network(raw: &str) -> Result<IpNetwork, ipnetwork::IpNetworkError> {
+    IpNetwork::from_str(&normalize_cidr(raw))
+}
+
+fn normalize_cidr(raw: &str) -> String {
+    let s = raw.trim();
+    if let Some(rest) = s.strip_prefix('[')
+        && let Some(end) = rest.find(']')
+    {
+        let addr = &rest[..end];
+        let suffix = &rest[end + 1..];
+        return format!("{addr}{suffix}");
+    }
+    s.to_string()
 }
 
 fn normalize_mitm_domain_suffixes(suffixes: Vec<String>) -> Vec<String> {
@@ -458,4 +476,30 @@ fn log_config(config: &Config) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+
+    #[test]
+    fn normalize_cidr_strips_ipv6_brackets() {
+        assert_eq!(normalize_cidr("[::1]/128"), "::1/128");
+        assert_eq!(normalize_cidr("[::1]/64"), "::1/64");
+        assert_eq!(normalize_cidr("127.0.0.1/32"), "127.0.0.1/32");
+    }
+
+    #[test]
+    fn parse_bracketed_ipv6_localhost() {
+        let network = parse_ip_network("[::1]/128").expect("parse [::1]/128");
+        assert!(network.contains(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn allow_ipv6_localhost_when_cidr_is_valid() {
+        let allow = AllowCIRRS(vec![parse_ip_network("::1/128").unwrap()]);
+        let from_v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, 443));
+        assert!(allow.check_serving_control(from_v6).is_ok());
+    }
 }
