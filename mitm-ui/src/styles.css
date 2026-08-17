@@ -245,7 +245,7 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .sse-event-head em { color: #0f766e; font: 600 10px var(--font-sans); }
 .sse-copy { margin-left: auto; padding: 3px 10px; font-size: 11.5px; }
 .sse-sequence { color: #94a3b8; font-variant-numeric: tabular-nums; }
-.sse-event pre { margin: 0; padding: 8px 9px; max-height: none; border: 0; border-radius: 0; background: #fff; color: var(--text); }
+.sse-event pre { margin: 0; padding: 8px 9px; max-height: calc(1.6em * 50 + 16px); overflow: auto; overscroll-behavior: contain; border: 0; border-radius: 0; background: #fff; color: var(--text); }
 .sse-comment, .sse-field { padding: 5px 9px; border-top: 1px solid #edf2f7; color: #64748b; font: 11px/1.5 var(--font-mono); overflow-wrap: anywhere; }
 .sse-comment { color: #94a3b8; font-style: italic; }
 .sse-field span { display: inline-block; margin-right: 8px; color: #7c3aed; font-weight: 600; }
