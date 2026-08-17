@@ -110,7 +110,8 @@ function Install-ServiceExecutable {
         [int]$Retries = 5
     )
 
-    $destinationDir = Split-Path -LiteralPath $Destination -Parent
+    # Split-Path 的 -Parent 只属于 Path 参数集，不能和 -LiteralPath 一起用。
+    $destinationDir = Split-Path -Path $Destination -Parent
     if (-not (Test-Path -LiteralPath $destinationDir)) {
         New-Item -ItemType Directory -Path $destinationDir -Force | Out-Null
     }
