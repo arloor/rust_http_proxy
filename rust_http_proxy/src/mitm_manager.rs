@@ -214,6 +214,11 @@ enum StoreCommand {
     Clear(mpsc::SyncSender<Result<(), String>>),
 }
 
+struct PruneRequest {
+    max_records: usize,
+    compact: bool,
+}
+
 #[derive(Default)]
 struct PendingBody {
     request: String,
@@ -235,6 +240,7 @@ pub(crate) struct MitmManager {
     body_limit_bytes: AtomicUsize,
     targets: RwLock<Vec<MitmTarget>>,
     writer_tx: mpsc::Sender<StoreCommand>,
+    prune_tx: mpsc::Sender<PruneRequest>,
     events: broadcast::Sender<MitmEvent>,
 }
 
@@ -276,6 +282,7 @@ impl MitmManager {
         targets.sort_by(|left, right| left.suffix.cmp(&right.suffix));
 
         let (writer_tx, writer_rx) = mpsc::channel();
+        let (prune_tx, prune_rx) = mpsc::channel();
         let (events, _) = broadcast::channel(1024);
         let manager = Arc::new(Self {
             db_path: db_path.clone(),
@@ -287,13 +294,22 @@ impl MitmManager {
             body_limit_bytes: AtomicUsize::new(body_limit_bytes),
             targets: RwLock::new(targets),
             writer_tx,
+            prune_tx,
             events: events.clone(),
         });
 
         std::thread::Builder::new()
             .name("mitm-sqlite-writer".to_owned())
-            .spawn(move || writer_loop(db_path, writer_rx, events))
+            .spawn({
+                let db_path = db_path.clone();
+                let events = events.clone();
+                move || writer_loop(db_path, writer_rx, events)
+            })
             .map_err(|e| format!("failed to start MITM SQLite writer: {e}"))?;
+        std::thread::Builder::new()
+            .name("mitm-sqlite-prune".to_owned())
+            .spawn(move || prune_loop(db_path, prune_rx, events))
+            .map_err(|e| format!("failed to start MITM SQLite prune worker: {e}"))?;
         Ok(manager)
     }
 
@@ -364,13 +380,6 @@ impl MitmManager {
                     [now_ms()],
                 )?;
             }
-            let deleted = prune_records(connection, next_max_records)?;
-            // DELETE 只回收页到空闲列表，文件体积不变；用户下调上限时再 VACUUM
-            if next_max_records < current.max_records && deleted > 0
-                && let Err(error) = compact_database(connection)
-            {
-                warn!("failed to compact MITM database after lowering max_records: {error}");
-            }
             Ok(())
         })
         .await?;
@@ -381,6 +390,9 @@ impl MitmManager {
         self.body_limit_bytes.store(next_body_limit, Ordering::Release);
         if current.capture_enabled && !next_capture {
             self.send(StoreCommand::StopAllCaptures);
+        }
+        if next_max_records < current.max_records {
+            self.request_prune(next_max_records, true);
         }
         self.emit("settings", None);
         Ok(self.settings())
@@ -592,6 +604,12 @@ impl MitmManager {
     fn send(&self, command: StoreCommand) {
         if self.writer_tx.send(command).is_err() {
             error!("MITM SQLite writer stopped; capture update was lost");
+        }
+    }
+
+    fn request_prune(&self, max_records: usize, compact: bool) {
+        if self.prune_tx.send(PruneRequest { max_records, compact }).is_err() {
+            error!("MITM SQLite prune worker stopped; retention prune was lost");
         }
     }
 
@@ -1064,6 +1082,41 @@ fn compact_database(connection: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+// 单独线程串行执行批量 prune / VACUUM，避免堵住设置接口和抓包写入
+fn prune_loop(path: PathBuf, rx: mpsc::Receiver<PruneRequest>, events: broadcast::Sender<MitmEvent>) {
+    while let Ok(mut request) = rx.recv() {
+        while let Ok(next) = rx.try_recv() {
+            request.max_records = next.max_records;
+            request.compact |= next.compact;
+        }
+        match open_connection(&path) {
+            Ok(connection) => {
+                if let Err(error) = connection.busy_timeout(Duration::from_secs(60)) {
+                    warn!("failed to extend MITM prune busy timeout: {error}");
+                }
+                match prune_records(&connection, request.max_records) {
+                    Ok(deleted) => {
+                        if request.compact
+                            && deleted > 0
+                            && let Err(error) = compact_database(&connection)
+                        {
+                            warn!("failed to compact MITM database after prune: {error}");
+                        }
+                        if deleted > 0 {
+                            let _ = events.send(MitmEvent {
+                                kind: "resync",
+                                record_id: None,
+                            });
+                        }
+                    }
+                    Err(error) => warn!("failed to prune MITM records: {error}"),
+                }
+            }
+            Err(error) => warn!("failed to open MITM database for prune: {error}"),
+        }
+    }
+}
+
 thread_local! {
     static READ_CONNECTION: RefCell<Option<(PathBuf, Connection)>> = const { RefCell::new(None) };
 }
@@ -1367,6 +1420,23 @@ mod tests {
             std::process::id(),
             rand::random::<u64>()
         ))
+    }
+
+    async fn wait_for_event(rx: &mut broadcast::Receiver<MitmEvent>, kind: &str) -> Result<(), DynError> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(format!("timed out waiting for MITM event {kind}").into());
+            }
+            let event = tokio::time::timeout(remaining, rx.recv())
+                .await
+                .map_err(|_| format!("timed out waiting for MITM event {kind}"))?
+                .map_err(|error| error.to_string())?;
+            if event.kind == kind {
+                return Ok(());
+            }
+        }
     }
 
     #[test]
@@ -1738,6 +1808,7 @@ mod tests {
         }
         tokio::time::sleep(Duration::from_millis(400)).await;
 
+        let mut events = manager.subscribe();
         let before = manager.settings().db_bytes;
         let settings = manager
             .patch_settings(MitmSettingsPatch {
@@ -1747,6 +1818,7 @@ mod tests {
             })
             .await?;
         assert_eq!(settings.max_records, 2);
+        wait_for_event(&mut events, "resync").await?;
         let page = manager
             .list_records(RecordQuery {
                 limit: Some(20),
@@ -1755,11 +1827,8 @@ mod tests {
             .await?;
         assert_eq!(page.total, 2);
         assert_eq!(page.records.len(), 2);
-        assert!(
-            settings.db_bytes < before,
-            "expected VACUUM to shrink {} bytes to less than the pre-prune size {before}",
-            settings.db_bytes
-        );
+        let after = manager.settings().db_bytes;
+        assert!(after < before, "expected VACUUM to shrink {after} bytes to less than the pre-prune size {before}");
         drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);

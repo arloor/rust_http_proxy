@@ -844,10 +844,7 @@ function MaxRecordsControl({
   }
 
   return (
-    <label
-      className={`number-control${dirty ? ' dirty' : ''}`}
-      title="回车或点击「应用」后生效；降低条数会立即删除旧记录并压缩数据库"
-    >
+    <label className={`number-control${dirty ? ' dirty' : ''}`} title="点击「应用」后生效；降低条数会删除旧记录并在后台压缩数据库">
       留存记录
       <input
         aria-label="留存记录"
@@ -861,14 +858,8 @@ function MaxRecordsControl({
           setDirty(event.target.value !== String(value))
           setSaved(false)
         }}
-        onBlur={() => {
-          if (dirty && !saving) void commit()
-        }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            void commit()
-          } else if (event.key === 'Escape') {
+          if (event.key === 'Escape') {
             setDraft(String(value))
             setDirty(false)
             event.currentTarget.blur()
@@ -876,13 +867,7 @@ function MaxRecordsControl({
         }}
       />
       {dirty && (
-        <button
-          type="button"
-          className="apply-setting"
-          disabled={saving}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => void commit()}
-        >
+        <button type="button" className="apply-setting" disabled={saving} onClick={() => void commit()}>
           {saving ? '保存中' : '应用'}
         </button>
       )}
