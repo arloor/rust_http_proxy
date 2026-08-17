@@ -202,9 +202,10 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .detail-head button { border: 0; background: transparent; color: #64748b; font-size: 22px; cursor: pointer; line-height: 1; }
 .detail-head button:hover { color: #334155; }
 .detail-url-row { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0 8px; }
-.detail-url { color: var(--text); font: 13px/1.55 var(--font-mono); overflow-wrap: anywhere; margin: 0; flex: 1; }
+.detail-url { color: var(--text); font: 13px/1.55 var(--font-mono); overflow-wrap: anywhere; margin: 0; flex: 1; min-width: 0; }
 .detail-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--text-3); font: 12px var(--font-mono); font-variant-numeric: tabular-nums; }
-.detail-actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.detail-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; flex: none; }
+.detail-actions .ghost { white-space: nowrap; padding: 5px 10px; }
 .ghost { border: 1px solid var(--line); background: #fff; color: #475569; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; cursor: pointer; }
 .ghost:hover { background: #f8fafc; color: #0f172a; }
 .ghost:disabled { opacity: .4; cursor: not-allowed; }

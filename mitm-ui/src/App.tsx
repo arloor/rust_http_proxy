@@ -20,6 +20,9 @@ import {
   prettyBody,
   statusTone,
   toCurl,
+  toExportText,
+  toHttpResponse,
+  exportFilename,
 } from './format'
 import { isEventStream, parseSseFrames } from './sse'
 import { filterUrlGroups } from './urlGroups'
@@ -748,6 +751,18 @@ function App() {
   )
 }
 
+function downloadText(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(objectUrl)
+}
+
 function fallbackCopy(value: string) {
   const area = document.createElement('textarea')
   area.value = value
@@ -987,6 +1002,8 @@ function Detail({
         <div className="detail-actions">
           <button className="ghost" onClick={() => void onCopy(url, 'URL')}>复制 URL</button>
           <button className="ghost" onClick={() => void onCopy(toCurl(detail), 'cURL')}>复制 cURL</button>
+          <button className="ghost" onClick={() => void onCopy(toHttpResponse(detail), '响应')}>复制响应</button>
+          <button className="ghost" onClick={() => downloadText(exportFilename(detail), toExportText(detail))}>导出文本</button>
         </div>
       </div>
       <div className="detail-meta">

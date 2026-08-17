@@ -93,3 +93,65 @@ export function toCurl(detail: RecordDetail): string {
   }
   return lines.join(' \\\n')
 }
+
+const REASON_PHRASES: Record<number, string> = {
+  100: 'Continue',
+  101: 'Switching Protocols',
+  200: 'OK',
+  201: 'Created',
+  202: 'Accepted',
+  204: 'No Content',
+  206: 'Partial Content',
+  301: 'Moved Permanently',
+  302: 'Found',
+  303: 'See Other',
+  304: 'Not Modified',
+  307: 'Temporary Redirect',
+  308: 'Permanent Redirect',
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  405: 'Method Not Allowed',
+  408: 'Request Timeout',
+  409: 'Conflict',
+  410: 'Gone',
+  413: 'Payload Too Large',
+  415: 'Unsupported Media Type',
+  429: 'Too Many Requests',
+  500: 'Internal Server Error',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable',
+  504: 'Gateway Timeout',
+}
+
+export function statusLine(detail: Pick<RecordDetail, 'response_version' | 'status'>): string {
+  const version = detail.response_version || 'HTTP/1.1'
+  if (detail.status === null) return version
+  const reason = REASON_PHRASES[detail.status]
+  return reason ? `${version} ${detail.status} ${reason}` : `${version} ${detail.status}`
+}
+
+export function formatHeaders(headers: [string, string][]): string {
+  return headers.map(([name, value]) => `${name}: ${value}`).join('\n')
+}
+
+// 原始 HTTP 响应：status line + headers + 空行 + body（body 按抓取原文，图片为 base64）
+export function toHttpResponse(detail: RecordDetail): string {
+  const headers = formatHeaders(detail.response_headers)
+  return `${statusLine(detail)}\n${headers}${headers ? '\n' : ''}\n${detail.response_body}`
+}
+
+export function toExportText(detail: RecordDetail): string {
+  return `${toCurl(detail)}\n\n${toHttpResponse(detail)}`
+}
+
+// Windows 文件名非法字符 \ / : * ? " < > | 以及空白一律换成下划线
+export function exportFilename(detail: Pick<RecordDetail, 'method' | 'host' | 'path' | 'started_at_ms'>): string {
+  const date = new Date(detail.started_at_ms)
+  const pad = (n: number, width = 2) => String(n).padStart(width, '0')
+  const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  const safe = (value: string) => value.replace(/[^\w.-]+/g, '_').replace(/^_|_$/g, '')
+  const path = safe(detail.path).slice(0, 48) || 'root'
+  return `${detail.method}_${safe(detail.host)}_${path}_${stamp}.txt`
+}

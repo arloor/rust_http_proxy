@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { fullUrl } from './api'
-import { formatBytes, formatCaptureState, formatClientAddr, formatDuration, formatTime, parsePositiveInt, prettyBody, statusTone, toCurl } from './format'
+import type { RecordDetail } from './api'
+import { formatBytes, formatCaptureState, formatClientAddr, formatDuration, formatTime, parsePositiveInt, prettyBody, statusTone, toCurl, toHttpResponse, toExportText, exportFilename } from './format'
 
 describe('fullUrl', () => {
   it('includes query when present', () => {
@@ -61,45 +62,89 @@ describe('format helpers', () => {
   })
 
   it('builds a curl command without host/content-length', () => {
-    const curl = toCurl({
-      id: '1',
-      started_at_ms: 0,
-      completed_at_ms: 1,
-      client_ip: '127.0.0.1',
-      client_port: 54321,
-      proxy_username: 'admin',
-      authority: 'httpbin.org',
-      host: 'httpbin.org',
-      path: '/post',
-      query: null,
-      method: 'POST',
-      status: 200,
-      duration_ms: 10,
-      capture_state: 'complete',
-      request_version: 'HTTP/1.1',
-      request_headers: [
-        ['host', 'httpbin.org'],
-        ['content-type', 'application/json'],
-        ['content-length', '18'],
-      ],
-      request_body: '{"hello":"world"}',
-      request_body_bytes: 17,
-      request_body_truncated: false,
-      request_body_note: null,
-      request_body_image: null,
-      response_version: 'HTTP/2',
-      response_headers: [],
-      response_body: '',
-      response_body_bytes: 0,
-      response_body_truncated: false,
-      response_body_note: null,
-      response_body_image: null,
-      error: null,
-    })
+    const curl = toCurl(sampleDetail())
     expect(curl).toContain("curl 'https://httpbin.org/post'")
     expect(curl).toContain('-X POST')
     expect(curl).toContain(" -H 'content-type: application/json'")
     expect(curl).not.toContain('content-length')
     expect(curl).not.toContain(" -H 'host:")
   })
+
+  it('builds a raw HTTP response from status line, headers and body', () => {
+    const text = toHttpResponse(sampleDetail({
+      response_headers: [
+        ['content-type', 'application/json'],
+        ['content-length', '17'],
+      ],
+      response_body: '{"hello":"world"}',
+    }))
+    expect(text).toBe([
+      'HTTP/2 200 OK',
+      'content-type: application/json',
+      'content-length: 17',
+      '',
+      '{"hello":"world"}',
+    ].join('\n'))
+  })
+
+  it('keeps a blank line after headers when the body is empty', () => {
+    expect(toHttpResponse(sampleDetail({ status: 204, response_version: 'HTTP/1.1' }))).toBe('HTTP/1.1 204 No Content\n\n')
+  })
+
+  it('exports curl request then raw response', () => {
+    const text = toExportText(sampleDetail({
+      response_headers: [['content-type', 'text/plain']],
+      response_body: 'ok',
+    }))
+    expect(text.startsWith("curl 'https://httpbin.org/post'")).toBe(true)
+    expect(text).toContain('\n\nHTTP/2 200 OK\ncontent-type: text/plain\n\nok')
+  })
+
+  it('builds a filesystem-safe export filename', () => {
+    expect(exportFilename({
+      method: 'GET',
+      host: 'api.example.com',
+      path: '/v1/users:list',
+      started_at_ms: new Date(2026, 7, 17, 14, 6, 9).getTime(),
+    })).toBe('GET_api.example.com_v1_users_list_20260817-140609.txt')
+  })
 })
+
+function sampleDetail(overrides: Partial<RecordDetail> = {}): RecordDetail {
+  return {
+    id: '1',
+    started_at_ms: 0,
+    completed_at_ms: 1,
+    client_ip: '127.0.0.1',
+    client_port: 54321,
+    proxy_username: 'admin',
+    authority: 'httpbin.org',
+    host: 'httpbin.org',
+    path: '/post',
+    query: null,
+    method: 'POST',
+    status: 200,
+    duration_ms: 10,
+    capture_state: 'complete',
+    request_version: 'HTTP/1.1',
+    request_headers: [
+      ['host', 'httpbin.org'],
+      ['content-type', 'application/json'],
+      ['content-length', '18'],
+    ],
+    request_body: '{"hello":"world"}',
+    request_body_bytes: 17,
+    request_body_truncated: false,
+    request_body_note: null,
+    request_body_image: null,
+    response_version: 'HTTP/2',
+    response_headers: [],
+    response_body: '',
+    response_body_bytes: 0,
+    response_body_truncated: false,
+    response_body_note: null,
+    response_body_image: null,
+    error: null,
+    ...overrides,
+  }
+}
