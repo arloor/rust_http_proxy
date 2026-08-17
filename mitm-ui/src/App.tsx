@@ -516,13 +516,13 @@ function App() {
           onChange={(checked) => void updateSettings({ capture_enabled: checked })}
         />
         <MaxRecordsControl
-          value={settings?.max_records ?? 10000}
+          value={settings?.max_records ?? 1000}
           onCommit={(max_records) => updateSettings({ max_records })}
         />
         <label className="number-control">Body 上限
           <select
             aria-label="Body 上限"
-            value={settings?.body_limit_bytes ?? 65536}
+            value={settings?.body_limit_bytes ?? 1048576}
             onChange={(event) => void updateSettings({ body_limit_bytes: Number(event.target.value) })}
           >
             <option value={16384}>16 KiB</option><option value={65536}>64 KiB</option>

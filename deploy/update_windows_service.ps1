@@ -102,6 +102,50 @@ function Invoke-ScConfig {
     }
 }
 
+function Install-ServiceExecutable {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination,
+        [ValidateRange(1, 20)]
+        [int]$Retries = 5
+    )
+
+    $destinationDir = Split-Path -LiteralPath $Destination -Parent
+    if (-not (Test-Path -LiteralPath $destinationDir)) {
+        New-Item -ItemType Directory -Path $destinationDir -Force | Out-Null
+    }
+
+    $backup = $Destination + '.old'
+    if (Test-Path -LiteralPath $backup) {
+        Remove-Item -LiteralPath $backup -Force
+    }
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $Retries; $attempt++) {
+        try {
+            if (Test-Path -LiteralPath $Destination) {
+                Move-Item -LiteralPath $Destination -Destination $backup -Force -ErrorAction Stop
+            }
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $backup) {
+                Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+            }
+            return
+        }
+        catch {
+            $lastError = $_
+            if ((Test-Path -LiteralPath $backup) -and -not (Test-Path -LiteralPath $Destination)) {
+                Move-Item -LiteralPath $backup -Destination $Destination -Force -ErrorAction SilentlyContinue
+            }
+            if ($attempt -lt $Retries) {
+                Start-Sleep -Milliseconds (200 * $attempt)
+            }
+        }
+    }
+
+    throw "替换服务程序失败：$($lastError.Exception.Message)"
+}
+
 $serverCert = Join-Path $Repo 'cert.pem'
 $serverKey = Join-Path $Repo 'privkey.pem'
 $cratePath = Join-Path $Repo 'rust_http_proxy'
@@ -118,25 +162,32 @@ foreach ($user in $ProxyUser) {
 }
 
 $service = Get-Service -Name $ServiceName -ErrorAction Stop
-$stage = '停止服务'
+$builtExe = Join-Path $Repo 'target\release\rust_http_proxy_service.exe'
+$stage = '编译服务程序'
 
 try {
+    Set-Location -LiteralPath $Repo
+    & $Cargo build `
+        --release `
+        -p rust_http_proxy `
+        --bin rust_http_proxy_service `
+        --features winservice
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo build 失败，退出码：$LASTEXITCODE"
+    }
+    if (-not (Test-Path -LiteralPath $builtExe -PathType Leaf)) {
+        throw "cargo build 完成，但未找到编译产物：$builtExe"
+    }
+
+    $stage = '停止服务'
     Stop-ServiceForUpdate -Service $service `
         -TimeoutSeconds $StopTimeoutSeconds `
         -AllowForceTerminate $ForceTerminateOnStopTimeout.IsPresent
 
-    $stage = '编译并安装服务程序'
-    Set-Location -LiteralPath $Repo
-    & $Cargo install `
-        --force `
-        --path $cratePath `
-        --bin rust_http_proxy_service `
-        --features winservice
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo install 失败，退出码：$LASTEXITCODE"
-    }
+    $stage = '替换服务程序'
+    Install-ServiceExecutable -Source $builtExe -Destination $Exe
     if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) {
-        throw "cargo install 完成，但未找到服务程序：$Exe"
+        throw "替换完成，但未找到服务程序：$Exe"
     }
 
     $binParts = [System.Collections.Generic.List[string]]::new()

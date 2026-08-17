@@ -16,6 +16,8 @@ use tokio::sync::broadcast;
 use crate::DynError;
 
 const SCHEMA_VERSION: i64 = 4;
+pub(crate) const DEFAULT_MAX_RECORDS: usize = 1000;
+pub(crate) const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const DEFAULT_PAGE_LIMIT: usize = 100;
 const MAX_PAGE_LIMIT: usize = 500;
 const MAX_TLS_ERROR_ROWS: i64 = 1000;
@@ -822,8 +824,8 @@ fn load_settings(connection: &Connection) -> Result<(bool, usize, usize), Manage
         .query_row("SELECT capture_enabled, max_records, body_limit_bytes FROM settings WHERE id=1", [], |row| {
             Ok((
                 row.get(0)?,
-                usize::try_from(row.get::<_, i64>(1)?).unwrap_or(10_000),
-                usize::try_from(row.get::<_, i64>(2)?).unwrap_or(64 * 1024),
+                usize::try_from(row.get::<_, i64>(1)?).unwrap_or(DEFAULT_MAX_RECORDS),
+                usize::try_from(row.get::<_, i64>(2)?).unwrap_or(DEFAULT_BODY_LIMIT_BYTES),
             ))
         })
         .map_err(ManagerError::from)

@@ -167,9 +167,9 @@ Options:
       --mitm-db-file <FILE_PATH>
           MITM 管理与明文记录 SQLite 文件。默认使用 <log-dir>/mitm.sqlite3
       --mitm-max-records <MITM_MAX_RECORDS>
-          新 MITM 数据库的默认记录数量上限 [default: 10000]
+          新 MITM 数据库的默认记录数量上限 [default: 1000]
       --mitm-body-limit-bytes <MITM_BODY_LIMIT_BYTES>
-          新 MITM 数据库中单个请求或响应 body 的默认抓取字节上限 [default: 65536]
+          新 MITM 数据库中单个请求或响应 body 的默认抓取字节上限 [default: 1048576]
       --mitm-stub-config-file <FILE_PATH>
           MITM stub YAML 配置文件，按 authority + path 返回静态响应或转发到 HTTP/HTTPS upstream
   -h, --help

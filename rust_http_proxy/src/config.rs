@@ -144,11 +144,11 @@ pub struct Param {
         help = "MITM 管理与明文记录 SQLite 文件。默认使用 <log-dir>/mitm.sqlite3"
     )]
     mitm_db_file: Option<PathBuf>,
-    #[arg(long, default_value = "10000", help = "新 MITM 数据库的默认记录数量上限")]
+    #[arg(long, default_value_t = crate::mitm_manager::DEFAULT_MAX_RECORDS, help = "新 MITM 数据库的默认记录数量上限")]
     mitm_max_records: usize,
     #[arg(
         long,
-        default_value = "65536",
+        default_value_t = crate::mitm_manager::DEFAULT_BODY_LIMIT_BYTES,
         help = "新 MITM 数据库中单个请求或响应 body 的默认抓取字节上限"
     )]
     mitm_body_limit_bytes: usize,
