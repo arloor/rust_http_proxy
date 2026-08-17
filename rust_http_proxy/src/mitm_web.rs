@@ -38,6 +38,7 @@ pub(crate) fn router(basic_auth: HashMap<String, String>) -> Router<Arc<AppState
         .route("/mitm/api/groups", get(get_groups))
         .route("/mitm/api/tls-errors", get(get_tls_errors))
         .route("/mitm/api/events", get(events))
+        .route("/mitm/ca.crt", get(download_ca))
         .route("/mitm/{*path}", get(asset_or_index));
     routes.route_layer(middleware::from_fn_with_state(Arc::new(basic_auth), require_basic_auth))
 }
@@ -95,6 +96,20 @@ fn serve_asset(path: &str, immutable: bool) -> Response {
             .headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=31536000, immutable"));
     }
+    response
+}
+
+async fn download_ca(State(state): State<Arc<AppState>>) -> Response {
+    let Some(pem) = state.ca_cert_pem.as_deref() else {
+        return ApiError::NotFound("MITM CA is not configured".to_owned()).into_response();
+    };
+    let mut response = Response::new(Body::from(pem.to_owned()));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/x-x509-ca-cert"));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_DISPOSITION, HeaderValue::from_static(r#"attachment; filename="mitm-ca.crt""#));
     response
 }
 

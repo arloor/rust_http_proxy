@@ -1,4 +1,4 @@
-import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   fullUrl,
@@ -24,7 +24,7 @@ import {
   toHttpResponse,
   exportFilename,
 } from './format'
-import { isEventStream, isLargeSseData, limitPrettyLines, parseSseFrames, summarizeSseData, SSE_PREVIEW_LINES, type SseFrame } from './sse'
+import { isEventStream, limitPrettyLines, parseSseFrames, summarizeSseData, SSE_PREVIEW_LINES, type SseFrame } from './sse'
 import { filterUrlGroups } from './urlGroups'
 
 const methods = ['', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE']
@@ -537,10 +537,22 @@ function App() {
           </select>
         </label>
         <div className="status-line">
-          <span className={`ca-pill ${settings?.ca_available ? 'online' : 'offline'}`}>
-            <span className={`dot ${settings?.ca_available ? 'online' : 'offline'}`} />
-            {settings?.ca_available ? 'CA 可用' : 'CA 不可用'}
-          </span>
+          {settings?.ca_available ? (
+            <a
+              className="ca-pill online"
+              href="/mitm/ca.crt"
+              download="mitm-ca.crt"
+              title="下载 MITM CA 证书"
+            >
+              <span className="dot online" />
+              下载CA
+            </a>
+          ) : (
+            <span className="ca-pill offline" title="未配置 MITM CA">
+              <span className="dot offline" />
+              下载CA
+            </span>
+          )}
           {tlsErrorTotal > 0 && (
             <button
               className={`ca-alert-pill ${showTlsErrors ? 'active' : ''}`}
@@ -1156,38 +1168,74 @@ function SseEventCard({
   onCopy: (value: string, label: string) => void
 }) {
   const raw = frame.hasData ? frame.data : ''
-  const large = frame.hasData && isLargeSseData(raw)
-  const [expanded, setExpanded] = useState(false)
+  const preRef = useRef<HTMLPreElement>(null)
+  const [userExpanded, setUserExpanded] = useState<boolean | null>(null)
+  const [overflows, setOverflows] = useState(false)
   const [showAll, setShowAll] = useState(false)
+  const [measureKey, setMeasureKey] = useState(0)
+  const expanded = userExpanded ?? !overflows
   const pretty = useMemo(() => {
-    if (!raw || (large && !expanded)) return ''
+    if (!raw || !expanded) return ''
     return prettyBody(raw)
-  }, [raw, large, expanded])
-  const summary = useMemo(() => (large ? summarizeSseData(raw) : null), [large, raw])
+  }, [raw, expanded])
+  const summary = useMemo(() => (overflows ? summarizeSseData(raw) : null), [overflows, raw])
   const preview = useMemo(() => {
     if (!pretty) return null
     return showAll ? { text: pretty, hiddenLines: 0, totalLines: pretty.split('\n').length } : limitPrettyLines(pretty, SSE_PREVIEW_LINES)
   }, [pretty, showAll])
 
+  useLayoutEffect(() => {
+    if (!raw || userExpanded !== null) return
+    const pre = preRef.current
+    if (!pre) return
+    setOverflows(pre.scrollHeight > pre.clientHeight + 1)
+  }, [raw, pretty, measureKey, userExpanded])
+
+  useEffect(() => {
+    if (userExpanded !== null) return
+    let frameId = 0
+    const onResize = () => {
+      cancelAnimationFrame(frameId)
+      frameId = requestAnimationFrame(() => {
+        setOverflows(false)
+        setMeasureKey((key) => key + 1)
+      })
+    }
+    window.addEventListener('resize', onResize)
+    return () => {
+      cancelAnimationFrame(frameId)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [userExpanded])
+
+  const toggleExpanded = () => {
+    setUserExpanded((current) => !(current ?? !overflows))
+    setShowAll(false)
+  }
+
   return (
-    <article className={`sse-event${frame.pending ? ' pending' : ''}${large ? ' large' : ''}${large && !expanded ? ' collapsed' : ''}`}>
-      <div className="sse-event-head">
+    <article className={`sse-event${frame.pending ? ' pending' : ''}${overflows ? ' large' : ''}${overflows && !expanded ? ' collapsed' : ''}`}>
+      <div
+        className={`sse-event-head${overflows ? ' toggle' : ''}`}
+        onClick={overflows ? (event) => {
+          if ((event.target as HTMLElement).closest('button')) return
+          if (window.getSelection()?.toString()) return
+          toggleExpanded()
+        } : undefined}
+      >
         <span className="sse-sequence">#{index + 1}</span>
         <b>{frame.comments.length > 0 && !frame.hasData ? 'heartbeat' : frame.event}</b>
-        {large && <span className="sse-size">{formatBytes(raw.length)}</span>}
+        {overflows && <span className="sse-size">{formatBytes(raw.length)}</span>}
         {frame.id !== null && <span>id: {frame.id || '(empty)'}</span>}
         {frame.retry !== null && <span>retry: {frame.retry}ms</span>}
         {frame.pending && <em>接收中</em>}
         <span className="sse-actions">
-          {large && (
+          {overflows && (
             <button
               className="ghost compact"
               aria-expanded={expanded}
               title={expanded ? '收起大事件' : '展开查看内容'}
-              onClick={() => {
-                setExpanded((current) => !current)
-                if (expanded) setShowAll(false)
-              }}
+              onClick={toggleExpanded}
             >{expanded ? '收起' : '展开'}</button>
           )}
           {(frame.hasData || frame.comments.length > 0) && (
@@ -1205,7 +1253,7 @@ function SseEventCard({
       {frame.unknownFields.map(([name, value], fieldIndex) => (
         <div className="sse-field" key={`${name}-${fieldIndex}`}><span>{name}</span>{value}</div>
       ))}
-      {large && !expanded && summary && (summary.facts.length > 0 || summary.largeFields.length > 0) && (
+      {overflows && !expanded && summary && (summary.facts.length > 0 || summary.largeFields.length > 0) && (
         <div className="sse-summary">
           {summary.facts.map((fact) => <span className="sse-fact" key={fact}>{fact}</span>)}
           {summary.largeFields.map((field) => (
@@ -1213,10 +1261,10 @@ function SseEventCard({
           ))}
         </div>
       )}
-      {frame.hasData && (!large || expanded) && (
+      {frame.hasData && expanded && (
         <>
-          <pre>{preview?.text || '(empty data)'}</pre>
-          {preview && (preview.hiddenLines > 0 || showAll || (large && preview.totalLines > SSE_PREVIEW_LINES)) && (
+          <pre ref={preRef}>{preview?.text || '(empty data)'}</pre>
+          {preview && (preview.hiddenLines > 0 || showAll || (overflows && preview.totalLines > SSE_PREVIEW_LINES)) && (
             <div className="sse-event-foot">
               <span>
                 {preview.hiddenLines > 0

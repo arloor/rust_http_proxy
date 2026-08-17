@@ -101,7 +101,7 @@ describe('parseSseFrames', () => {
 })
 
 describe('large SSE payloads', () => {
-  it('treats multi-kilobyte data as large and leaves small frames expanded', () => {
+  it('flags multi-kilobyte payloads so collapsed summaries can highlight oversized fields', () => {
     expect(isLargeSseData('x'.repeat(8192))).toBe(true)
     expect(isLargeSseData('{"type":"delta"}')).toBe(false)
   })

@@ -38,8 +38,10 @@ main { min-height: 100vh; display: flex; flex-direction: column; }
 .dot.online { background: #10b981; box-shadow: 0 0 0 3px #d1fae5; }
 .dot.offline { background: var(--red); }
 .ca-pill, .live-pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 999px; }
-.ca-pill { color: #065f46; border: 1px solid #a7f3d0; background: #d1fae5; }
-.ca-pill.offline { color: #991b1b; border-color: #fecaca; background: #fee2e2; }
+.ca-pill { color: #065f46; border: 1px solid #a7f3d0; background: #d1fae5; text-decoration: none; }
+a.ca-pill { cursor: pointer; }
+a.ca-pill:hover { filter: brightness(0.97); }
+.ca-pill.offline { color: #991b1b; border-color: #fecaca; background: #fee2e2; cursor: default; }
 .live-pill { color: var(--teal-text); border: 1px solid #99f6e4; background: #f0fdfa; }
 .live-pill.off { color: #92400e; border-color: #fde68a; background: #fffbeb; }
 .copy-toast { position: fixed; top: 16px; right: 24px; z-index: 20; background: #0f172a; color: #fff; padding: 8px 12px; border-radius: 8px; font-size: 12px; box-shadow: var(--shadow); }
@@ -232,29 +234,56 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .detail pre { background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; padding: 11px; color: var(--text-2); font: 12.5px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 215px; overflow: auto; }
 .detail .body-content { max-height: 340px; color: var(--text); }
 .sse-body { position: relative; }
-.sse-events { max-height: 66vh; overflow: auto; display: flex; flex-direction: column; gap: 7px; padding: 8px; background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; }
+.sse-events {
+  --sse-list-max: 66vh;
+  --sse-list-pad: 16px;
+  --sse-gap: 7px;
+  --sse-next-peek: 40px;
+  max-height: var(--sse-list-max);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sse-gap);
+  padding: 8px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
 .sse-jump-latest { position: absolute; right: 16px; bottom: 12px; z-index: 2; display: inline-flex; align-items: center; gap: 5px; border: 1px solid #99f6e4; background: rgba(240,253,250,.92); backdrop-filter: blur(4px); color: var(--teal-text); border-radius: 999px; padding: 6px 14px; box-shadow: 0 4px 14px rgba(15,118,110,.22); cursor: pointer; font: 600 11.5px var(--font-sans); white-space: nowrap; animation: sse-jump-in .18s ease-out; transition: background .15s, border-color .15s, box-shadow .15s, transform .15s; }
 .sse-jump-latest:hover { background: #ccfbf1; border-color: #14b8a6; transform: translateY(-1px); box-shadow: 0 6px 16px rgba(15,118,110,.28); }
 .sse-jump-latest:focus-visible { outline: 2px solid #0f766e; outline-offset: 2px; }
 .sse-jump-latest svg { width: 12px; height: 12px; flex: none; }
 @keyframes sse-jump-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.sse-event { flex: none; overflow: hidden; border: 1px solid #dbe4ee; border-radius: 6px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.03); }
+.sse-event {
+  /* 66vh - list padding - gap - next title bar */
+  flex: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--sse-list-max) - var(--sse-list-pad) - var(--sse-gap) - var(--sse-next-peek));
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15,23,42,.03);
+}
 .sse-event.pending { border-color: #5eead4; box-shadow: inset 3px 0 #14b8a6; }
-.sse-event-head { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 6px 9px; background: #f1f5f9; color: var(--text-3); font: 10.5px var(--font-mono); }
+.sse-event-head { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 6px 9px; background: #f1f5f9; color: var(--text-3); font: 10.5px var(--font-mono); }
 .sse-event-head b { color: var(--teal-text); font-size: 11px; }
 .sse-event-head em { color: #0f766e; font: 600 10px var(--font-sans); }
 .sse-copy { margin-left: auto; padding: 3px 10px; font-size: 11.5px; }
 .sse-sequence { color: #94a3b8; font-variant-numeric: tabular-nums; }
-.sse-event pre { margin: 0; padding: 8px 9px; max-height: calc(1.6em * 18 + 16px); overflow: auto; overscroll-behavior: contain; border: 0; border-radius: 0; background: #fff; color: var(--text); }
+.sse-event pre { flex: 1 1 auto; min-height: 0; margin: 0; padding: 8px 9px; max-height: none; overflow: auto; overscroll-behavior: contain; border: 0; border-radius: 0; background: #fff; color: var(--text); }
+.sse-event-head.toggle { cursor: pointer; }
+.sse-event-head.toggle:hover { background: #e2e8f0; }
 .sse-size { color: #b45309; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sse-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
 .sse-actions .sse-copy { margin-left: 0; }
 .sse-event.large { border-color: #fdba74; }
 .sse-event.large.collapsed { background: #fffdf8; }
-.sse-summary { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 9px; border-top: 1px solid #edf2f7; }
+.sse-summary { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 9px; border-top: 1px solid #edf2f7; }
 .sse-fact { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; background: #f1f5f9; color: #475569; font: 11px var(--font-sans); }
 .sse-fact.heavy { background: #fff7ed; color: #c2410c; }
-.sse-event-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 5px 9px; border-top: 1px solid #edf2f7; background: #f8fafc; color: #64748b; font: 11px var(--font-sans); }
+.sse-event-foot { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 5px 9px; border-top: 1px solid #edf2f7; background: #f8fafc; color: #64748b; font: 11px var(--font-sans); }
 .sse-comment, .sse-field { padding: 5px 9px; border-top: 1px solid #edf2f7; color: #64748b; font: 11px/1.5 var(--font-mono); overflow-wrap: anywhere; }
 .sse-comment { color: #94a3b8; font-style: italic; }
 .sse-field span { display: inline-block; margin-right: 8px; color: #7c3aed; font-weight: 600; }

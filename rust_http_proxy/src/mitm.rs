@@ -17,6 +17,7 @@ use crate::location::{Upstream, Version, validate_tls_server_name};
 
 pub(crate) struct MitmAuthority {
     ca_issuer: Issuer<'static, KeyPair>,
+    ca_cert_pem: String,
     cert_cache: Mutex<LruCache<String, Arc<ServerConfig>>>,
 }
 
@@ -33,8 +34,13 @@ impl MitmAuthority {
 
         Ok(Self {
             ca_issuer,
+            ca_cert_pem,
             cert_cache: Mutex::new(LruCache::with_expiry_duration(Duration::from_secs(60 * 60))),
         })
+    }
+
+    pub(crate) fn ca_cert_pem(&self) -> &str {
+        &self.ca_cert_pem
     }
 
     pub(crate) fn server_config_for(&self, host: &str) -> io::Result<Arc<ServerConfig>> {
@@ -477,6 +483,7 @@ api.example.com:443:
         fs::write(&key_path, key_pair.serialize_pem())?;
 
         let authority = MitmAuthority::load(&cert_path.to_string_lossy(), &key_path.to_string_lossy())?;
+        assert!(authority.ca_cert_pem().contains("BEGIN CERTIFICATE"));
         let config = authority.server_config_for("example.com")?;
         assert_eq!(config.alpn_protocols, vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
 

@@ -25,6 +25,7 @@ use crate::linux_axum_handler;
 pub(crate) struct AppState {
     pub basic_auth: HashMap<String, String>,
     pub mitm_manager: Arc<crate::mitm_manager::MitmManager>,
+    pub ca_cert_pem: Option<String>,
 }
 
 pub(crate) fn build_router(appstate: AppState) -> Router {

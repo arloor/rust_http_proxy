@@ -4,7 +4,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::DynError;
-use crate::e2e_test_support::start_proxy;
+use crate::e2e_test_support::{start_proxy, unique_temp_dir, write_test_ca};
 
 const BASIC_AUTH: &str = "Authorization: Basic YWRtaW46dGVzdA==\r\n";
 
@@ -182,6 +182,51 @@ async fn mitm_json_apis_honor_accept_encoding_gzip() -> Result<(), DynError> {
     assert!(response.starts_with("HTTP/1.1 200"));
     assert!(lower.contains("content-encoding: gzip"), "MITM JSON APIs should be compressed: {response}");
     proxy.shutdown().await
+}
+
+#[tokio::test]
+async fn mitm_ca_certificate_downloads_as_crt() -> Result<(), DynError> {
+    let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned()]).await?;
+    let missing = request(
+        proxy.port,
+        &format!("GET /mitm/ca.crt HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"),
+    )
+    .await?;
+    assert!(missing.starts_with("HTTP/1.1 404"));
+    proxy.shutdown().await?;
+
+    let temp_dir = unique_temp_dir("rust_http_proxy_mitm_ca_download")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let pem = std::fs::read_to_string(&ca.cert_path)?;
+    let proxy = start_proxy(vec![
+        "--users".to_owned(),
+        "admin:test".to_owned(),
+        "--mitm-ca-cert".to_owned(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".to_owned(),
+        ca.key_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    let unauthorized =
+        request(proxy.port, "GET /mitm/ca.crt HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await?;
+    assert!(unauthorized.starts_with("HTTP/1.1 401"));
+
+    let downloaded = request(
+        proxy.port,
+        &format!("GET /mitm/ca.crt HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"),
+    )
+    .await?;
+    assert!(downloaded.starts_with("HTTP/1.1 200"));
+    let lower = downloaded.to_ascii_lowercase();
+    assert!(lower.contains("content-type: application/x-x509-ca-cert"));
+    assert!(lower.contains("content-disposition: attachment; filename=\"mitm-ca.crt\""));
+    assert!(downloaded.contains("BEGIN CERTIFICATE"));
+    assert!(downloaded.contains(pem.trim()));
+
+    proxy.shutdown().await?;
+    std::fs::remove_dir_all(temp_dir)?;
+    Ok(())
 }
 
 async fn request(port: u16, raw_request: &str) -> Result<String, io::Error> {

@@ -74,6 +74,7 @@ export function parseSseFrames(body: string): SseFrame[] {
   })
 }
 
+/** Byte threshold for collapsed-summary field chips only; cards collapse by rendered height. */
 export const LARGE_SSE_BYTES = 8 * 1024
 export const SSE_PREVIEW_LINES = 80
 

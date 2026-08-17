@@ -91,10 +91,15 @@ fn create_future(
     shutdown_rx: Receiver<()>,
 ) -> impl Future<Output = Result<(), std::io::Error>> {
     let basic_auth = config.basic_auth.clone();
+    let ca_cert_pem = config
+        .mitm_authority
+        .as_ref()
+        .map(|authority| authority.ca_cert_pem().to_owned());
 
     let router = build_router(AppState {
         basic_auth,
         mitm_manager,
+        ca_cert_pem,
     });
     let server = axum_bootstrap::new_server(port, router, shutdown_rx);
     let server = if let Some(host) = config.host {
