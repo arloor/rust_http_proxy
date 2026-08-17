@@ -494,7 +494,7 @@ function App() {
   const emptyHint = hasFilters ? '没有匹配的记录' : '等待 MITM 流量'
   const emptySub = hasFilters ? '试试放宽筛选条件' : '命中目标的 HTTPS 请求会实时出现在这里'
 
-  // URL 分类前端搜索：host 命中保留全部 path，仅 path 命中则只展示匹配的 path
+  // URL 分类前端搜索：粘贴完整 URL 时按 host + path 解析；host 命中保留全部 path，仅 path 命中则只展示匹配的 path
   const groupQuery = groupFilter.trim().toLowerCase()
   const filteredGroups = useMemo(
     () => filterUrlGroups(groups, groupQuery, targetSuffixFilter),
@@ -611,7 +611,7 @@ function App() {
           <ClearableInput
             aria-label="搜索 URL 分类"
             className="group-search"
-            placeholder="搜索 host / path…"
+            placeholder="搜索 host / path，或粘贴完整 URL…"
             value={groupFilter}
             onChange={setGroupFilter}
           />

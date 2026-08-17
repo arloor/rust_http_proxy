@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HostGroup } from './api'
-import { filterUrlGroups, hostMatchesSuffix } from './urlGroups'
+import { filterUrlGroups, hostMatchesSuffix, parseGroupSearchQuery } from './urlGroups'
 
 const groups: HostGroup[] = [
   { host: 'example.com', count: 2, last_seen_ms: 3, paths: [{ path: '/root', count: 2, last_seen_ms: 3 }] },
@@ -32,5 +32,46 @@ describe('filterUrlGroups', () => {
       ...groups[1],
       paths: [groups[1].paths[1]],
     }])
+  })
+
+  it('parses a pasted absolute URL into host and path', () => {
+    expect(filterUrlGroups(groups, 'https://api.example.com/users?id=1#top', '')).toEqual([{
+      ...groups[1],
+      paths: [groups[1].paths[0]],
+    }])
+  })
+
+  it('matches all paths of that host when the pasted URL has no path', () => {
+    expect(filterUrlGroups(groups, 'HTTPS://API.Example.Com.', '')).toEqual([groups[1]])
+  })
+
+  it('does not treat a lookalike host as a match for a pasted URL', () => {
+    expect(filterUrlGroups(groups, 'https://example.com/users', '')).toEqual([])
+  })
+})
+
+describe('parseGroupSearchQuery', () => {
+  it('extracts host and path and drops query, hash, userinfo, and port', () => {
+    expect(parseGroupSearchQuery('https://user:pass@API.Example.Com:8443/users/me?id=1#top')).toEqual({
+      kind: 'url',
+      host: 'api.example.com',
+      path: '/users/me',
+    })
+  })
+
+  it('unwraps common paste wrappers and treats a bare origin as root path', () => {
+    expect(parseGroupSearchQuery('  <http://example.com/>  ')).toEqual({
+      kind: 'url',
+      host: 'example.com',
+      path: '/',
+    })
+  })
+
+  it('keeps ordinary host/path text as a substring query', () => {
+    expect(parseGroupSearchQuery('  /users  ')).toEqual({ kind: 'text', text: '/users' })
+    expect(parseGroupSearchQuery('api.example.com/users')).toEqual({
+      kind: 'text',
+      text: 'api.example.com/users',
+    })
   })
 })
