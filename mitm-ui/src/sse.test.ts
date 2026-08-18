@@ -1,10 +1,39 @@
 import { describe, expect, it } from 'vitest'
-import { isEventStream, isLargeSseData, limitPrettyLines, parseSseFrames, summarizeSseData } from './sse'
+import { isEventStream, isLargeSseData, limitPrettyLines, looksLikeEventStream, parseSseFrames, summarizeSseData } from './sse'
 
 describe('isEventStream', () => {
   it('matches content type case-insensitively and ignores parameters', () => {
     expect(isEventStream([['Content-Type', 'Text/Event-Stream; charset=utf-8']])).toBe(true)
     expect(isEventStream([['content-type', 'application/json']])).toBe(false)
+  })
+
+  it('falls back to sniffing the response body when the content type is absent or wrong', () => {
+    const body = 'event: token\ndata: {"delta":"hello"}\n\ndata: [DONE]\n\n'
+    expect(isEventStream([], body)).toBe(true)
+    expect(isEventStream([['content-type', 'application/json']], body)).toBe(true)
+  })
+})
+
+describe('looksLikeEventStream', () => {
+  it('recognizes completed, pending, multiline, and heartbeat event streams', () => {
+    expect(looksLikeEventStream('data: ready\n\n')).toBe(true)
+    expect(looksLikeEventStream('data: still streaming')).toBe(true)
+    expect(looksLikeEventStream('event: update\ndata: first\ndata: second\n\n')).toBe(true)
+    expect(looksLikeEventStream(': keep-alive\n\n')).toBe(true)
+    expect(looksLikeEventStream('retry: 1500\n\n')).toBe(true)
+  })
+
+  it('does not mistake ordinary text, JSON, or an incidental data line for SSE', () => {
+    expect(looksLikeEventStream('')).toBe(false)
+    expect(looksLikeEventStream('{"data":"ready"}')).toBe(false)
+    expect(looksLikeEventStream('status: ok\nmessage: data: ready')).toBe(false)
+    expect(looksLikeEventStream('data: ready\nthis is ordinary prose')).toBe(false)
+    expect(looksLikeEventStream(': this is merely a label')).toBe(false)
+  })
+
+  it('allows extension fields only when an event boundary makes the framing clear', () => {
+    expect(looksLikeEventStream('x-trace: abc\ndata: ready\n\n')).toBe(true)
+    expect(looksLikeEventStream('x-trace: abc\ndata: ready')).toBe(false)
   })
 })
 

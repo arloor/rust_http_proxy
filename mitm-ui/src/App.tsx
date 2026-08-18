@@ -998,7 +998,7 @@ function Detail({
   const bytes = request ? detail.request_body_bytes : detail.response_body_bytes
   const truncated = request ? detail.request_body_truncated : detail.response_body_truncated
   const imageMediaType = request ? detail.request_body_image : detail.response_body_image
-  const eventStream = !request && isEventStream(headers)
+  const eventStream = !request && isEventStream(headers, rawBody)
   // 后端只对完整（未截断）的图片 body 落 base64，此时可直接预览
   const imagePreview = imageMediaType && rawBody && !truncated ? `data:${imageMediaType};base64,${rawBody}` : null
   const url = fullUrl(detail)

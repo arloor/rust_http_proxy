@@ -9,11 +9,78 @@ export type SseFrame = {
   pending: boolean
 }
 
-export function isEventStream(headers: [string, string][]): boolean {
+function hasEventStreamContentType(headers: [string, string][]): boolean {
   return headers.some(([name, value]) => {
     if (name.toLowerCase() !== 'content-type') return false
     return value.split(';', 1)[0].trim().toLowerCase() === 'text/event-stream'
   })
+}
+
+/**
+ * Detect an SSE payload when a server omitted (or supplied the wrong) content type.
+ *
+ * A `data:` line is the strongest useful signal because it is what dispatches an
+ * SSE message. Comment-only streams are also common for heartbeat responses. All
+ * other non-empty lines must still be valid field lines so prose containing an
+ * incidental `data:` line is not classified as an event stream.
+ */
+export function looksLikeEventStream(body: string): boolean {
+  const normalized = body.replace(/^\uFEFF/, '').replace(/\r\n|\r/g, '\n')
+  if (!normalized.trim()) return false
+
+  let dataLines = 0
+  let comments = 0
+  let knownFields = 0
+  let unknownFields = 0
+
+  for (const line of normalized.split('\n')) {
+    if (line === '') continue
+    if (line.startsWith(':')) {
+      comments++
+      continue
+    }
+
+    const colon = line.indexOf(':')
+    const field = colon === -1 ? line : line.slice(0, colon)
+    // SSE's field-name grammar is deliberately broad. Requiring a compact field
+    // name for sniffing keeps arbitrary prose from passing the body sniff.
+    if (!field || /[\0\n\r\s]/.test(field)) return false
+
+    switch (field) {
+      case 'data':
+        dataLines++
+        knownFields++
+        break
+      case 'event':
+      case 'id':
+      case 'retry':
+        knownFields++
+        break
+      default:
+        unknownFields++
+    }
+  }
+
+  if (dataLines > 0) {
+    // Extension fields are legal, but without an event boundary this shape is
+    // indistinguishable from a short YAML/config fragment. Stay conservative.
+    return unknownFields === 0 || normalized.includes('\n\n')
+  }
+
+  // `id`, `retry`, and `event` lines are valid SSE control frames even when no
+  // data is dispatched. Require a completed frame to distinguish them from a
+  // single config-style key/value line.
+  if (knownFields > 0 && unknownFields === 0 && normalized.includes('\n\n')) return true
+  if (comments === 0 || unknownFields > 0) return false
+
+  // A comment-only body is a conventional SSE heartbeat. Do not let a lone
+  // colon-prefixed prose line trigger the event view unless it has a boundary
+  // or another SSE signal.
+  return normalized.includes('\n\n') || comments + knownFields > 1
+}
+
+export function isEventStream(headers: [string, string][], body = ''): boolean {
+  return hasEventStreamContentType(headers) || looksLikeEventStream(body)
 }
 
 export function parseSseFrames(body: string): SseFrame[] {
