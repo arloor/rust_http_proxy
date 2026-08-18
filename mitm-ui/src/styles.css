@@ -49,7 +49,10 @@ a.ca-pill:hover { filter: brightness(0.97); }
 .error-banner button { border: 0; background: transparent; cursor: pointer; color: #b91c1c; font-size: 15px; }
 
 /* ---------- Control strip ---------- */
-.control-strip { position: relative; min-height: 62px; padding: 12px 24px; display: flex; align-items: center; gap: 30px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.control-strip { position: relative; min-height: 62px; padding: 12px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 30px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.control-strip .danger { border: 1px solid #fecaca; background: #fff; color: var(--red); border-radius: 6px; cursor: pointer; padding: 7px 12px; font-size: 12px; font-weight: 600; transition: background .15s, opacity .15s; }
+.control-strip .danger:hover:not(:disabled) { background: #fef2f2; }
+.control-strip .danger:disabled { opacity: .45; cursor: not-allowed; }
 .toggle-control { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; color: var(--text-2); cursor: pointer; }
 .toggle-control.disabled { opacity: .45; cursor: not-allowed; }
 .toggle-control input { position: absolute; opacity: 0; }
@@ -71,7 +74,7 @@ a.ca-pill:hover { filter: brightness(0.97); }
 .ca-alert-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c; font: 700 12px var(--font-sans); cursor: pointer; }
 .ca-alert-pill:hover { background: #fee2e2; }
 .ca-alert-pill.active { box-shadow: 0 0 0 2px #fecaca; }
-.tls-error-panel { position: absolute; right: 24px; top: calc(100% + 6px); z-index: 40; width: 430px; max-width: calc(100vw - 48px); max-height: 340px; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 28px rgba(15,23,42,.14); }
+.tls-error-panel { flex: 1 0 100%; max-height: 220px; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 20px rgba(15,23,42,.08); }
 .tls-error-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #fff; border-bottom: 1px solid var(--line); color: var(--text-2); font: 600 12px var(--font-sans); }
 .tls-error-head button { border: 0; background: transparent; color: var(--text-3); font-size: 15px; cursor: pointer; padding: 0 2px; }
 .tls-error-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
@@ -139,8 +142,6 @@ body.col-resizing * { cursor: col-resize !important; }
 .filters .client-ip-input input { font-family: var(--font-mono); }
 .filters select { width: 110px; }
 .filters .status-input { width: 84px; }
-.filters .danger { border: 1px solid #fecaca; background: #fff; color: var(--red); border-radius: 6px; cursor: pointer; padding: 0 14px; font-size: 12px; font-weight: 600; transition: background .15s; }
-.filters .danger:hover { background: #fef2f2; }
 .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .filter-chips button { border: 1px solid var(--line); background: #f8fafc; color: #475569; border-radius: 99px; padding: 3px 10px; font-size: 11px; cursor: pointer; }
 .filter-chips button:hover { background: #eef2f7; }
@@ -149,7 +150,6 @@ body.col-resizing * { cursor: col-resize !important; }
 table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
 th { position: sticky; top: 0; z-index: 2; background: var(--panel); color: var(--text-3); text-align: left; font: 600 11px var(--font-sans); padding: 9px 10px; border-bottom: 1px solid var(--line); }
 th:nth-child(1) { width: 162px } th:nth-child(2) { width: 82px } th:nth-child(4) { width: 152px } th:nth-child(5) { width: 66px } th:nth-child(6) { width: 74px } th:nth-child(7) { width: 76px }
-.workspace.has-detail th:nth-child(1), .workspace.has-detail td:nth-child(1),
 .workspace.has-detail th:nth-child(6), .workspace.has-detail td:nth-child(6) { display: none; }
 /* 记录列表宽度不足时折叠客户端列（打开详情面板后列表变窄也会触发） */
 @container (max-width: 640px) {

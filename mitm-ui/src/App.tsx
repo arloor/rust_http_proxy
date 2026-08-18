@@ -562,7 +562,13 @@ function App() {
           )}
           <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● 实时' : '○ 重连中'}</span>
           <span className="record-count" title="数据库中的记录总条数">{recordsTotal} 条记录</span>
-          <span className="record-count" title="mitm.sqlite3 主库 + WAL + SHM 总大小；下调留存并应用后会压缩。每 10 秒刷新">DB {formatBytes(settings?.db_bytes ?? 0)}</span>
+          <span className="record-count" title="mitm.sqlite3 主库 + WAL + SHM 总大小；下调留存并应用后会压缩。每 10 秒刷新">{formatBytes(settings?.db_bytes ?? 0)}</span>
+          <button
+            className="danger"
+            disabled={recordsTotal === 0}
+            title="清空数据库中的全部 MITM 明文记录，不可撤销"
+            onClick={() => void clearRecords()}
+          >清空记录</button>
         </div>
         {showTlsErrors && tlsErrorTotal > 0 && (
           <div className="tls-error-panel">
@@ -677,7 +683,6 @@ function App() {
             <ClearableInput aria-label="客户端 IP" className="client-ip-input" placeholder="客户端 IP" value={clientIpInput} onChange={setClientIpInput} />
             <select aria-label="请求方法" value={method} onChange={(e) => setMethod(e.target.value)}>{methods.map((item) => <option key={item} value={item}>{item || '全部方法'}</option>)}</select>
             <ClearableInput aria-label="状态码" className="status-input" placeholder="状态码" value={status} onChange={(value) => setStatus(value.replace(/\D/g, '').slice(0, 3))} />
-            <button className="danger" onClick={() => void clearRecords()}>清空</button>
           </div>
           {hasFilters && (
             <div className="filter-chips">

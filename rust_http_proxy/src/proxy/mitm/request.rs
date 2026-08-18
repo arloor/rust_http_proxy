@@ -64,18 +64,24 @@ pub(super) async fn handle_mitm_request(
         .parse::<http::uri::Authority>()
         .map(|authority| authority.host().to_ascii_lowercase())
         .unwrap_or_else(|_| request_authority.to_ascii_lowercase());
-    let record_id = context.manager.begin_record(RecordMetadata {
-        client_ip: access_label.client.clone(),
-        client_port: client_socket_addr.port(),
-        proxy_username: access_label.username.clone(),
-        authority: request_authority.clone(),
-        host: request_host,
-        path: req.uri().path().to_owned(),
-        query: req.uri().query().map(str::to_owned),
-        method: req.method().to_string(),
-        request_version: req.version(),
-        request_headers: req.headers(),
-    });
+    let request_path = req.uri().path().to_owned();
+    // 面板自己的 /mitm 流量如果也落库，会把留存窗口和 URL 分类挤满。
+    let record_id = if crate::mitm_web::is_management_path(&request_path) {
+        None
+    } else {
+        context.manager.begin_record(RecordMetadata {
+            client_ip: access_label.client.clone(),
+            client_port: client_socket_addr.port(),
+            proxy_username: access_label.username.clone(),
+            authority: request_authority.clone(),
+            host: request_host,
+            path: request_path,
+            query: req.uri().query().map(str::to_owned),
+            method: req.method().to_string(),
+            request_version: req.version(),
+            request_headers: req.headers(),
+        })
+    };
 
     info!(
         "[mitm] {:^35} ==> {} authority={} {:?} {:?}",

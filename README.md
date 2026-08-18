@@ -221,7 +221,7 @@ rust_http_proxy -p 7788 \
 
 #### MITM 管理与实时明文查看
 
-程序始终创建 MITM SQLite 数据库（默认 `<log-dir>/mitm.sqlite3`），React 管理面板内嵌在可执行文件中，可通过 `http(s)://代理地址/mitm` 访问。面板、静态资源、API 和实时 SSE 均使用 `--users` 配置的 Basic 账号认证；未配置账号时 `/mitm` 始终返回 `401`。
+程序始终创建 MITM SQLite 数据库（默认 `<log-dir>/mitm.sqlite3`），React 管理面板内嵌在可执行文件中，可通过 `http(s)://代理地址/mitm` 访问。面板、静态资源、API 和实时 SSE 均使用 `--users` 配置的 Basic 账号认证；未配置账号时 `/mitm` 始终返回 `401`。如果面板主机名本身也命中 MITM 目标，`/mitm` 管理请求不会写入抓取记录，避免把留存窗口挤满。
 
 ```bash
 rust_http_proxy -p 7788 \
@@ -238,6 +238,15 @@ rust_http_proxy -p 7788 \
 - 按域名、路径、客户端 IP、方法、状态码和关键字查看最近请求；请求与响应 headers/body 使用同一个记录 ID 关联。
 - 实时显示流式响应。关闭抓取后，在途记录会保留已经捕获的部分并标记为 `capture_stopped`；客户端提前断开、body 未传输完的记录会标记为 `interrupted`（重启时历史 `capturing` 记录也会统一收尾为该状态）。204 / `Content-Length: 0` / 已 `END_STREAM` 的空响应即使下游不再 poll body，也会记为 `complete`。
 - 默认保留最近 10,000 条记录，请求与响应 body 分别最多保存 64 KiB；可在面板中调整。
+
+本地开发面板时，可在 `mitm-ui` 目录启动 Vite，并把 API / CA 代理到正在运行的代理进程。`EventSource` 无法自定义请求头，所以 Basic 认证需要由 Vite 注入：
+
+```bash
+cd mitm-ui
+MITM_DEV_PROXY_TARGET=https://127.0.0.1:444 MITM_DEV_PROXY_USER=admin:change-me npm run dev
+```
+
+然后打开 `http://127.0.0.1:5173/mitm/`。目标地址若使用自签证书，开发代理会跳过证书校验。
 
 ![alt text](MITM-UI.png)
 

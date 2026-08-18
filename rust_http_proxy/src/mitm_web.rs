@@ -226,3 +226,18 @@ impl IntoResponse for ApiError {
         (status, Json(ErrorBody { error: message })).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::is_management_path;
+
+    #[test]
+    fn management_paths_are_detected() {
+        assert!(is_management_path("/mitm"));
+        assert!(is_management_path("/mitm/"));
+        assert!(is_management_path("/mitm/api/records"));
+        assert!(is_management_path("/mitm/ca.crt"));
+        assert!(!is_management_path("/mitm-extra"));
+        assert!(!is_management_path("/v1/responses"));
+    }
+}
