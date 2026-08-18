@@ -272,7 +272,7 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .sse-event-head em { color: #0f766e; font: 600 10px var(--font-sans); }
 .sse-copy { margin-left: auto; padding: 3px 10px; font-size: 11.5px; }
 .sse-sequence { color: #94a3b8; font-variant-numeric: tabular-nums; }
-.sse-event pre { flex: 1 1 auto; min-height: 0; margin: 0; padding: 8px 9px; max-height: none; overflow: auto; overscroll-behavior: contain; border: 0; border-radius: 0; background: #fff; color: var(--text); }
+.sse-event pre { flex: 1 1 auto; min-height: 0; margin: 0; padding: 8px 9px; max-height: none; overflow: auto; overscroll-behavior: auto; border: 0; border-radius: 0; background: #fff; color: var(--text); }
 .sse-event-head.toggle { cursor: pointer; }
 .sse-event-head.toggle:hover { background: #e2e8f0; }
 .sse-size { color: #b45309; font-weight: 700; font-variant-numeric: tabular-nums; }

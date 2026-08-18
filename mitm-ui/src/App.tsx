@@ -26,6 +26,7 @@ import {
 } from './format'
 import { isEventStream, limitPrettyLines, parseSseFrames, summarizeSseData, SSE_PREVIEW_LINES, type SseFrame } from './sse'
 import { filterUrlGroups } from './urlGroups'
+import { firstNestedScrollTarget, nestedWheelDelta } from './nestedScroll'
 
 const methods = ['', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 const SENSITIVE_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'proxy-authorization'])
@@ -1141,6 +1142,28 @@ function SseBody({ body, onCopy }: { body: string; onCopy: (value: string, label
     setAtLatest(true)
     setUnseen(0)
   }
+
+  useEffect(() => {
+    const list = containerRef.current
+    if (!list) return
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.defaultPrevented) return
+      const target = event.target
+      const pre = target instanceof Element ? target.closest('.sse-events pre') : null
+      const delta = nestedWheelDelta(event)
+      const detail = list.closest('.detail')
+      const scroller = firstNestedScrollTarget([
+        pre instanceof HTMLElement ? pre : null,
+        list,
+        detail instanceof HTMLElement ? detail : null,
+      ], delta)
+      if (!scroller || scroller === pre) return
+      scroller.scrollTop += delta
+      event.preventDefault()
+    }
+    list.addEventListener('wheel', onWheel, { passive: false })
+    return () => list.removeEventListener('wheel', onWheel)
+  }, [frames.length])
 
   if (!frames.length) return <div className="sse-empty">等待首个事件…</div>
   return (
