@@ -164,8 +164,11 @@ tbody tr.selected { background: var(--select); box-shadow: inset 3px 0 var(--sel
 .url-cell strong, .url-cell span { display: block; overflow: hidden; text-overflow: ellipsis; }
 .url-cell strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .url-cell span { color: var(--text-2); font: 12px var(--font-mono); margin-top: 3px; }
-.client-addr { display: block; max-width: 100%; border: 0; background: transparent; padding: 2px 5px; margin: -2px -5px; border-radius: 4px; color: var(--text-2); font: 12px var(--font-mono); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.client-addr:hover { background: #f1f5f9; color: #0f172a; }
+/* height:1px 让子元素 height:100% 撑满整行，避免点到单元格空白处打开详情 */
+.client-cell { padding: 0; height: 1px; vertical-align: stretch; }
+.client-addr { display: flex; align-items: center; box-sizing: border-box; width: 100%; height: 100%; max-width: 100%; border: 0; background: transparent; padding: 0 10px; margin: 0; border-radius: 0; color: var(--text-2); font: 12px var(--font-mono); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.client-addr:hover { background: #e2e8f0; color: #0f172a; }
+tbody tr.selected .client-addr:hover { background: #99f6e4; }
 
 /* ---------- Badges ---------- */
 .method { display: inline-flex; min-width: 46px; justify-content: center; padding: 3px 7px; border-radius: 4px; background: #dbeafe; color: #1e40af; font: 700 11px var(--font-mono); }

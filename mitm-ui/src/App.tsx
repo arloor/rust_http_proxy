@@ -699,7 +699,13 @@ function App() {
                     }}
                   >
                     <td className="mono muted">{formatTime(record.started_at_ms)}</td>
-                    <td className="client-cell">
+                    <td
+                      className="client-cell"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void copyText(record.client_ip, 'IP')
+                      }}
+                    >
                       <button
                         className="client-addr"
                         title="复制客户端 IP"
