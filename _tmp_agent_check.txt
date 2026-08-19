@@ -1,0 +1,7 @@
+hello-from-powershell
+
+Path
+----
+C:\Users\arloor\rust_http_proxy
+
+ganghuan-window\arloor
