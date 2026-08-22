@@ -24,6 +24,7 @@ use crate::linux_axum_handler;
 
 pub(crate) struct AppState {
     pub basic_auth: HashMap<String, String>,
+    pub mitm_basic_auth: HashMap<String, String>,
     pub mitm_manager: Arc<crate::mitm_manager::MitmManager>,
     pub ca_cert_pem: Option<String>,
 }
@@ -31,7 +32,7 @@ pub(crate) struct AppState {
 pub(crate) fn build_router(appstate: AppState) -> Router {
     // merge() 发生在下面的 layer 之后，MITM 路由必须自己挂压缩，
     // 否则 /mitm/api/records/{id} 这类大 JSON 会按明文传输。
-    let mitm_router = crate::mitm_web::router(appstate.basic_auth.clone()).layer(CompressionLayer::new());
+    let mitm_router = crate::mitm_web::router(appstate.mitm_basic_auth.clone()).layer(CompressionLayer::new());
     // build our application with a route
     let router = Router::new()
         .route(

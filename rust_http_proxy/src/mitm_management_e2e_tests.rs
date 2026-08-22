@@ -94,6 +94,41 @@ async fn mitm_routes_require_basic_auth_and_serve_embedded_ui() -> Result<(), Dy
 }
 
 #[tokio::test]
+async fn mitm_routes_use_optional_mitm_users_instead_of_users() -> Result<(), DynError> {
+    const PROXY_AUTH: &str = "Authorization: Basic cHJveHk6cHJveHktcGFzcw==\r\n";
+    let proxy = start_proxy(vec![
+        "--users".to_owned(),
+        "proxy:proxy-pass".to_owned(),
+        "--mitm-users".to_owned(),
+        "admin:test".to_owned(),
+    ])
+    .await?;
+
+    let proxy_user =
+        request(proxy.port, &format!("GET /mitm HTTP/1.1\r\nHost: localhost\r\n{PROXY_AUTH}Connection: close\r\n\r\n"))
+            .await?;
+    assert!(proxy_user.starts_with("HTTP/1.1 401"));
+
+    let mitm_user =
+        request(proxy.port, &format!("GET /mitm HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"))
+            .await?;
+    assert!(mitm_user.starts_with("HTTP/1.1 200"));
+    assert!(mitm_user.contains("<title>MITM 抓取</title>"));
+
+    proxy.shutdown().await?;
+
+    let proxy = start_proxy(vec!["--mitm-users".to_owned(), "admin:test".to_owned()]).await?;
+    let unauthorized =
+        request(proxy.port, "GET /mitm HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await?;
+    assert!(unauthorized.starts_with("HTTP/1.1 401"));
+    let authorized =
+        request(proxy.port, &format!("GET /mitm HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"))
+            .await?;
+    assert!(authorized.starts_with("HTTP/1.1 200"));
+    proxy.shutdown().await
+}
+
+#[tokio::test]
 async fn mitm_api_manages_targets_without_a_global_switch() -> Result<(), DynError> {
     let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned()]).await?;
     let body = r#"{"suffix":".Example.COM."}"#;

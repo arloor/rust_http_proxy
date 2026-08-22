@@ -23,11 +23,11 @@ rust_http_proxy -p 7788 \
 
 ## MITM 管理与实时明文查看
 
-程序始终创建 MITM SQLite 数据库（默认 `<log-dir>/mitm.sqlite3`），React 管理面板内嵌在可执行文件中，可通过 `http(s)://代理地址/mitm` 访问。面板、静态资源、API 和实时 SSE 均使用 `--users` 配置的 Basic 账号认证；未配置账号时 `/mitm` 始终返回 `401`。如果面板主机名本身也命中 MITM 目标，`/mitm` 管理请求不会写入抓取记录，避免把留存窗口挤满。
+程序始终创建 MITM SQLite 数据库（默认 `<log-dir>/mitm.sqlite3`），React 管理面板内嵌在可执行文件中，可通过 `http(s)://代理地址/mitm` 访问。面板、静态资源、API 和实时 SSE 均使用 `--mitm-users` 配置的 Basic 账号认证；未指定 `--mitm-users` 时回退到 `--users`。未配置账号时 `/mitm` 始终返回 `401`。如果面板主机名本身也命中 MITM 目标，`/mitm` 管理请求不会写入抓取记录，避免把留存窗口挤满。
 
 ```bash
 rust_http_proxy -p 7788 \
-  --users admin:change-me \
+  --mitm-users admin:change-me \
   --mitm-ca-cert mitm-ca-cert.pem \
   --mitm-ca-key mitm-ca-key.pem \
   --mitm-db-file /var/lib/rust_http_proxy/mitm.sqlite3
@@ -62,7 +62,7 @@ Docker 运行时请挂载数据库目录，否则容器删除后记录和动态�
 docker run --rm --net host \
   -v /srv/rust_http_proxy:/data \
   quay.io/arloor/rust_http_proxy -p 7788 \
-  --users admin:change-me \
+  --mitm-users admin:change-me \
   --mitm-db-file /data/mitm.sqlite3 \
   --mitm-ca-cert /data/mitm-ca-cert.pem \
   --mitm-ca-key /data/mitm-ca-key.pem

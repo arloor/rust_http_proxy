@@ -81,6 +81,10 @@ Options:
           新 MITM 数据库中单个请求或响应 body 的默认抓取字节上限 [default: 1048576]
       --mitm-stub-config-file <FILE_PATH>
           MITM stub YAML 配置文件，按 authority + path 返回静态响应或转发到 HTTP/HTTPS upstream
+      --mitm-users <USER>
+          MITM 管理面板（/mitm）的 Basic 认证用户。未指定时回退到 --users。
+          格式为 'username:password'
+          可以多次指定来实现多用户
   -h, --help
           Print help
 ```

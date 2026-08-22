@@ -159,12 +159,21 @@ pub struct Param {
         help = "MITM stub YAML 配置文件，按 authority + path 返回静态响应或转发到 HTTP/HTTPS upstream"
     )]
     mitm_stub_config_file: Option<String>,
+    #[arg(
+        long,
+        value_name = "USER",
+        help = "MITM 管理面板（/mitm）的 Basic 认证用户。未指定时回退到 --users。\n\
+    格式为 'username:password'\n\
+    可以多次指定来实现多用户"
+    )]
+    mitm_users: Vec<String>,
 }
 
 pub(crate) struct Config {
     pub(crate) cert: String,
     pub(crate) key: String,
     pub(crate) basic_auth: HashMap<String, String>,
+    pub(crate) mitm_basic_auth: HashMap<String, String>,
     pub(crate) referer_keywords_to_self: Vec<String>,
     pub(crate) static_cache_max_age: u32,
     pub(crate) never_ask_for_auth: bool,
@@ -266,6 +275,11 @@ impl TryFrom<Param> for Config {
             }
         });
         let basic_auth = parse_basic_auth_users(param.users);
+        let mitm_basic_auth = if param.mitm_users.is_empty() {
+            basic_auth.clone()
+        } else {
+            parse_basic_auth_users(param.mitm_users)
+        };
         let static_basic_auth = parse_basic_auth_users(param.static_auth_users.clone());
         if !param.static_auth_path_prefix.is_empty() && static_basic_auth.is_empty() {
             return Err(
@@ -324,6 +338,7 @@ impl TryFrom<Param> for Config {
             cert: param.cert,
             key: param.key,
             basic_auth,
+            mitm_basic_auth,
             referer_keywords_to_self: param.referer_keywords_to_self,
             static_cache_max_age: param.static_cache_max_age,
             never_ask_for_auth: param.never_ask_for_auth,
@@ -451,6 +466,7 @@ fn log_config(config: &Config) {
         info!("listen host is {host}");
     }
     info!("basic auth is {:?}", config.basic_auth);
+    info!("mitm basic auth is {:?}", config.mitm_basic_auth);
     if !config.location_specs.locations.is_empty() {
         info!("location configs: ");
     }
@@ -501,5 +517,34 @@ mod tests {
         let allow = AllowCIRRS(vec![parse_ip_network("::1/128").unwrap()]);
         let from_v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, 443));
         assert!(allow.check_serving_control(from_v6).is_ok());
+    }
+
+    #[test]
+    fn mitm_users_fall_back_to_users_when_unspecified() -> Result<(), crate::DynError> {
+        let param = Param::parse_from(["rust_http_proxy", "--users", "alice:secret"]);
+        let config = Config::try_from(param)?;
+        let encoded = general_purpose::STANDARD.encode("alice:secret");
+        let expected_key = format!("Basic {encoded}");
+        assert_eq!(config.basic_auth.get(&expected_key), Some(&"alice".to_string()));
+        assert_eq!(config.mitm_basic_auth, config.basic_auth);
+        Ok(())
+    }
+
+    #[test]
+    fn mitm_users_override_users_when_specified() -> Result<(), crate::DynError> {
+        let param = Param::parse_from([
+            "rust_http_proxy",
+            "--users",
+            "alice:secret",
+            "--mitm-users",
+            "bob:other",
+        ]);
+        let config = Config::try_from(param)?;
+        let proxy_key = format!("Basic {}", general_purpose::STANDARD.encode("alice:secret"));
+        let mitm_key = format!("Basic {}", general_purpose::STANDARD.encode("bob:other"));
+        assert_eq!(config.basic_auth.get(&proxy_key), Some(&"alice".to_string()));
+        assert_eq!(config.mitm_basic_auth.get(&mitm_key), Some(&"bob".to_string()));
+        assert!(!config.mitm_basic_auth.contains_key(&proxy_key));
+        Ok(())
     }
 }

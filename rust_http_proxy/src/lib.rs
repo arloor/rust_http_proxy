@@ -98,6 +98,7 @@ fn create_future(
 
     let router = build_router(AppState {
         basic_auth,
+        mitm_basic_auth: config.mitm_basic_auth.clone(),
         mitm_manager,
         ca_cert_pem,
     });
