@@ -1,4 +1,5 @@
 use std::io::{self, ErrorKind, Write as _};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::extract::Request;
@@ -10,6 +11,12 @@ use hyper::Response;
 use hyper::body::{Bytes, Incoming};
 
 use crate::mitm_manager::{BodyDirection, MitmManager};
+use crate::proxy::empty_body;
+
+const CONNECTION_CLOSED_BEFORE_BODY_ENDED: &str = "connection closed before body stream ended";
+
+const CONNECTION_CLOSED_CLIENT_MAY_NOT_READ: &str =
+    "connection closed before body stream ended; possibly because the client did not read the body";
 
 pub(super) fn map_mitm_request_body(
     request: Request<Incoming>, manager: Arc<MitmManager>, record_id: Option<String>,
@@ -42,36 +49,16 @@ pub(super) async fn capture_and_drain_mitm_request_body(
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
         if let Some(data) = frame.data_ref() {
-            match &mut mode {
-                CaptureMode::Plaintext => capture_bytes(
-                    &manager,
-                    &id,
-                    BodyDirection::Request,
-                    data,
-                    &mut captured,
-                    &mut total,
-                    &mut truncated,
-                ),
-                CaptureMode::Decoded(decoder) => match decoder.decode_chunk(data) {
-                    Ok(decoded) => capture_bytes(
-                        &manager,
-                        &id,
-                        BodyDirection::Request,
-                        &decoded,
-                        &mut captured,
-                        &mut total,
-                        &mut truncated,
-                    ),
-                    Err(error) => mode = CaptureMode::Skip(format!("content decode failed: {error}")),
-                },
-                CaptureMode::Image(image) => match image.decode(data) {
-                    Ok(decoded) => {
-                        image.push(&decoded, manager.body_limit_bytes(), &mut captured, &mut total, &mut truncated)
-                    }
-                    Err(error) => mode = CaptureMode::Skip(format!("content decode failed: {error}")),
-                },
-                CaptureMode::Skip(_) => {}
-            }
+            capture_data(
+                &manager,
+                &id,
+                BodyDirection::Request,
+                &mut mode,
+                data,
+                &mut captured,
+                &mut total,
+                &mut truncated,
+            );
         }
     }
     let mut image_media_type = None;
@@ -367,7 +354,9 @@ pin_project_lite::pin_project! {
 
     // 下游写完头后可能不再 poll 空 body（204/304、Content-Length: 0、H2 END_STREAM）。
     // 客户端提前断开时 body 也不会 poll 到结束。两种情况都走 Drop，必须区分：
-    // 已经结束的空流记 complete，未读完的才记 interrupted。
+    // 已经结束的空流记 complete。未读完的响应则后台继续从上游 drain 以便 dump body，
+    // dump 成功后记 complete，并注明可能是客户端未读取 body。
+    // 没有 Content-Length（chunked / HTTP2 / close-delimited）时读到流结束，body 不超限就完整落库。
     impl PinnedDrop for MitmCaptureBody {
         fn drop(this: Pin<&mut Self>) {
             let this = this.project();
@@ -388,12 +377,29 @@ pin_project_lite::pin_project! {
                 );
                 return;
             }
+            if matches!(*this.direction, BodyDirection::Response)
+                && !*this.stopped
+                && !matches!(*this.mode, CaptureMode::Skip(_))
+                && spawn_interrupted_response_drain(
+                    this.inner,
+                    this.manager,
+                    this.record_id,
+                    this.mode,
+                    this.captured_bytes,
+                    this.total_bytes,
+                    this.truncated,
+                    this.stopped,
+                    this.completed,
+                )
+            {
+                return;
+            }
             *this.completed = true;
             if !*this.stopped {
                 this.manager.finish_body(
                     this.record_id,
                     *this.direction,
-                    Some("connection closed before body stream ended".to_owned()),
+                    Some(CONNECTION_CLOSED_BEFORE_BODY_ENDED.to_owned()),
                     None,
                 );
             }
@@ -445,44 +451,16 @@ impl http_body::Body for MitmCaptureBody {
                         );
                     }
                 } else if let Some(data) = frame.data_ref() {
-                    match this.mode {
-                        CaptureMode::Plaintext => capture_bytes(
-                            this.manager,
-                            this.record_id,
-                            *this.direction,
-                            data,
-                            this.captured_bytes,
-                            this.total_bytes,
-                            this.truncated,
-                        ),
-                        CaptureMode::Decoded(decoder) => match decoder.decode_chunk(data) {
-                            Ok(decoded) => capture_bytes(
-                                this.manager,
-                                this.record_id,
-                                *this.direction,
-                                &decoded,
-                                this.captured_bytes,
-                                this.total_bytes,
-                                this.truncated,
-                            ),
-                            Err(error) => {
-                                *this.mode = CaptureMode::Skip(format!("content decode failed: {error}"));
-                            }
-                        },
-                        CaptureMode::Image(image) => match image.decode(data) {
-                            Ok(decoded) => image.push(
-                                &decoded,
-                                this.manager.body_limit_bytes(),
-                                this.captured_bytes,
-                                this.total_bytes,
-                                this.truncated,
-                            ),
-                            Err(error) => {
-                                *this.mode = CaptureMode::Skip(format!("content decode failed: {error}"));
-                            }
-                        },
-                        CaptureMode::Skip(_) => {}
-                    }
+                    capture_data(
+                        this.manager,
+                        this.record_id,
+                        *this.direction,
+                        this.mode,
+                        data,
+                        this.captured_bytes,
+                        this.total_bytes,
+                        this.truncated,
+                    );
                 }
                 // HTTP/1 writers can stop polling once the body's exact size hint reaches zero.
                 // In that case the wrapped body may never be polled again to return `None`, and
@@ -540,6 +518,169 @@ impl http_body::Body for MitmCaptureBody {
 
 fn stream_already_complete(inner: &BoxBody<Bytes, io::Error>) -> bool {
     inner.is_end_stream() || inner.size_hint().exact() == Some(0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn capture_data(
+    manager: &MitmManager, record_id: &str, direction: BodyDirection, mode: &mut CaptureMode, data: &[u8],
+    captured_bytes: &mut usize, total_bytes: &mut usize, truncated: &mut bool,
+) {
+    match mode {
+        CaptureMode::Plaintext => {
+            capture_bytes(manager, record_id, direction, data, captured_bytes, total_bytes, truncated)
+        }
+        CaptureMode::Decoded(decoder) => match decoder.decode_chunk(data) {
+            Ok(decoded) => {
+                capture_bytes(manager, record_id, direction, &decoded, captured_bytes, total_bytes, truncated)
+            }
+            Err(error) => *mode = CaptureMode::Skip(format!("content decode failed: {error}")),
+        },
+        CaptureMode::Image(image) => match image.decode(data) {
+            Ok(decoded) => image.push(&decoded, manager.body_limit_bytes(), captured_bytes, total_bytes, truncated),
+            Err(error) => *mode = CaptureMode::Skip(format!("content decode failed: {error}")),
+        },
+        CaptureMode::Skip(_) => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_interrupted_response_drain(
+    inner: Pin<&mut BoxBody<Bytes, io::Error>>, manager: &Arc<MitmManager>, record_id: &str, mode: &mut CaptureMode,
+    captured_bytes: &mut usize, total_bytes: &mut usize, truncated: &mut bool, stopped: &mut bool,
+    completed: &mut bool,
+) -> bool {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return false;
+    };
+    *completed = true;
+    let inner = std::mem::replace(Pin::get_mut(inner), empty_body());
+    let manager = Arc::clone(manager);
+    let record_id = record_id.to_owned();
+    let mode = std::mem::replace(mode, CaptureMode::Skip(String::new()));
+    let captured_bytes = *captured_bytes;
+    let total_bytes = *total_bytes;
+    let truncated = *truncated;
+    let stopped = *stopped;
+    drop(handle.spawn(drain_interrupted_response_body(
+        inner,
+        manager,
+        record_id,
+        mode,
+        captured_bytes,
+        total_bytes,
+        truncated,
+        stopped,
+    )));
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn drain_interrupted_response_body(
+    mut inner: BoxBody<Bytes, io::Error>, manager: Arc<MitmManager>, record_id: String, mut mode: CaptureMode,
+    mut captured_bytes: usize, mut total_bytes: usize, mut truncated: bool, mut stopped: bool,
+) {
+    let mut stream_error = false;
+    // 未知长度只能靠流结束判断；超限后仍读完上游，避免截断解码器/连接，只是不再追加落库。
+    loop {
+        match inner.frame().await {
+            Some(Ok(frame)) => {
+                if !manager.capture_enabled() {
+                    if !stopped {
+                        stopped = true;
+                        manager.finish_body(
+                            &record_id,
+                            BodyDirection::Response,
+                            Some("capture stopped by runtime setting".to_owned()),
+                            None,
+                        );
+                    }
+                    break;
+                }
+                if let Some(data) = frame.data_ref() {
+                    if truncated {
+                        continue;
+                    }
+                    capture_data(
+                        &manager,
+                        &record_id,
+                        BodyDirection::Response,
+                        &mut mode,
+                        data,
+                        &mut captured_bytes,
+                        &mut total_bytes,
+                        &mut truncated,
+                    );
+                }
+            }
+            Some(Err(_)) => {
+                stream_error = true;
+                break;
+            }
+            None => break,
+        }
+    }
+    finish_interrupted_response_capture(
+        &manager,
+        &record_id,
+        &mut mode,
+        &mut captured_bytes,
+        &mut total_bytes,
+        &mut truncated,
+        stopped,
+        stream_error,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_interrupted_response_capture(
+    manager: &MitmManager, record_id: &str, mode: &mut CaptureMode, captured_bytes: &mut usize,
+    total_bytes: &mut usize, truncated: &mut bool, stopped: bool, stream_error: bool,
+) {
+    if !stopped {
+        let mut image_media_type = None;
+        match mode {
+            CaptureMode::Decoded(decoder) => {
+                if let Ok(decoded) = decoder.finish() {
+                    capture_bytes(
+                        manager,
+                        record_id,
+                        BodyDirection::Response,
+                        &decoded,
+                        captured_bytes,
+                        total_bytes,
+                        truncated,
+                    );
+                }
+            }
+            CaptureMode::Image(image) => {
+                let (_note, media_type) = finish_image_capture(
+                    manager,
+                    record_id,
+                    BodyDirection::Response,
+                    image,
+                    captured_bytes,
+                    total_bytes,
+                    truncated,
+                );
+                image_media_type = media_type;
+            }
+            CaptureMode::Skip(_) | CaptureMode::Plaintext => {}
+        }
+        manager.finish_body(
+            record_id,
+            BodyDirection::Response,
+            Some(CONNECTION_CLOSED_CLIENT_MAY_NOT_READ.to_owned()),
+            image_media_type,
+        );
+    }
+    manager.finish_record(
+        record_id,
+        if stopped || stream_error {
+            "interrupted"
+        } else {
+            "complete"
+        },
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -682,9 +823,10 @@ mod tests {
         Ok(())
     }
 
-    // 客户端提前断开导致 body 未读完就被 Drop 时，记录应收尾为 interrupted 而不是永远 capturing
+    // 客户端提前断开导致 body 未读完就被 Drop 时，后台继续 dump 上游 body，
+    // dump 成功后记 complete，并注明可能是客户端未读取 body。
     #[tokio::test]
-    async fn dropped_body_marks_record_interrupted() -> Result<(), crate::DynError> {
+    async fn dropped_body_dumps_content_and_marks_complete() -> Result<(), crate::DynError> {
         let path = std::env::temp_dir().join(format!(
             "rust_http_proxy_mitm_capture_drop_{}_{:x}.sqlite3",
             std::process::id(),
@@ -722,7 +864,114 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
         let detail = manager.get_record(id).await?.ok_or("record not found")?;
-        assert_eq!(detail.summary.capture_state, "interrupted");
+        assert_eq!(detail.summary.capture_state, "complete");
+        assert_eq!(detail.response_body, "never polled");
+        assert_eq!(detail.response_body_note.as_deref(), Some(CONNECTION_CLOSED_CLIENT_MAY_NOT_READ));
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dropped_gzip_response_body_is_decoded_and_marked_complete() -> Result<(), crate::DynError> {
+        let (manager, path, id) = open_capture_record("drop_gzip")?;
+        let compressed = gzip(PLAINTEXT)?;
+        let body = http_body_util::Full::new(Bytes::from(compressed))
+            .map_err(|never: std::convert::Infallible| match never {})
+            .boxed();
+        let decoder = DecoderPipeline::new(&["gzip".to_owned()]).map_err(io::Error::other)?;
+        let wrapped = MitmCaptureBody::new(
+            body,
+            manager.clone(),
+            id.clone(),
+            BodyDirection::Response,
+            CaptureMode::Decoded(decoder),
+        );
+        drop(wrapped);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "complete");
+        assert_eq!(detail.response_body.as_bytes(), PLAINTEXT);
+        assert_eq!(detail.response_body_note.as_deref(), Some(CONNECTION_CLOSED_CLIENT_MAY_NOT_READ));
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dropped_after_partial_poll_dumps_remaining_response_body() -> Result<(), crate::DynError> {
+        let (manager, path, id) = open_capture_record("drop_partial")?;
+        let mut wrapped = MitmCaptureBody::new(
+            PendingChunks::new([Bytes::from_static(b"hello "), Bytes::from_static(b"world")]).boxed(),
+            manager.clone(),
+            id.clone(),
+            BodyDirection::Response,
+            CaptureMode::Plaintext,
+        );
+        let first = wrapped.frame().await;
+        assert!(matches!(first, Some(Ok(_))));
+        drop(wrapped);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "complete");
+        assert_eq!(detail.response_body, "hello world");
+        assert_eq!(detail.response_body_note.as_deref(), Some(CONNECTION_CLOSED_CLIENT_MAY_NOT_READ));
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dropped_unknown_length_body_is_fully_dumped() -> Result<(), crate::DynError> {
+        let (manager, path, id) = open_capture_record("drop_unknown_len")?;
+        let wrapped = MitmCaptureBody::new(
+            PendingChunks::new([
+                Bytes::from_static(b"{\"ok\":"),
+                Bytes::from_static(b"true,"),
+                Bytes::from_static(b"\"n\":1}"),
+            ])
+            .boxed(),
+            manager.clone(),
+            id.clone(),
+            BodyDirection::Response,
+            CaptureMode::Plaintext,
+        );
+        drop(wrapped);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "complete");
+        assert_eq!(detail.response_body, "{\"ok\":true,\"n\":1}");
+        assert!(!detail.response_body_truncated);
+        assert_eq!(detail.response_body_note.as_deref(), Some(CONNECTION_CLOSED_CLIENT_MAY_NOT_READ));
+        drop(manager);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dropped_delayed_unknown_length_body_is_fully_dumped() -> Result<(), crate::DynError> {
+        let (manager, path, id) = open_capture_record("drop_unknown_delayed")?;
+        let wrapped = MitmCaptureBody::new(
+            DelayedUnknownLength::new([Bytes::from_static(b"chunk-a"), Bytes::from_static(b"-chunk-b")]).boxed(),
+            manager.clone(),
+            id.clone(),
+            BodyDirection::Response,
+            CaptureMode::Plaintext,
+        );
+        drop(wrapped);
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        let detail = manager.get_record(id).await?.ok_or("record not found")?;
+        assert_eq!(detail.summary.capture_state, "complete");
+        assert_eq!(detail.response_body, "chunk-a-chunk-b");
+        assert_eq!(detail.response_body_note.as_deref(), Some(CONNECTION_CLOSED_CLIENT_MAY_NOT_READ));
         drop(manager);
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         let _ = std::fs::remove_file(path);
@@ -1023,6 +1272,77 @@ mod tests {
 
         fn size_hint(&self) -> SizeHint {
             SizeHint::with_exact(self.data.as_ref().map_or(0, |data| data.len()) as u64)
+        }
+    }
+
+    struct PendingChunks {
+        chunks: std::vec::IntoIter<Bytes>,
+    }
+
+    impl PendingChunks {
+        fn new(chunks: impl Into<Vec<Bytes>>) -> Self {
+            Self {
+                chunks: chunks.into().into_iter(),
+            }
+        }
+    }
+
+    impl http_body::Body for PendingChunks {
+        type Data = Bytes;
+        type Error = io::Error;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>, _context: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+            Poll::Ready(self.chunks.next().map(|data| Ok(Frame::data(data))))
+        }
+
+        fn is_end_stream(&self) -> bool {
+            false
+        }
+
+        fn size_hint(&self) -> SizeHint {
+            SizeHint::default()
+        }
+    }
+
+    // 模拟 chunked / 无 Content-Length：帧之间先 Pending 再继续，size_hint 没有精确长度。
+    struct DelayedUnknownLength {
+        chunks: std::vec::IntoIter<Bytes>,
+        pending: bool,
+    }
+
+    impl DelayedUnknownLength {
+        fn new(chunks: impl Into<Vec<Bytes>>) -> Self {
+            Self {
+                chunks: chunks.into().into_iter(),
+                pending: true,
+            }
+        }
+    }
+
+    impl http_body::Body for DelayedUnknownLength {
+        type Data = Bytes;
+        type Error = io::Error;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>, context: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+            if self.pending {
+                self.pending = false;
+                context.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            self.pending = true;
+            Poll::Ready(self.chunks.next().map(|data| Ok(Frame::data(data))))
+        }
+
+        fn is_end_stream(&self) -> bool {
+            false
+        }
+
+        fn size_hint(&self) -> SizeHint {
+            SizeHint::default()
         }
     }
 }
