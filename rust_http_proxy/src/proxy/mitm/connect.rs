@@ -5,7 +5,10 @@ use std::{
 };
 
 use crate::{METRICS, address::host_addr, config::ForwardBypassConfig};
-use {io_x::CounterIO, prom_label::LabelImpl};
+use {
+    io_x::{CounterIO, TimeoutIO},
+    prom_label::LabelImpl,
+};
 
 use axum::extract::Request;
 use http_body_util::combinators::BoxBody;
@@ -31,6 +34,7 @@ use super::request::{MitmRequestContext, handle_mitm_request};
 
 const MITM_PROTOCOL_PEEK_TIMEOUT: Duration = Duration::from_millis(500);
 const MITM_PROTOCOL_PEEK_MAX: usize = 5;
+const MITM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl ProxyHandler {
     /// 代理CONNECT请求
@@ -77,10 +81,14 @@ impl ProxyHandler {
         };
         tokio::task::spawn(async move {
             let access_tag = format!("{} -> {}", client_socket_addr.ip().to_canonical(), target);
-            let src_upgraded = match hyper::upgrade::on(req).await {
-                Ok(src_upgraded) => src_upgraded,
-                Err(e) => {
+            let src_upgraded = match tokio::time::timeout(MITM_HANDSHAKE_TIMEOUT, hyper::upgrade::on(req)).await {
+                Ok(Ok(src_upgraded)) => src_upgraded,
+                Ok(Err(e)) => {
                     warn!("[mitm upgrade error] [{}]: {}", access_tag, e);
+                    return;
+                }
+                Err(_) => {
+                    warn!("[mitm upgrade timeout] [{}]", access_tag);
                     return;
                 }
             };
@@ -113,16 +121,27 @@ impl ProxyHandler {
             }
 
             let tls_acceptor = TlsAcceptor::from(tls_config);
-            let tls_stream = match tls_acceptor.accept(PrefixedIo::new(src_upgraded, peeked)).await {
-                Ok(tls_stream) => tls_stream,
-                Err(e) => {
+            let tls_stream = match tokio::time::timeout(
+                MITM_HANDSHAKE_TIMEOUT,
+                tls_acceptor.accept(PrefixedIo::new(src_upgraded, peeked)),
+            )
+            .await
+            {
+                Ok(Ok(tls_stream)) => tls_stream,
+                Ok(Err(e)) => {
                     if is_ca_trust_error(&e) {
                         mitm_request_context.manager.record_tls_error(&target, &client_ip);
                     }
                     warn!("[mitm tls accept error] [{}]: {}", access_tag, e);
                     return;
                 }
+                Err(_) => {
+                    warn!("[mitm tls handshake timeout] [{}]", access_tag);
+                    return;
+                }
             };
+            // TimeoutIO 内含 !Unpin 的 Sleep，hyper 服务端要求流 Unpin，因此装箱后再包一层。
+            let tls_stream = IdleTimeoutIo::new(tls_stream, crate::IDLE_TIMEOUT);
 
             let service = service_fn(move |req| {
                 let mitm_proxy_client = mitm_proxy_client.clone();
@@ -416,6 +435,66 @@ where
         self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
         self.project().inner.poll_shutdown(cx)
+    }
+}
+
+struct IdleTimeoutIo<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    inner: std::pin::Pin<Box<TimeoutIO<T>>>,
+}
+
+impl<T> IdleTimeoutIo<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    fn new(inner: T, timeout: Duration) -> Self {
+        Self {
+            inner: Box::pin(TimeoutIO::new(inner, timeout)),
+        }
+    }
+}
+
+impl<T> AsyncRead for IdleTimeoutIo<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        self.get_mut().inner.as_mut().poll_read(cx, buf)
+    }
+}
+
+impl<T> AsyncWrite for IdleTimeoutIo<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        self.get_mut().inner.as_mut().poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
+        self.get_mut().inner.as_mut().poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        self.get_mut().inner.as_mut().poll_shutdown(cx)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_write_vectored(
+        self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<io::Result<usize>> {
+        self.get_mut().inner.as_mut().poll_write_vectored(cx, bufs)
     }
 }
 

@@ -39,6 +39,9 @@ use crate::{
 pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
 /// 清理任务的执行间隔
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
+const MAX_POOL_KEYS: usize = 1024;
+const MAX_IDLE_HTTP1_PER_KEY: usize = 5;
+const MAX_IDLE_HTTP2_PER_KEY: usize = 1;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DirectProtocol {
@@ -95,7 +98,8 @@ where
 {
     /// Create a new HttpClient
     pub fn new() -> ForwardProxyClient<B> {
-        let cache_conn = Arc::new(Mutex::new(LruCache::with_expiry_duration(CONN_EXPIRE_TIMEOUT)));
+        let cache_conn =
+            Arc::new(Mutex::new(LruCache::with_expiry_duration_and_capacity(CONN_EXPIRE_TIMEOUT, MAX_POOL_KEYS)));
 
         // 启动后台清理任务
         Self::spawn_cleanup_task(cache_conn.clone());
@@ -299,12 +303,8 @@ where
 
         if let Some(cacheable_conn) = c.clone_for_multiplexed_cache() {
             debug!("HTTP/2 connection for host: {access_label} {url} remains cached for multiplexing");
-            self.cache_conn
-                .lock()
-                .await
-                .entry(access_label.clone())
-                .or_insert_with(VecDeque::new)
-                .push_back((cacheable_conn, Instant::now()));
+            let mut cache = self.cache_conn.lock().await;
+            Self::insert_cached_connection(&mut cache, access_label.clone(), cacheable_conn);
         }
 
         let response = c.send_request(req, access_label).await?;
@@ -323,12 +323,8 @@ where
                 match c.ready().await {
                     Ok(_) => {
                         debug!("HTTP connection for host: {access_label} {url} is ready and will be cached");
-                        cache_conn
-                            .lock()
-                            .await
-                            .entry(access_label)
-                            .or_insert_with(VecDeque::new)
-                            .push_back((c, Instant::now()));
+                        let mut cache = cache_conn.lock().await;
+                        Self::insert_cached_connection(&mut cache, access_label, c);
                     }
                     Err(e) => {
                         debug!("HTTP connection for host: {access_label} {url} failed to become ready: {}", e);
@@ -338,6 +334,32 @@ where
         }
 
         Ok(response)
+    }
+
+    fn insert_cached_connection(
+        cache: &mut LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>, access_label: AccessLabel,
+        connection: HttpConnection<B>,
+    ) {
+        let max_idle = if connection.is_multiplexed() {
+            MAX_IDLE_HTTP2_PER_KEY
+        } else {
+            MAX_IDLE_HTTP1_PER_KEY
+        };
+        let multiplexed = connection.is_multiplexed();
+        let queue = cache.entry(access_label).or_insert_with(VecDeque::new);
+        let same_kind = queue
+            .iter()
+            .filter(|(candidate, _)| candidate.is_multiplexed() == multiplexed)
+            .count();
+        if same_kind >= max_idle {
+            if let Some(index) = queue
+                .iter()
+                .position(|(candidate, _)| candidate.is_multiplexed() == multiplexed)
+            {
+                queue.remove(index);
+            }
+        }
+        queue.push_back((connection, Instant::now()));
     }
 }
 

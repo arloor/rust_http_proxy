@@ -1,4 +1,4 @@
-use std::io::{self, ErrorKind, Write as _};
+use std::io::{self, ErrorKind, Write};
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -63,21 +63,15 @@ pub(super) async fn capture_and_drain_mitm_request_body(
     }
     let mut image_media_type = None;
     let note = match &mut mode {
-        CaptureMode::Decoded(decoder) => match decoder.finish() {
-            Ok(decoded) => {
-                capture_bytes(
-                    &manager,
-                    &id,
-                    BodyDirection::Request,
-                    &decoded,
-                    &mut captured,
-                    &mut total,
-                    &mut truncated,
-                );
-                truncated.then(|| "body truncated at configured limit".to_owned())
-            }
-            Err(error) => Some(format!("content decode finish failed: {error}")),
-        },
+        CaptureMode::Decoded(decoder) => finish_decoded_capture(
+            decoder,
+            &manager,
+            &id,
+            BodyDirection::Request,
+            &mut captured,
+            &mut total,
+            &mut truncated,
+        ),
         CaptureMode::Image(image) => {
             let (note, media_type) = finish_image_capture(
                 &manager,
@@ -139,17 +133,23 @@ struct ImageCapture {
 }
 
 impl ImageCapture {
-    fn decode(&mut self, data: &[u8]) -> io::Result<Bytes> {
+    fn decode_limited(&mut self, data: &[u8], max_output: usize) -> io::Result<(Bytes, bool)> {
         match &mut self.decoder {
-            Some(decoder) => decoder.decode_chunk(data),
-            None => Ok(Bytes::copy_from_slice(data)),
+            Some(decoder) => decoder.decode_chunk(data, max_output),
+            None => Ok((Bytes::copy_from_slice(data), false)),
         }
     }
 
-    fn finish(&mut self) -> io::Result<Bytes> {
+    fn finish_limited(&mut self, max_output: usize) -> io::Result<(Bytes, bool)> {
         match &mut self.decoder {
-            Some(decoder) => decoder.finish(),
-            None => Ok(Bytes::new()),
+            Some(decoder) => decoder.finish(max_output),
+            None => Ok((Bytes::new(), false)),
+        }
+    }
+
+    fn stop_decoder(&mut self) {
+        if let Some(decoder) = &mut self.decoder {
+            decoder.stop();
         }
     }
 
@@ -240,6 +240,7 @@ fn is_previewable_image_media_type(media_type: &str) -> bool {
 
 struct DecoderPipeline {
     stages: Vec<DecoderStage>,
+    stopped: bool,
 }
 
 impl DecoderPipeline {
@@ -249,91 +250,196 @@ impl DecoderPipeline {
             .rev()
             .map(|encoding| DecoderStage::new(encoding))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { stages })
+        Ok(Self { stages, stopped: false })
     }
 
-    fn decode_chunk(&mut self, compressed: &[u8]) -> io::Result<Bytes> {
-        let mut output = compressed.to_vec();
-        for stage in &mut self.stages {
-            output = stage.decode_chunk(&output)?;
+    fn stop(&mut self) {
+        self.stopped = true;
+    }
+
+    fn decode_chunk(&mut self, compressed: &[u8], max_output: usize) -> io::Result<(Bytes, bool)> {
+        if self.stopped || max_output == 0 {
+            self.stopped = true;
+            return Ok((Bytes::new(), true));
         }
-        Ok(Bytes::from(output))
+        let mut output = compressed.to_vec();
+        let last = self.stages.len().saturating_sub(1);
+        for (index, stage) in self.stages.iter_mut().enumerate() {
+            let (next, truncated) = stage.decode_chunk(&output, stage_output_limit(index == last, max_output))?;
+            output = next;
+            if truncated {
+                self.stopped = true;
+                if index != last {
+                    return Ok((Bytes::new(), true));
+                }
+                return Ok((Bytes::from(output), true));
+            }
+        }
+        Ok((Bytes::from(output), false))
     }
 
-    fn finish(&mut self) -> io::Result<Bytes> {
+    fn finish(&mut self, max_output: usize) -> io::Result<(Bytes, bool)> {
+        if self.stopped {
+            return Ok((Bytes::new(), true));
+        }
         let mut decoded = Vec::new();
+        let last = self.stages.len().saturating_sub(1);
         for index in 0..self.stages.len() {
+            if decoded.len() >= max_output {
+                self.stopped = true;
+                decoded.truncate(max_output);
+                return Ok((Bytes::from(decoded), true));
+            }
             let (finished, remaining) = self.stages.split_at_mut(index + 1);
-            let mut output = finished[index].finish()?;
-            for stage in remaining {
-                output = stage.decode_chunk(&output)?;
+            let remaining_budget = max_output.saturating_sub(decoded.len());
+            let (mut output, truncated) =
+                finished[index].finish(stage_output_limit(index == last, remaining_budget))?;
+            if truncated && index != last {
+                self.stopped = true;
+                return Ok((Bytes::from(decoded), true));
+            }
+            for (offset, stage) in remaining.iter_mut().enumerate() {
+                let is_last_stage = index + 1 + offset == last;
+                let (next, stage_truncated) =
+                    stage.decode_chunk(&output, stage_output_limit(is_last_stage, remaining_budget))?;
+                output = next;
+                if stage_truncated && !is_last_stage {
+                    self.stopped = true;
+                    return Ok((Bytes::from(decoded), true));
+                }
+                if stage_truncated {
+                    decoded.extend_from_slice(&output);
+                    decoded.truncate(max_output);
+                    self.stopped = true;
+                    return Ok((Bytes::from(decoded), true));
+                }
             }
             decoded.extend_from_slice(&output);
+            if truncated {
+                decoded.truncate(max_output);
+                self.stopped = true;
+                return Ok((Bytes::from(decoded), true));
+            }
         }
-        Ok(Bytes::from(decoded))
+        if decoded.len() > max_output {
+            decoded.truncate(max_output);
+            self.stopped = true;
+            return Ok((Bytes::from(decoded), true));
+        }
+        Ok((Bytes::from(decoded), false))
     }
 }
 
+fn stage_output_limit(is_last: bool, remaining: usize) -> usize {
+    if is_last {
+        remaining
+    } else {
+        remaining.saturating_mul(4).max(remaining)
+    }
+}
+
+const DECODE_LIMIT_REACHED: &str = "decoded body exceeded capture limit";
+
+struct LimitedBuffer {
+    data: Vec<u8>,
+    limit: usize,
+}
+
+impl LimitedBuffer {
+    fn new() -> Self {
+        Self {
+            data: Vec::new(),
+            limit: usize::MAX,
+        }
+    }
+}
+
+impl Write for LimitedBuffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let remaining = self.limit.saturating_sub(self.data.len());
+        if remaining == 0 {
+            return Err(io::Error::new(ErrorKind::WriteZero, DECODE_LIMIT_REACHED));
+        }
+        let take = remaining.min(buf.len());
+        self.data.extend_from_slice(&buf[..take]);
+        Ok(take)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn is_decode_limit_error(error: &io::Error) -> bool {
+    error.kind() == ErrorKind::WriteZero && error.to_string().contains(DECODE_LIMIT_REACHED)
+}
+
 enum DecoderStage {
-    Gzip(flate2::write::GzDecoder<Vec<u8>>),
-    Deflate(flate2::write::ZlibDecoder<Vec<u8>>),
-    Brotli(Box<brotli::DecompressorWriter<Vec<u8>>>),
-    Zstd(zstd::stream::write::Decoder<'static, Vec<u8>>),
+    Gzip(flate2::write::GzDecoder<LimitedBuffer>),
+    Deflate(flate2::write::ZlibDecoder<LimitedBuffer>),
+    Brotli(Box<brotli::DecompressorWriter<LimitedBuffer>>),
+    Zstd(zstd::stream::write::Decoder<'static, LimitedBuffer>),
 }
 
 impl DecoderStage {
     fn new(encoding: &str) -> Result<Self, String> {
         match encoding.to_ascii_lowercase().as_str() {
-            "gzip" | "x-gzip" => Ok(Self::Gzip(flate2::write::GzDecoder::new(Vec::new()))),
-            "deflate" => Ok(Self::Deflate(flate2::write::ZlibDecoder::new(Vec::new()))),
-            "br" => Ok(Self::Brotli(Box::new(brotli::DecompressorWriter::new(Vec::new(), 4096)))),
-            "zstd" => zstd::stream::write::Decoder::new(Vec::new())
+            "gzip" | "x-gzip" => Ok(Self::Gzip(flate2::write::GzDecoder::new(LimitedBuffer::new()))),
+            "deflate" => Ok(Self::Deflate(flate2::write::ZlibDecoder::new(LimitedBuffer::new()))),
+            "br" => Ok(Self::Brotli(Box::new(brotli::DecompressorWriter::new(LimitedBuffer::new(), 4096)))),
+            "zstd" => zstd::stream::write::Decoder::new(LimitedBuffer::new())
                 .map(Self::Zstd)
                 .map_err(|error| format!("failed to initialize zstd decoder: {error}")),
             _ => Err(format!("unsupported content-encoding: {encoding}")),
         }
     }
 
-    fn decode_chunk(&mut self, compressed: &[u8]) -> io::Result<Vec<u8>> {
+    fn inner_mut(&mut self) -> &mut LimitedBuffer {
         match self {
-            Self::Gzip(decoder) => {
-                decoder.write_all(compressed)?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
-            Self::Deflate(decoder) => {
-                decoder.write_all(compressed)?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
-            Self::Brotli(decoder) => {
-                decoder.write_all(compressed)?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
-            Self::Zstd(decoder) => {
-                decoder.write_all(compressed)?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
+            Self::Gzip(decoder) => decoder.get_mut(),
+            Self::Deflate(decoder) => decoder.get_mut(),
+            Self::Brotli(decoder) => decoder.get_mut(),
+            Self::Zstd(decoder) => decoder.get_mut(),
         }
     }
 
-    fn finish(&mut self) -> io::Result<Vec<u8>> {
-        match self {
-            Self::Gzip(decoder) => {
-                decoder.try_finish()?;
-                Ok(std::mem::take(decoder.get_mut()))
+    fn take_data(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.inner_mut().data)
+    }
+
+    fn write_limited(&mut self, compressed: &[u8], max_output: usize, finish: bool) -> io::Result<(Vec<u8>, bool)> {
+        self.inner_mut().limit = max_output;
+        let result = if finish {
+            match self {
+                Self::Gzip(decoder) => decoder.try_finish(),
+                Self::Deflate(decoder) => decoder.try_finish(),
+                Self::Brotli(decoder) => decoder.close(),
+                Self::Zstd(decoder) => decoder.flush(),
             }
-            Self::Deflate(decoder) => {
-                decoder.try_finish()?;
-                Ok(std::mem::take(decoder.get_mut()))
+        } else {
+            match self {
+                Self::Gzip(decoder) => decoder.write_all(compressed),
+                Self::Deflate(decoder) => decoder.write_all(compressed),
+                Self::Brotli(decoder) => decoder.write_all(compressed),
+                Self::Zstd(decoder) => decoder.write_all(compressed),
             }
-            Self::Brotli(decoder) => {
-                decoder.close()?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
-            Self::Zstd(decoder) => {
-                decoder.flush()?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
+        };
+        match result {
+            Ok(()) => Ok((self.take_data(), false)),
+            Err(error) if is_decode_limit_error(&error) => Ok((self.take_data(), true)),
+            Err(error) => Err(error),
         }
+    }
+
+    fn decode_chunk(&mut self, compressed: &[u8], max_output: usize) -> io::Result<(Vec<u8>, bool)> {
+        self.write_limited(compressed, max_output, false)
+    }
+
+    fn finish(&mut self, max_output: usize) -> io::Result<(Vec<u8>, bool)> {
+        self.write_limited(&[], max_output, true)
     }
 }
 
@@ -529,16 +635,40 @@ fn capture_data(
         CaptureMode::Plaintext => {
             capture_bytes(manager, record_id, direction, data, captured_bytes, total_bytes, truncated)
         }
-        CaptureMode::Decoded(decoder) => match decoder.decode_chunk(data) {
-            Ok(decoded) => {
-                capture_bytes(manager, record_id, direction, &decoded, captured_bytes, total_bytes, truncated)
+        CaptureMode::Decoded(decoder) => {
+            if *truncated {
+                decoder.stop();
+                return;
             }
-            Err(error) => *mode = CaptureMode::Skip(format!("content decode failed: {error}")),
-        },
-        CaptureMode::Image(image) => match image.decode(data) {
-            Ok(decoded) => image.push(&decoded, manager.body_limit_bytes(), captured_bytes, total_bytes, truncated),
-            Err(error) => *mode = CaptureMode::Skip(format!("content decode failed: {error}")),
-        },
+            let remaining = manager.body_limit_bytes().saturating_sub(*captured_bytes);
+            match decoder.decode_chunk(data, remaining) {
+                Ok((decoded, hit_limit)) => {
+                    capture_bytes(manager, record_id, direction, &decoded, captured_bytes, total_bytes, truncated);
+                    if hit_limit {
+                        *truncated = true;
+                        decoder.stop();
+                    }
+                }
+                Err(error) => *mode = CaptureMode::Skip(format!("content decode failed: {error}")),
+            }
+        }
+        CaptureMode::Image(image) => {
+            if *truncated {
+                image.stop_decoder();
+                return;
+            }
+            let remaining = manager.body_limit_bytes().saturating_sub(*captured_bytes);
+            match image.decode_limited(data, remaining) {
+                Ok((decoded, hit_limit)) => {
+                    image.push(&decoded, manager.body_limit_bytes(), captured_bytes, total_bytes, truncated);
+                    if hit_limit {
+                        *truncated = true;
+                        image.stop_decoder();
+                    }
+                }
+                Err(error) => *mode = CaptureMode::Skip(format!("content decode failed: {error}")),
+            }
+        }
         CaptureMode::Skip(_) => {}
     }
 }
@@ -640,17 +770,15 @@ fn finish_interrupted_response_capture(
         let mut image_media_type = None;
         match mode {
             CaptureMode::Decoded(decoder) => {
-                if let Ok(decoded) = decoder.finish() {
-                    capture_bytes(
-                        manager,
-                        record_id,
-                        BodyDirection::Response,
-                        &decoded,
-                        captured_bytes,
-                        total_bytes,
-                        truncated,
-                    );
-                }
+                let _ = finish_decoded_capture(
+                    decoder,
+                    manager,
+                    record_id,
+                    BodyDirection::Response,
+                    captured_bytes,
+                    total_bytes,
+                    truncated,
+                );
             }
             CaptureMode::Image(image) => {
                 let (_note, media_type) = finish_image_capture(
@@ -697,12 +825,17 @@ fn finish_capture(
     let mut image_media_type = None;
     if !*stopped {
         match mode {
-            CaptureMode::Decoded(decoder) => match decoder.finish() {
-                Ok(decoded) => {
-                    capture_bytes(manager, record_id, direction, &decoded, captured_bytes, total_bytes, truncated)
-                }
-                Err(error) => note = Some(format!("content decode finish failed: {error}")),
-            },
+            CaptureMode::Decoded(decoder) => {
+                note = finish_decoded_capture(
+                    decoder,
+                    manager,
+                    record_id,
+                    direction,
+                    captured_bytes,
+                    total_bytes,
+                    truncated,
+                );
+            }
             CaptureMode::Image(image) => {
                 let (image_note, media_type) =
                     finish_image_capture(manager, record_id, direction, image, captured_bytes, total_bytes, truncated);
@@ -730,11 +863,18 @@ fn finish_image_capture(
 ) -> (Option<String>, Option<String>) {
     let mut note = None;
     let mut usable = true;
-    match image.finish() {
-        Ok(decoded) => image.push(&decoded, manager.body_limit_bytes(), captured, total, truncated),
-        Err(error) => {
-            usable = false;
-            note = Some(format!("content decode finish failed: {error}"));
+    if *truncated {
+        image.stop_decoder();
+    } else {
+        match image.finish_limited(manager.body_limit_bytes().saturating_sub(*captured)) {
+            Ok((decoded, hit_limit)) => {
+                image.push(&decoded, manager.body_limit_bytes(), captured, total, truncated);
+                *truncated |= hit_limit;
+            }
+            Err(error) => {
+                usable = false;
+                note = Some(format!("content decode finish failed: {error}"));
+            }
         }
     }
     let mut media_type = None;
@@ -754,6 +894,9 @@ fn capture_bytes(
     total: &mut usize, truncated: &mut bool,
 ) {
     *total = total.saturating_add(data.len());
+    if *truncated {
+        return;
+    }
     let limit = manager.body_limit_bytes();
     let remaining = limit.saturating_sub(*captured);
     let captured_now = remaining.min(data.len());
@@ -764,6 +907,24 @@ fn capture_bytes(
     } else if !data.is_empty() {
         *truncated = true;
         manager.body_chunk(record_id, direction, &[], *total, true);
+    }
+}
+
+fn finish_decoded_capture(
+    decoder: &mut DecoderPipeline, manager: &MitmManager, record_id: &str, direction: BodyDirection,
+    captured: &mut usize, total: &mut usize, truncated: &mut bool,
+) -> Option<String> {
+    if *truncated {
+        decoder.stop();
+        return Some("body truncated at configured limit".to_owned());
+    }
+    match decoder.finish(manager.body_limit_bytes().saturating_sub(*captured)) {
+        Ok((decoded, hit_limit)) => {
+            capture_bytes(manager, record_id, direction, &decoded, captured, total, truncated);
+            *truncated |= hit_limit;
+            truncated.then(|| "body truncated at configured limit".to_owned())
+        }
+        Err(error) => Some(format!("content decode finish failed: {error}")),
     }
 }
 
@@ -1168,10 +1329,40 @@ mod tests {
         let mut pipeline = DecoderPipeline::new(&encodings).map_err(io::Error::other)?;
         let mut decoded = Vec::new();
         for chunk in compressed.chunks(7) {
-            decoded.extend_from_slice(&pipeline.decode_chunk(chunk)?);
+            decoded.extend_from_slice(&pipeline.decode_chunk(chunk, usize::MAX)?.0);
         }
-        decoded.extend_from_slice(&pipeline.finish()?);
+        decoded.extend_from_slice(&pipeline.finish(usize::MAX)?.0);
         assert_eq!(decoded, PLAINTEXT);
+        Ok(())
+    }
+
+    #[test]
+    fn stops_decoding_after_output_limit() -> io::Result<()> {
+        let plaintext = vec![b'a'; 64 * 1024];
+        let compressed = gzip(&plaintext)?;
+        let mut pipeline = DecoderPipeline::new(&["gzip".to_owned()]).map_err(io::Error::other)?;
+        let mut decoded = Vec::new();
+        let mut truncated = false;
+        for chunk in compressed.chunks(32) {
+            let remaining = 1024usize.saturating_sub(decoded.len());
+            if remaining == 0 {
+                break;
+            }
+            let (part, hit_limit) = pipeline.decode_chunk(chunk, remaining)?;
+            decoded.extend_from_slice(&part);
+            truncated |= hit_limit;
+            if hit_limit {
+                break;
+            }
+        }
+        assert!(truncated);
+        assert!(decoded.len() <= 1024);
+        assert!(!decoded.is_empty());
+        assert!(decoded.iter().all(|&byte| byte == b'a'));
+
+        let (part, stopped) = pipeline.decode_chunk(&compressed, 1024)?;
+        assert!(part.is_empty());
+        assert!(stopped);
         Ok(())
     }
 

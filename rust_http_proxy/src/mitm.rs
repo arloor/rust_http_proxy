@@ -15,6 +15,9 @@ use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs
 
 use crate::location::{Upstream, Version, validate_tls_server_name};
 
+const MITM_CERT_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
+const MITM_CERT_CACHE_CAPACITY: usize = 4096;
+
 pub(crate) struct MitmAuthority {
     ca_issuer: Issuer<'static, KeyPair>,
     ca_cert_pem: String,
@@ -35,7 +38,10 @@ impl MitmAuthority {
         Ok(Self {
             ca_issuer,
             ca_cert_pem,
-            cert_cache: Mutex::new(LruCache::with_expiry_duration(Duration::from_secs(60 * 60))),
+            cert_cache: Mutex::new(LruCache::with_expiry_duration_and_capacity(
+                MITM_CERT_CACHE_TTL,
+                MITM_CERT_CACHE_CAPACITY,
+            )),
         })
     }
 
@@ -44,17 +50,28 @@ impl MitmAuthority {
     }
 
     pub(crate) fn server_config_for(&self, host: &str) -> io::Result<Arc<ServerConfig>> {
-        let mut cache = self
-            .cert_cache
-            .lock()
-            .map_err(|_| io::Error::other("MITM certificate cache lock poisoned"))?;
-        if let Some(config) = cache.get(host).cloned() {
+        if let Some(config) = self.cached_server_config(host)? {
             return Ok(config);
         }
 
+        // 未命中时先释放锁再签发，避免随机子域名把其它 host 的证书生成串行堵住。
         let config = Arc::new(self.build_server_config(host)?);
+        let mut cache = self.cert_cache_lock()?;
+        if let Some(existing) = cache.get(host).cloned() {
+            return Ok(existing);
+        }
         cache.insert(host.to_owned(), config.clone());
         Ok(config)
+    }
+
+    fn cert_cache_lock(&self) -> io::Result<std::sync::MutexGuard<'_, LruCache<String, Arc<ServerConfig>>>> {
+        self.cert_cache
+            .lock()
+            .map_err(|_| io::Error::other("MITM certificate cache lock poisoned"))
+    }
+
+    fn cached_server_config(&self, host: &str) -> io::Result<Option<Arc<ServerConfig>>> {
+        Ok(self.cert_cache_lock()?.get(host).cloned())
     }
 
     fn build_server_config(&self, host: &str) -> io::Result<ServerConfig> {
@@ -486,6 +503,11 @@ api.example.com:443:
         assert!(authority.ca_cert_pem().contains("BEGIN CERTIFICATE"));
         let config = authority.server_config_for("example.com")?;
         assert_eq!(config.alpn_protocols, vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+
+        let cached = authority.server_config_for("example.com")?;
+        assert!(Arc::ptr_eq(&config, &cached));
+        let other = authority.server_config_for("other.example")?;
+        assert!(!Arc::ptr_eq(&config, &other));
 
         fs::remove_dir_all(base_dir)?;
         Ok(())

@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use http::{HeaderMap, Version};
-use log::{error, warn};
+use log::{debug, error, warn};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -22,6 +22,7 @@ const DEFAULT_PAGE_LIMIT: usize = 100;
 const MAX_PAGE_LIMIT: usize = 500;
 const MAX_TLS_ERROR_ROWS: i64 = 1000;
 const WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+const WRITER_QUEUE_CAPACITY: usize = 1024;
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct MitmSettings {
@@ -216,6 +217,22 @@ enum StoreCommand {
     Clear(mpsc::SyncSender<Result<(), String>>),
 }
 
+impl StoreCommand {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Create(_) => "create",
+            Self::ResponseHead { .. } => "response_head",
+            Self::Body { .. } => "body",
+            Self::FinishBody { .. } => "finish_body",
+            Self::FinishRecord { .. } => "finish_record",
+            Self::Error { .. } => "error",
+            Self::TlsError { .. } => "tls_error",
+            Self::StopAllCaptures => "stop_all_captures",
+            Self::Clear(_) => "clear",
+        }
+    }
+}
+
 struct PruneRequest {
     max_records: usize,
     compact: bool,
@@ -241,7 +258,7 @@ pub(crate) struct MitmManager {
     max_records: AtomicUsize,
     body_limit_bytes: AtomicUsize,
     targets: RwLock<Vec<MitmTarget>>,
-    writer_tx: mpsc::Sender<StoreCommand>,
+    writer_tx: mpsc::SyncSender<StoreCommand>,
     prune_tx: mpsc::Sender<PruneRequest>,
     events: broadcast::Sender<MitmEvent>,
 }
@@ -283,7 +300,7 @@ impl MitmManager {
         }
         targets.sort_by(|left, right| left.suffix.cmp(&right.suffix));
 
-        let (writer_tx, writer_rx) = mpsc::channel();
+        let (writer_tx, writer_rx) = mpsc::sync_channel(WRITER_QUEUE_CAPACITY);
         let (prune_tx, prune_rx) = mpsc::channel();
         let (events, _) = broadcast::channel(1024);
         let manager = Arc::new(Self {
@@ -493,9 +510,16 @@ impl MitmManager {
             request_version: version_label(metadata.request_version).to_owned(),
             request_headers_json: headers_json(metadata.request_headers),
         };
-        if self.writer_tx.send(StoreCommand::Create(record)).is_err() {
-            error!("MITM SQLite writer stopped; capture record was lost");
-            return None;
+        match self.writer_tx.try_send(StoreCommand::Create(record)) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                warn!("MITM capture queue is full; skipping new record");
+                return None;
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                error!("MITM SQLite writer stopped; capture record was lost");
+                return None;
+            }
         }
         Some(id)
     }
@@ -590,8 +614,11 @@ impl MitmManager {
     pub(crate) async fn clear_records(&self) -> Result<(), ManagerError> {
         let (sender, receiver) = mpsc::sync_channel(1);
         self.writer_tx
-            .send(StoreCommand::Clear(sender))
-            .map_err(|_| ManagerError::Database("MITM SQLite writer stopped".to_owned()))?;
+            .try_send(StoreCommand::Clear(sender))
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => ManagerError::Database("MITM capture queue is full".to_owned()),
+                mpsc::TrySendError::Disconnected(_) => ManagerError::Database("MITM SQLite writer stopped".to_owned()),
+            })?;
         tokio::task::spawn_blocking(move || receiver.recv())
             .await
             .map_err(|error| ManagerError::Database(format!("clear records task failed: {error}")))?
@@ -604,8 +631,19 @@ impl MitmManager {
     }
 
     fn send(&self, command: StoreCommand) {
-        if self.writer_tx.send(command).is_err() {
-            error!("MITM SQLite writer stopped; capture update was lost");
+        let kind = command.kind();
+        match self.writer_tx.try_send(command) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                if kind == "body" {
+                    debug!("MITM capture queue is full; dropped body chunk");
+                } else {
+                    warn!("MITM capture queue is full; dropped {kind} update");
+                }
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                error!("MITM SQLite writer stopped; capture update was lost");
+            }
         }
     }
 
