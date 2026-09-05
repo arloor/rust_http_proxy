@@ -51,7 +51,7 @@ cd "${PROJECT_DIR}"
 
 required_commands=(kubectl ssh)
 if [[ "${skip_compile}" == false ]]; then
-    required_commands+=(cargo cargo-zigbuild install node npm zig)
+    required_commands+=(cargo cargo-zigbuild install node npm pkg-config zig)
 fi
 if [[ "${skip_compile}" == false || "${skip_image}" == false ]]; then
     required_commands+=(readelf)
@@ -84,14 +84,31 @@ if [[ "${skip_compile}" == false ]]; then
     # /usr/include，因此只把 libbpf 构建所需的第三方头文件放回搜索路径。
     libbpf_zig_include="$(mktemp -d)"
     trap 'rm -rf "${libbpf_zig_include}"' EXIT
+    libbpf_headers=(
+        /usr/include/libelf.h
+        /usr/include/gelf.h
+        /usr/include/zlib.h
+        /usr/include/zconf.h
+    )
+    # RHEL/Fedora 的 zlib-ng 会让 zconf.h 额外包含这个头文件。
+    if [[ -f /usr/include/zlib_name_mangling.h ]]; then
+        libbpf_headers+=(/usr/include/zlib_name_mangling.h)
+    fi
     install -m 0644 \
-        /usr/include/libelf.h \
-        /usr/include/gelf.h \
-        /usr/include/zlib.h \
-        /usr/include/zconf.h \
+        "${libbpf_headers[@]}" \
         "${libbpf_zig_include}/"
     export LIBBPF_SYS_EXTRA_CFLAGS="-isystem ${libbpf_zig_include}"
-    export LIBBPF_SYS_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+    libelf_libdir="$(pkg-config --variable=libdir libelf 2>/dev/null || true)"
+    if [[ -n "${libelf_libdir}" ]]; then
+        export LIBBPF_SYS_LIBRARY_PATH="${libelf_libdir}"
+    elif [[ -d /usr/lib/x86_64-linux-gnu ]]; then
+        export LIBBPF_SYS_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+    elif [[ -d /usr/lib64 ]]; then
+        export LIBBPF_SYS_LIBRARY_PATH=/usr/lib64
+    else
+        echo "无法确定 libelf 库目录，请安装 libelf 开发包" >&2
+        exit 1
+    fi
     # x86_64 的 off_t 本身就是 64 位；避免 libbpf 把 fcntl 重定向到
     # GLIBC_2.28 才提供的 fcntl64，否则无法生成 glibc 2.17 兼容产物。
     export CPPFLAGS=-U_FILE_OFFSET_BITS

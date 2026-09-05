@@ -36,14 +36,26 @@ jobs:
               # Copy only the third-party headers needed to build libbpf.
               libbpf_zig_include=/tmp/libbpf-zig-include
               install -d "$libbpf_zig_include"
+              libbpf_headers=(
+                /usr/include/libelf.h
+                /usr/include/gelf.h
+                /usr/include/zlib.h
+                /usr/include/zconf.h
+              )
+              # RHEL/Fedora zlib-ng's zconf.h includes this extra header.
+              if [[ -f /usr/include/zlib_name_mangling.h ]]; then
+                libbpf_headers+=(/usr/include/zlib_name_mangling.h)
+              fi
               install -m 0644 \
-                /usr/include/libelf.h \
-                /usr/include/gelf.h \
-                /usr/include/zlib.h \
-                /usr/include/zconf.h \
+                "${libbpf_headers[@]}" \
                 "$libbpf_zig_include/"
               export LIBBPF_SYS_EXTRA_CFLAGS="-isystem $libbpf_zig_include"
-              export LIBBPF_SYS_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+              libelf_libdir="$(pkg-config --variable=libdir libelf 2>/dev/null || true)"
+              if [[ -n "$libelf_libdir" ]]; then
+                export LIBBPF_SYS_LIBRARY_PATH="$libelf_libdir"
+              else
+                export LIBBPF_SYS_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+              fi
           - build-type: bpf-static-link
             # Build libelf and zlib with Zig too. The bpf_static feature would
             # reuse host-built static archives, which may require a newer glibc.
