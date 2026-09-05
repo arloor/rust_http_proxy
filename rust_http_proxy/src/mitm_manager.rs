@@ -1,9 +1,9 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 
 use crate::DynError;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 pub(crate) const DEFAULT_MAX_RECORDS: usize = 1000;
 pub(crate) const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const DEFAULT_PAGE_LIMIT: usize = 100;
@@ -23,6 +23,7 @@ const MAX_PAGE_LIMIT: usize = 500;
 const MAX_TLS_ERROR_ROWS: i64 = 1000;
 const WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 const WRITER_QUEUE_CAPACITY: usize = 1024;
+const MAX_RECENT_PROXY_REQUESTS: usize = 200;
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct MitmSettings {
@@ -48,6 +49,17 @@ pub(crate) struct MitmTarget {
     pub suffix: String,
     pub created_at_ms: i64,
     pub cli_managed: bool,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct RecentProxyRequest {
+    pub id: u64,
+    pub started_at_ms: i64,
+    pub client_ip: String,
+    pub method: String,
+    pub url: String,
+    pub host: String,
 }
 
 #[derive(Clone, Debug)]
@@ -258,6 +270,8 @@ pub(crate) struct MitmManager {
     max_records: AtomicUsize,
     body_limit_bytes: AtomicUsize,
     targets: RwLock<Vec<MitmTarget>>,
+    recent_proxy_requests: RwLock<VecDeque<RecentProxyRequest>>,
+    recent_proxy_request_id: AtomicU64,
     writer_tx: mpsc::SyncSender<StoreCommand>,
     prune_tx: mpsc::Sender<PruneRequest>,
     events: broadcast::Sender<MitmEvent>,
@@ -295,6 +309,7 @@ impl MitmManager {
                     suffix: suffix.clone(),
                     created_at_ms: now_ms(),
                     cli_managed: true,
+                    enabled: true,
                 });
             }
         }
@@ -312,6 +327,8 @@ impl MitmManager {
             max_records: AtomicUsize::new(max_records),
             body_limit_bytes: AtomicUsize::new(body_limit_bytes),
             targets: RwLock::new(targets),
+            recent_proxy_requests: RwLock::new(VecDeque::with_capacity(MAX_RECENT_PROXY_REQUESTS)),
+            recent_proxy_request_id: AtomicU64::new(0),
             writer_tx,
             prune_tx,
             events: events.clone(),
@@ -358,7 +375,11 @@ impl MitmManager {
         let host = normalize_host(host);
         self.targets
             .read()
-            .map(|targets| targets.iter().any(|target| host_matches_suffix(&host, &target.suffix)))
+            .map(|targets| {
+                targets
+                    .iter()
+                    .any(|target| target.enabled && host_matches_suffix(&host, &target.suffix))
+            })
             .unwrap_or(false)
     }
 
@@ -442,7 +463,7 @@ impl MitmManager {
                 connection.execute("UPDATE targets SET cli_managed=1 WHERE suffix=?1", [&db_suffix])?;
             }
             connection.query_row(
-                "SELECT id, suffix, created_at_ms, cli_managed FROM targets WHERE suffix=?1",
+                "SELECT id, suffix, created_at_ms, cli_managed, enabled FROM targets WHERE suffix=?1",
                 [&db_suffix],
                 |row| {
                     Ok(MitmTarget {
@@ -450,6 +471,7 @@ impl MitmManager {
                         suffix: row.get(1)?,
                         created_at_ms: row.get(2)?,
                         cli_managed: row.get(3)?,
+                        enabled: row.get(4)?,
                     })
                 },
             )
@@ -462,6 +484,33 @@ impl MitmManager {
         }
         self.emit("targets", None);
         Ok(target)
+    }
+
+    pub(crate) async fn set_target_enabled(&self, id: i64, enabled: bool) -> Result<Option<MitmTarget>, ManagerError> {
+        let target = self
+            .targets
+            .read()
+            .ok()
+            .and_then(|targets| targets.iter().find(|target| target.id == id).cloned());
+        let Some(mut target) = target else {
+            return Ok(None);
+        };
+        if target.id > 0 {
+            let path = self.db_path.clone();
+            run_db(path, move |connection| {
+                connection.execute("UPDATE targets SET enabled=?1 WHERE id=?2", params![enabled, id])?;
+                Ok(())
+            })
+            .await?;
+        }
+        target.enabled = enabled;
+        if let Ok(mut targets) = self.targets.write()
+            && let Some(current) = targets.iter_mut().find(|current| current.id == id)
+        {
+            current.enabled = enabled;
+        }
+        self.emit("targets", None);
+        Ok(Some(target))
     }
 
     pub(crate) async fn delete_target(&self, id: i64) -> Result<bool, ManagerError> {
@@ -489,6 +538,29 @@ impl MitmManager {
             self.emit("targets", None);
         }
         Ok(deleted)
+    }
+
+    pub(crate) fn record_proxy_request(&self, client_ip: String, method: String, url: String, host: String) {
+        let request = RecentProxyRequest {
+            id: self.recent_proxy_request_id.fetch_add(1, Ordering::Relaxed) + 1,
+            started_at_ms: now_ms(),
+            client_ip,
+            method,
+            url,
+            host: normalize_host(&host),
+        };
+        if let Ok(mut requests) = self.recent_proxy_requests.write() {
+            requests.push_front(request);
+            requests.truncate(MAX_RECENT_PROXY_REQUESTS);
+        }
+        self.emit("recent_requests", None);
+    }
+
+    pub(crate) fn recent_proxy_requests(&self) -> Vec<RecentProxyRequest> {
+        self.recent_proxy_requests
+            .read()
+            .map(|requests| requests.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn begin_record(&self, metadata: RecordMetadata<'_>) -> Option<String> {
@@ -728,7 +800,8 @@ fn initialize_schema(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             suffix TEXT NOT NULL UNIQUE,
             created_at_ms INTEGER NOT NULL,
-            cli_managed INTEGER NOT NULL DEFAULT 0
+            cli_managed INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS records (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -784,6 +857,9 @@ fn initialize_schema(
     };
     if !has_cli_managed {
         connection.execute("ALTER TABLE targets ADD COLUMN cli_managed INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    if !table_has_column(connection, "targets", "enabled")? {
+        connection.execute("ALTER TABLE targets ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1", [])?;
     }
     let has_legacy_mitm_enabled = {
         let mut statement = connection.prepare("PRAGMA table_info(settings)")?;
@@ -871,13 +947,14 @@ fn load_settings(connection: &Connection) -> Result<(bool, usize, usize), Manage
 
 fn load_targets(connection: &Connection) -> Result<Vec<MitmTarget>, ManagerError> {
     let mut statement =
-        connection.prepare("SELECT id, suffix, created_at_ms, cli_managed FROM targets ORDER BY suffix")?;
+        connection.prepare("SELECT id, suffix, created_at_ms, cli_managed, enabled FROM targets ORDER BY suffix")?;
     let rows = statement.query_map([], |row| {
         Ok(MitmTarget {
             id: row.get(0)?,
             suffix: row.get(1)?,
             created_at_ms: row.get(2)?,
             cli_managed: row.get(3)?,
+            enabled: row.get(4)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(ManagerError::from)
@@ -1596,6 +1673,12 @@ mod tests {
         assert!(manager.delete_target(target.id).await?);
         let target = manager.add_target(".Second.Example.".to_owned()).await?;
         assert!(!target.cli_managed);
+        let target = manager
+            .set_target_enabled(target.id, false)
+            .await?
+            .ok_or("console target disappeared while disabling")?;
+        assert!(!target.enabled);
+        assert!(!manager.should_mitm("www.second.example"));
         drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -1618,6 +1701,7 @@ mod tests {
             .find(|target| target.suffix == "second.example")
             .ok_or("console target was not persisted")?;
         assert!(!console_target.cli_managed);
+        assert!(!console_target.enabled);
         let error = reopened
             .delete_target(cli_target_id)
             .await
@@ -1625,7 +1709,7 @@ mod tests {
             .ok_or("CLI target was unexpectedly deleted")?;
         assert!(error.to_string().contains("--mitm-domain-suffix"));
         assert!(reopened.should_mitm("www.override.example"));
-        assert!(reopened.should_mitm("www.second.example"));
+        assert!(!reopened.should_mitm("www.second.example"));
         assert!(!reopened.should_mitm("api.example.com"));
         drop(reopened);
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1636,7 +1720,7 @@ mod tests {
         let suffixes: Vec<&str> = targets.iter().map(|target| target.suffix.as_str()).collect();
         assert_eq!(suffixes, ["second.example"]);
         assert!(!reopened_without_targets.should_mitm("www.override.example"));
-        assert!(reopened_without_targets.should_mitm("www.second.example"));
+        assert!(!reopened_without_targets.should_mitm("www.second.example"));
         drop(reopened_without_targets);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);

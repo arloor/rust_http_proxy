@@ -40,6 +40,20 @@ impl ProxyHandler {
         match axum_handler::check_auth(req.headers(), http::header::PROXY_AUTHORIZATION, config_basic_auth) {
             Ok(username_option) => {
                 let username = username_option.unwrap_or("unknown".to_owned());
+                if let Some(addr) = host_addr(req.uri()) {
+                    let method = req.method().to_string();
+                    let url = if req.method() == Method::CONNECT {
+                        format!("https://{}/", req.uri())
+                    } else {
+                        req.uri().to_string()
+                    };
+                    self.mitm_manager.record_proxy_request(
+                        get_client_ip(&req, client_socket_addr),
+                        method,
+                        url,
+                        addr.host(),
+                    );
+                }
                 info!(
                     "{:>29} {:<5} {:^8} {:^7} {:?} {:?} {} {}",
                     "https://ip.im/".to_owned() + &client_socket_addr.ip().to_canonical().to_string(),

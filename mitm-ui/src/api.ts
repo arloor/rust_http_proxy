@@ -7,7 +7,16 @@ export type Settings = {
   db_bytes: number
 }
 
-export type Target = { id: number; suffix: string; created_at_ms: number; cli_managed: boolean }
+export type Target = { id: number; suffix: string; created_at_ms: number; cli_managed: boolean; enabled: boolean }
+
+export type RecentProxyRequest = {
+  id: number
+  started_at_ms: number
+  client_ip: string
+  method: string
+  url: string
+  host: string
+}
 
 export type RecordSummary = {
   id: string

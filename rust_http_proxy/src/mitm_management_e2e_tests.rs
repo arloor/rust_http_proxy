@@ -143,6 +143,7 @@ async fn mitm_api_manages_targets_without_a_global_switch() -> Result<(), DynErr
     assert!(created.starts_with("HTTP/1.1 201"));
     assert!(created.contains("\"suffix\":\"example.com\""));
     assert!(created.contains("\"cli_managed\":false"));
+    assert!(created.contains("\"enabled\":true"));
 
     let targets = request(
         proxy.port,
@@ -151,6 +152,19 @@ async fn mitm_api_manages_targets_without_a_global_switch() -> Result<(), DynErr
     .await?;
     assert!(targets.starts_with("HTTP/1.1 200"));
     assert!(targets.contains("\"suffix\":\"example.com\""));
+
+    let disable_body = r#"{"enabled":false}"#;
+    let disabled = request(
+        proxy.port,
+        &format!(
+            "PATCH /mitm/api/targets/1 HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{disable_body}",
+            disable_body.len()
+        ),
+    )
+    .await?;
+    assert!(disabled.starts_with("HTTP/1.1 200"));
+    assert!(disabled.contains("\"suffix\":\"example.com\""));
+    assert!(disabled.contains("\"enabled\":false"));
 
     let settings = request(
         proxy.port,
@@ -171,6 +185,28 @@ async fn mitm_api_manages_targets_without_a_global_switch() -> Result<(), DynErr
     )
     .await?;
     assert!(rejected.starts_with("HTTP/1.1 422"));
+
+    proxy.shutdown().await
+}
+
+#[tokio::test]
+async fn mitm_api_lists_recent_forward_proxy_requests() -> Result<(), DynError> {
+    let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned()]).await?;
+    let _ = request(
+        proxy.port,
+        "CONNECT localhost:9 HTTP/1.1\r\nHost: localhost:9\r\nProxy-Authorization: Basic YWRtaW46dGVzdA==\r\nConnection: close\r\n\r\n",
+    )
+    .await?;
+
+    let recent = request(
+        proxy.port,
+        &format!("GET /mitm/api/recent-requests HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"),
+    )
+    .await?;
+    assert!(recent.starts_with("HTTP/1.1 200"));
+    assert!(recent.contains("\"method\":\"CONNECT\""));
+    assert!(recent.contains("\"url\":\"https://localhost:9/\""));
+    assert!(recent.contains("\"host\":\"localhost\""));
 
     proxy.shutdown().await
 }

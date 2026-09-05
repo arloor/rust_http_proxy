@@ -32,7 +32,8 @@ pub(crate) fn router(basic_auth: HashMap<String, String>) -> Router<Arc<AppState
         .route("/mitm/", get(index))
         .route("/mitm/api/settings", get(get_settings).patch(patch_settings))
         .route("/mitm/api/targets", get(get_targets).post(add_target))
-        .route("/mitm/api/targets/{id}", delete(delete_target))
+        .route("/mitm/api/targets/{id}", delete(delete_target).patch(patch_target))
+        .route("/mitm/api/recent-requests", get(get_recent_requests))
         .route("/mitm/api/records", get(get_records).delete(clear_records))
         .route("/mitm/api/records/{id}", get(get_record))
         .route("/mitm/api/groups", get(get_groups))
@@ -145,6 +146,27 @@ async fn delete_target(State(state): State<Arc<AppState>>, Path(id): Path<i64>) 
     } else {
         Err(ApiError::NotFound("MITM target not found".to_owned()))
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetPatch {
+    enabled: bool,
+}
+
+async fn patch_target(
+    State(state): State<Arc<AppState>>, Path(id): Path<i64>, Json(patch): Json<TargetPatch>,
+) -> Result<Json<crate::mitm_manager::MitmTarget>, ApiError> {
+    state
+        .mitm_manager
+        .set_target_enabled(id, patch.enabled)
+        .await?
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound("MITM target not found".to_owned()))
+}
+
+async fn get_recent_requests(State(state): State<Arc<AppState>>) -> Json<Vec<crate::mitm_manager::RecentProxyRequest>> {
+    Json(state.mitm_manager.recent_proxy_requests())
 }
 
 async fn get_records(

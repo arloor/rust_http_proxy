@@ -3,6 +3,7 @@ import {
   api,
   fullUrl,
   type HostGroup,
+  type RecentProxyRequest,
   type RecordDetail,
   type RecordPage,
   type RecordSummary,
@@ -10,6 +11,7 @@ import {
   type Target,
   type TlsErrorGroup,
 } from './api'
+import { domainSuffixes } from './domainSuffixes'
 import {
   formatBytes,
   formatCaptureState,
@@ -57,8 +59,11 @@ function App() {
   const [newTarget, setNewTarget] = useState('')
   const [error, setError] = useState('')
   const [live, setLive] = useState(false)
+  const [showRecentRequests, setShowRecentRequests] = useState(false)
+  const [recentRequests, setRecentRequests] = useState<RecentProxyRequest[]>([])
   const [copied, setCopied] = useState('')
   const refreshTimer = useRef<number | null>(null)
+  const recentRefreshTimer = useRef<number | null>(null)
   const selectedIdRef = useRef<string | null>(null)
   const loadedCountRef = useRef(0)
   const queryStringRef = useRef('')
@@ -80,6 +85,7 @@ function App() {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const detailRequestRef = useRef(0)
   const activeRecordIdRef = useRef<string | null>(null)
+  const showRecentRequestsRef = useRef(false)
 
   const activeRecordId = detailLoadingId ?? selected?.id ?? null
   const loadingRecord = detailLoadingId
@@ -94,6 +100,10 @@ function App() {
   useEffect(() => {
     activeRecordIdRef.current = activeRecordId
   }, [activeRecordId])
+
+  useEffect(() => {
+    showRecentRequestsRef.current = showRecentRequests
+  }, [showRecentRequests])
 
   useEffect(() => {
     recordsRef.current = records
@@ -234,6 +244,14 @@ function App() {
     }
   }, [handleError])
 
+  const refreshRecentRequests = useCallback(async () => {
+    try {
+      setRecentRequests(await api<RecentProxyRequest[]>('/recent-requests'))
+    } catch (value) {
+      handleError(value)
+    }
+  }, [handleError])
+
   const refreshRecords = useCallback(
     async (includeDetail = false) => {
       try {
@@ -327,6 +345,13 @@ function App() {
     source.addEventListener('record_updated', onRecordEvent)
     source.addEventListener('settings', onMetaEvent)
     source.addEventListener('targets', onMetaEvent)
+    source.addEventListener('recent_requests', () => {
+      if (!showRecentRequestsRef.current || recentRefreshTimer.current !== null) return
+      recentRefreshTimer.current = window.setTimeout(() => {
+        recentRefreshTimer.current = null
+        void refreshRecentRequests()
+      }, 200)
+    })
     source.addEventListener('tls_errors', onMetaEvent)
     source.addEventListener('records_cleared', onFullEvent)
     source.addEventListener('resync', onFullEvent)
@@ -334,8 +359,9 @@ function App() {
     return () => {
       source.close()
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
+      if (recentRefreshTimer.current !== null) window.clearTimeout(recentRefreshTimer.current)
     }
-  }, [refreshGroups, refreshMeta, refreshRecords])
+  }, [refreshGroups, refreshMeta, refreshRecentRequests, refreshRecords])
 
   async function updateSettings(patch: Partial<Settings>) {
     try {
@@ -348,16 +374,37 @@ function App() {
     }
   }
 
+  async function createTarget(suffix: string) {
+    try {
+      await api<Target>('/targets', { method: 'POST', body: JSON.stringify({ suffix }) })
+      await refreshMeta()
+      setError('')
+      return true
+    } catch (value) {
+      handleError(value)
+      return false
+    }
+  }
+
   async function addTarget(event: FormEvent) {
     event.preventDefault()
     if (!newTarget.trim()) return
+    if (await createTarget(newTarget)) setNewTarget('')
+  }
+
+  async function setTargetEnabled(target: Target, enabled: boolean) {
     try {
-      await api<Target>('/targets', { method: 'POST', body: JSON.stringify({ suffix: newTarget }) })
-      setNewTarget('')
+      await api<Target>(`/targets/${target.id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) })
       await refreshMeta()
+      setError('')
     } catch (value) {
       handleError(value)
     }
+  }
+
+  function openRecentRequests() {
+    setShowRecentRequests(true)
+    void refreshRecentRequests()
   }
 
   async function selectRecord(id: string) {
@@ -470,6 +517,10 @@ function App() {
           setLightboxSrc(null)
           return
         }
+        if (showRecentRequests) {
+          setShowRecentRequests(false)
+          return
+        }
         closeDetail()
         return
       }
@@ -483,7 +534,7 @@ function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [closeDetail, moveSelection, lightboxSrc])
+  }, [closeDetail, moveSelection, lightboxSrc, showRecentRequests])
 
   const hasFilters = Boolean(host || path || method || status || clientIp || search)
   const tlsErrorTotal = tlsErrors.reduce((total, group) => total + group.count, 0)
@@ -526,6 +577,9 @@ function App() {
             <option value={4194304}>4 MiB</option><option value={10485760}>10 MiB</option>
           </select>
         </label>
+        <button className="recent-requests-trigger" onClick={openRecentRequests}>
+          <span aria-hidden="true">↺</span> 最近请求
+        </button>
         <div className="status-line">
           {settings?.ca_available ? (
             <a
@@ -590,14 +644,14 @@ function App() {
         }}
       >
         <aside className="sidebar">
-          <div className="panel-title"><span>目标域名</span><b>{targets.length}</b></div>
+          <div className="panel-title"><span>目标域名后缀</span><b>{targets.length}</b></div>
           <form className="target-form" onSubmit={addTarget}>
             <ClearableInput aria-label="新目标后缀" placeholder="example.com" value={newTarget} onChange={setNewTarget} />
             <button type="submit">添加</button>
           </form>
           <div className="target-list">
             {targets.map((target) => (
-              <div className={`target ${targetSuffixFilter === target.suffix ? 'active' : ''}`} key={target.id}>
+              <div className={`target ${targetSuffixFilter === target.suffix ? 'active' : ''} ${target.enabled ? '' : 'off'}`} key={target.id}>
                 <button
                   className="target-main"
                   aria-pressed={targetSuffixFilter === target.suffix}
@@ -610,6 +664,14 @@ function App() {
                   <span>{target.suffix}</span>
                   {target.cli_managed && <em>启动参数</em>}
                 </button>
+                <button
+                  className={`target-toggle ${target.enabled ? 'on' : ''}`}
+                  role="switch"
+                  aria-checked={target.enabled}
+                  aria-label={`${target.enabled ? '停用' : '启用'} ${target.suffix}`}
+                  title={target.enabled ? '临时关闭此目标域名后缀' : '重新启用此目标域名后缀'}
+                  onClick={() => void setTargetEnabled(target, !target.enabled)}
+                ><i /></button>
                 {!target.cli_managed && (
                   <button
                     className="target-remove"
@@ -762,8 +824,113 @@ function App() {
             />
           )}
       </section>
+      {showRecentRequests && (
+        <RecentRequestsModal
+          requests={recentRequests}
+          targets={targets}
+          onAdd={createTarget}
+          onClose={() => setShowRecentRequests(false)}
+          onRefresh={() => void refreshRecentRequests()}
+        />
+      )}
       {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
     </main>
+  )
+}
+
+function RecentRequestsModal({
+  requests,
+  targets,
+  onAdd,
+  onClose,
+  onRefresh,
+}: {
+  requests: RecentProxyRequest[]
+  targets: Target[]
+  onAdd: (suffix: string) => Promise<boolean>
+  onClose: () => void
+  onRefresh: () => void
+}) {
+  const [selections, setSelections] = useState<Record<number, string>>({})
+  const [addingId, setAddingId] = useState<number | null>(null)
+  const existing = useMemo(() => new Set(targets.map((target) => target.suffix)), [targets])
+
+  async function add(request: RecentProxyRequest, suffix: string) {
+    setAddingId(request.id)
+    try {
+      await onAdd(suffix)
+    } finally {
+      setAddingId(null)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <section className="recent-modal" role="dialog" aria-modal="true" aria-labelledby="recent-requests-title">
+        <header className="recent-modal-head">
+          <div>
+            <h2 id="recent-requests-title">最近代理请求</h2>
+            <p>显示本应用进程内最近 {requests.length} 条代理请求，可选择域名后缀级别后加入目标。</p>
+          </div>
+          <div className="recent-modal-actions">
+            <button className="ghost" onClick={onRefresh}>刷新</button>
+            <button className="modal-close" aria-label="关闭最近请求" onClick={onClose}>×</button>
+          </div>
+        </header>
+        <div className="recent-list">
+          {requests.map((request) => {
+            const suffixes = domainSuffixes(request.host)
+            const selectedSuffix = selections[request.id] ?? suffixes[0] ?? ''
+            const alreadyAdded = existing.has(selectedSuffix)
+            return (
+              <article className="recent-request" key={request.id}>
+                <div className="recent-request-meta">
+                  <span className={`method method-${request.method.toLowerCase()}`}>{request.method}</span>
+                  <time>{formatTime(request.started_at_ms)}</time>
+                  <span>{request.client_ip}</span>
+                </div>
+                <div className="recent-request-url" title={request.url}>{request.url}</div>
+                <div className="recent-suffix-action">
+                  <label>
+                    <span>目标域名后缀</span>
+                    <select
+                      aria-label={`${request.host} 的目标域名后缀级别`}
+                      value={selectedSuffix}
+                      onChange={(event) => setSelections((current) => ({
+                        ...current,
+                        [request.id]: event.target.value,
+                      }))}
+                    >
+                      {suffixes.map((suffix, index) => (
+                        <option key={suffix} value={suffix}>
+                          {suffix}{index === 0 ? '（精确主机）' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="add-recent-target"
+                    disabled={!selectedSuffix || alreadyAdded || addingId === request.id}
+                    onClick={() => void add(request, selectedSuffix)}
+                  >
+                    {addingId === request.id ? '添加中…' : alreadyAdded ? '已添加' : '加入目标'}
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+          {!requests.length && (
+            <div className="recent-empty">
+              <span>◎</span>
+              <p>还没有代理请求</p>
+              <small>通过本代理访问 HTTP 或 HTTPS 地址后，请求会出现在这里。</small>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
   )
 }
 
