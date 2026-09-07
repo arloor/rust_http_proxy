@@ -1,6 +1,7 @@
 #![deny(warnings)]
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod address;
 mod axum_handler;
 #[cfg(target_os = "linux")]

@@ -1,6 +1,7 @@
 #![deny(warnings)]
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 //! Main entry point for rust_http_proxy CLI
 
 use clap::Parser as _;
