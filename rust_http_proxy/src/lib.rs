@@ -26,6 +26,7 @@ mod mitm;
 #[cfg(test)]
 mod mitm_management_e2e_tests;
 mod mitm_manager;
+mod mitm_rules;
 #[cfg(test)]
 mod mitm_stub_e2e_tests;
 mod mitm_web;
@@ -139,6 +140,7 @@ pub fn create_futures(
         config.mitm_max_records,
         config.mitm_body_limit_bytes,
     )?;
+    mitm_manager.set_file_stubs(config.mitm_stub_specs.clone());
     let proxy_handler = Arc::new(ProxyHandler::new(config.clone(), mitm_manager.clone(), shutdown_tx.clone())?);
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();

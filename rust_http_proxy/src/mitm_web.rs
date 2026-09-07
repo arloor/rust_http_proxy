@@ -30,6 +30,8 @@ pub(crate) fn router(basic_auth: HashMap<String, String>) -> Router<Arc<AppState
     let routes = Router::new()
         .route("/mitm", get(index))
         .route("/mitm/", get(index))
+        .route("/mitm/api/stubs", get(get_stubs).post(add_stub))
+        .route("/mitm/api/stubs/{id}", axum::routing::put(update_stub).delete(delete_stub))
         .route("/mitm/api/settings", get(get_settings).patch(patch_settings))
         .route("/mitm/api/targets", get(get_targets).post(add_target))
         .route("/mitm/api/targets/{id}", delete(delete_target).patch(patch_target))
@@ -167,6 +169,35 @@ async fn patch_target(
 
 async fn get_recent_requests(State(state): State<Arc<AppState>>) -> Json<Vec<crate::mitm_manager::RecentProxyRequest>> {
     Json(state.mitm_manager.recent_proxy_requests())
+}
+
+async fn get_stubs(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(state.mitm_manager.list_stubs())
+}
+
+async fn add_stub(
+    State(state): State<Arc<AppState>>, Json(rule): Json<crate::mitm_rules::UiStubRule>,
+) -> Result<Json<crate::mitm_rules::UiStubRule>, ApiError> {
+    let rule = tokio::task::spawn_blocking(move || state.mitm_manager.save_stub(None, rule))
+        .await
+        .map_err(|e| ManagerError::Database(e.to_string()))??;
+    Ok(Json(rule))
+}
+
+async fn update_stub(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>, Json(rule): Json<crate::mitm_rules::UiStubRule>,
+) -> Result<Json<crate::mitm_rules::UiStubRule>, ApiError> {
+    let rule = tokio::task::spawn_blocking(move || state.mitm_manager.save_stub(Some(id), rule))
+        .await
+        .map_err(|e| ManagerError::Database(e.to_string()))??;
+    Ok(Json(rule))
+}
+
+async fn delete_stub(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    tokio::task::spawn_blocking(move || state.mitm_manager.delete_stub(&id))
+        .await
+        .map_err(|e| ManagerError::Database(e.to_string()))??;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_records(

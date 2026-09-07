@@ -360,3 +360,77 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 @media (max-width: 1200px) {
   .detail { padding: 14px }
 }
+
+/* Stub rules: a focused editor with immutable file rules alongside persisted UI rules. */
+.stub-dialog { width: min(1180px, calc(100vw - 48px)); height: min(880px, calc(100vh - 48px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--line); border-radius: 16px; color: var(--text); background: var(--panel); box-shadow: 0 24px 90px #0f172a40; overflow: hidden; }
+.stub-dialog[open] { display: flex; flex-direction: column; }
+.stub-dialog::backdrop { background: #0f172a70; backdrop-filter: blur(3px); }
+.stub-dialog button { cursor: pointer; border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px; background: white; font-size: 12px; font-weight: 600; }
+.stub-dialog button:disabled { opacity: .5; cursor: default; }
+.stub-dialog button:hover:not(:disabled) { background: var(--panel-2); }
+.stub-dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 26px 16px; }
+.stub-eyebrow { color: var(--teal-text); font-size: 11px; letter-spacing: .14em; font-weight: 800; }
+.stub-dialog h2 { margin: 4px 0 0; font-size: 22px; letter-spacing: -.02em; }
+.stub-dialog .stub-close { border: none; font-size: 26px; font-weight: 400; padding: 2px 10px; }
+.stub-policy { display: flex; gap: 12px; padding: 11px 26px; background: #f0fdfa; border-block: 1px solid #ccfbf1; font-size: 12px; color: #115e59; }
+.stub-policy b { white-space: nowrap; }
+.stub-layout { display: grid; grid-template-columns: 292px minmax(0, 1fr); flex: 1; min-height: 0; }
+.stub-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; padding: 20px 16px 12px; background: #f8fafc; border-right: 1px solid var(--line); }
+.stub-dialog input:not([type=checkbox]), .stub-dialog select, .stub-dialog textarea { min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; background: white; color: var(--text); font: inherit; }
+.stub-dialog :is(input, select, textarea, button):focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.stub-rule-list { flex: 1; min-height: 0; overflow: auto; }
+.stub-rule-list h3 { font-size: 11px; color: var(--text-3); display: flex; justify-content: space-between; margin: 16px 4px 8px; }
+.stub-dialog .stub-list-item { display: flex; flex-direction: column; text-align: left; gap: 5px; width: 100%; margin-bottom: 7px; padding: 12px; border-color: transparent; background: transparent; overflow-wrap: anywhere; }
+.stub-list-item strong { font-size: 12px; }
+.stub-list-item code { font: 12px var(--font-mono); color: var(--text-3); }
+.stub-list-item > span { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text-3); font-size: 10px; }
+.stub-dialog .stub-list-item.selected { background: white; border-color: #5eead4; box-shadow: var(--shadow); }
+.stub-muted, .stub-sidebar-foot { color: var(--text-3); font-size: 12px; line-height: 1.65; }
+.stub-sidebar-foot { font-size: 11px; border-top: 1px solid var(--line); margin: 0; padding-top: 12px; }
+.stub-editor { overflow: auto; padding: 24px 28px; min-width: 0; }
+.stub-section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.stub-section-title h3, .stub-file-detail h3 { margin: 0; font-size: 15px; }
+.stub-section-title small, .stub-file-detail small { font-size: 11px; font-weight: 400; color: var(--text-3); margin-left: 6px; }
+.stub-enabled { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.stub-form fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.stub-match-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.stub-match-fields label, .stub-mode-label, .stub-upstream { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 600; }
+.stub-mode-label, .stub-upstream { margin-top: 18px; }
+.stub-upstream small { color: var(--text-3); font-weight: 400; }
+.stub-body-editor, .stub-headers { margin-top: 24px; }
+.stub-body-editor .stub-section-title label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.stub-body-editor input { max-width: 90px; }
+.stub-dialog textarea { resize: vertical; min-height: 164px; font: 12px/1.7 var(--font-mono); tab-size: 2; background: #f8fafc; }
+.stub-header-edit { display: grid; grid-template-columns: 78px minmax(100px, 1fr) minmax(100px, 1.3fr) 30px; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stub-header-edit input, .stub-header-edit select { font-size: 12px !important; }
+.stub-header-edit input:disabled { background: #f1f5f9; }
+.stub-dialog .stub-remove-header { padding: 4px; font-size: 20px; border-color: transparent; color: var(--text-3); }
+.stub-headers-empty { border: 1px dashed var(--line); border-radius: 6px; padding: 12px; color: var(--text-3); font-size: 12px; }
+.stub-form-footer { position: sticky; bottom: -24px; background: white; margin-top: 24px; padding: 16px 0; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.stub-form-footer > span { font-size: 11px; color: var(--text-3); }
+.stub-form-footer > div { display: flex; gap: 8px; }
+.stub-dialog .stub-primary { background: #0f766e; color: white; border-color: #0f766e; }
+.stub-dialog .stub-primary:hover:not(:disabled) { background: #115e59; }
+.stub-dialog .stub-danger { color: #b91c1c; border-color: #fecaca; }
+.stub-warning, .stub-error, .stub-success { border-radius: 7px; padding: 11px 14px; margin-bottom: 16px; font-size: 12px; line-height: 1.6; background: #fffbeb; color: #92400e; border: 1px solid #fde68a; overflow-wrap: anywhere; }
+.stub-error { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+.stub-success { color: #115e59; background: #f0fdfa; border-color: #99f6e4; }
+.stub-delete-confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stub-empty { max-width: 360px; margin: 90px auto; text-align: center; color: var(--text-3); }
+.stub-empty > span { display: inline-grid; place-items: center; width: 64px; height: 64px; border-radius: 18px; background: #ccfbf1; color: #0f766e; font-size: 34px; }
+.stub-empty h3 { color: var(--text); font-size: 18px; }
+.stub-empty p { font-size: 13px; line-height: 1.8; margin-bottom: 22px; }
+.stub-badge { display: inline-block; vertical-align: middle; font: normal 10px var(--font-sans); padding: 2px 6px; border-radius: 4px; color: #0f766e; background: #ccfbf1; white-space: nowrap; }
+.stub-badge.file { color: #92400e; background: #fef3c7; }
+.header-name .stub-badge { margin-left: 7px; }
+.stub-file-detail dl { display: grid; grid-template-columns: 70px minmax(0,1fr); gap: 12px; font-size: 13px; margin-block: 24px; }
+.stub-file-detail dt { color: var(--text-3); }
+.stub-file-detail dd { margin: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
+.stub-file-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: #f8fafc; border: 1px solid var(--line); border-radius: 8px; font: 12px/1.7 var(--font-mono); max-height: 400px; overflow: auto; }
+.stub-origin-note { background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 7px; padding: 10px 12px; margin: 12px 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #115e59; overflow-wrap: anywhere; }
+.stub-applied-headers { display: flex; flex-wrap: wrap; gap: 6px; }
+.stub-applied-headers span { background: white; border: 1px solid #ccfbf1; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
+@media (max-width: 1100px) { .stub-layout { grid-template-columns: 242px minmax(0, 1fr); } .stub-editor { padding: 20px; } }
+.stub-body-editor .stub-section-title label { white-space: nowrap; }
+.stub-body-editor .stub-section-title input { width: 90px; flex-shrink: 0; }
+.stub-mode-label + .stub-match-fields { margin-top: 18px; }

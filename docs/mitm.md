@@ -71,6 +71,19 @@ docker run --rm --net host \
 
 ## MITM Stub 响应
 
+面板顶部的 **Stub 规则** 可查看配置文件规则，并新建、编辑、启停和删除 UI 规则。请求详情中的“为此请求创建 Stub”会预填域名和路径。
+
+- **匹配顺序**：先匹配配置文件，未命中时才匹配已启用的 UI 规则，否则访问原始上游。响应覆写和上游转发按 CONNECT 的 `host:port` 与请求路径精确匹配，忽略 query；mod-header 使用下述完整 URL 正则，均适用于所有 HTTP 方法；例如 `api.example.com:443` + `/api/profile`。
+- **文件优先**：命中后选择整条文件规则，不再叠加 UI 的 Body 或 Header 操作。同域名、同路径的 UI 规则可以保存，但显示“被文件规则覆盖”。文件规则只读，修改 YAML 或 `body_file` 后需要重启；UI 不会改写它们。
+- **持久化**：UI 规则保存在 `--mitm-db-file` 指定的 SQLite 中，保存后对后续请求生效（包括已建立 MITM 连接内的新请求），重启后保留。清空抓取记录不会删除规则。每个精确域名和路径组合、或同一 URL 正则最多一条 UI 规则，总计最多 1000 条。
+- **覆写响应**：直接编写 Body 原文，无需上传文件。支持空 Body，最多 1 MiB；状态码为 200–599，204 / 205 / 304 不允许非空 Body。`HEAD` 不返回正文。`Content-Length` 自动计算，`Content-Type` 可通过响应头设置。静态响应不访问上游，请求头修改仅体现在抓取记录中。
+- **转发上游**：填写 HTTP/HTTPS URL，原始路径和 query 追加到 URL 前缀后，沿用配置文件中 URL 简写的虚拟主机与 H1 行为。详细的 H2、SNI、连接目标等上游选项继续通过 YAML 配置。
+- **mod-header（URL 正则）**：仅修改请求/响应头，保留原始上游、状态码和 Body。针对完整 HTTPS URL（含路径、query，默认 `:443` 省略，非默认端口保留）使用 Rust 正则匹配，例如 `^https://api\.example\.com/(users|items)/[0-9]+\?debug=1$`。正则默认区分大小写，可使用 `(?i)`；未使用 `^` / `$` 时允许部分匹配。保存时校验并编译，重启后自动恢复，非法或空表达式不能保存。UI 规则按创建顺序使用第一条命中规则，文件规则仍然优先；已有的“仅修改 Headers”精确匹配规则继续兼容。两侧都支持逐行“增加”（追加一个同名值）、“覆盖”（替换全部同名值）、“删除”（移除全部同名值），按行顺序执行，不区分头名称大小写；最多 100 项操作。Host、Content-Length、Transfer-Encoding、Connection、Upgrade、TE、Trailer、Keep-Alive 和代理认证/连接头由 HTTP 传输层管理，UI 规则不能改写。
+- **来源标记**：Request / Response 详情显示 `mitm-stub · 配置文件 / UI 规则`，区分覆写 Body、替代上游和原始服务，标记修改过的 Header，并列出删除操作。来源快照随抓取记录保存，后续编辑或删除规则不会改变历史标记。升级前已有的记录没有来源快照，不会根据当前规则推断来源。
+
+规则生效仍需配置 CA 并启用对应的 MITM 目标域名。关闭明文抓取只停止记录，不会停用 Stub 规则。
+
+
 通过 `--mitm-stub-config-file` 可以让 MITM 在转发真实上游前按 `authority + path` 命中 stub。每条规则必须二选一：使用 `body_file` 返回本地静态响应，或使用 `upstream` 动态生成响应。
 
 ```bash

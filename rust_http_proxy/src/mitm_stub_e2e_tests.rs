@@ -359,3 +359,179 @@ where
     }
     Ok(chunk)
 }
+
+#[tokio::test]
+async fn ui_stub_api_applies_headers_body_and_captures_historical_source() -> Result<(), DynError> {
+    let temp_dir = unique_temp_dir("ui_stub_e2e")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let proxy = start_proxy(vec![
+        "--mitm-users".into(),
+        "admin:test".into(),
+        "--mitm-domain-suffix".into(),
+        "localhost".into(),
+        "--mitm-dump".into(),
+        "--mitm-ca-cert".into(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".into(),
+        ca.key_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+    let body = serde_json::json!({
+        "authority":"localhost:443", "path":"/ui", "enabled":true, "mode":"response", "status":202,
+        "body":"直接填写 body", "request_headers":[
+            {"op":"set", "name":"x-request", "value":"replaced"},
+            {"op":"remove", "name":"x-remove"}
+        ], "response_headers":[
+            {"op":"add", "name":"x-response", "value":"one"},
+            {"op":"add", "name":"X-Response", "value":"two"},
+            {"op":"set", "name":"content-type", "value":"text/plain; charset=utf-8"}
+        ]
+    })
+    .to_string();
+    let mut management = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+    management.write_all(format!("POST /mitm/api/stubs HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic YWRtaW46dGVzdA==\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await?;
+    let mut saved = String::new();
+    management.read_to_string(&mut saved).await?;
+    assert!(saved.starts_with("HTTP/1.1 200"), "{saved}");
+    for method in ["GET", "HEAD"] {
+        let mut tls = connect_to_mitm_target(proxy.port, 443, ca.cert_der.clone()).await?;
+        tls.write_all(format!("{method} /ui?ignored=1 HTTP/1.1\r\nHost: localhost:443\r\nX-Request: original\r\nX-Remove: original\r\nConnection: close\r\n\r\n").as_bytes()).await?;
+        let head = timeout_step("UI stub response", read_http_head(&mut tls)).await?;
+        assert!(head.starts_with("HTTP/1.1 202"), "{head}");
+        assert_eq!(head.to_ascii_lowercase().matches("\r\nx-response:").count(), 2, "{head}");
+        if method == "GET" {
+            let actual = read_exact_bytes(&mut tls, "直接填写 body".len()).await?;
+            assert_eq!(actual, "直接填写 body".as_bytes());
+        } else {
+            let mut actual = Vec::new();
+            timeout_step("HEAD ends without payload", tls.read_to_end(&mut actual)).await?;
+            assert!(actual.is_empty());
+        }
+    }
+    let (_, saved_body) = saved.split_once("\r\n\r\n").ok_or("missing saved rule")?;
+    let saved_rule: serde_json::Value = serde_json::from_str(saved_body)?;
+    let id = saved_rule["id"].as_str().ok_or("missing rule id")?;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+    stream.write_all(format!("DELETE /mitm/api/stubs/{id} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic YWRtaW46dGVzdA==\r\nConnection: close\r\n\r\n").as_bytes()).await?;
+    let mut deleted = String::new();
+    stream.read_to_string(&mut deleted).await?;
+    assert!(deleted.starts_with("HTTP/1.1 204"), "{deleted}");
+    // Query through the HTTP API after the writer has flushed, checking persisted provenance and effective headers.
+    let mut found = false;
+    for _ in 0..30 {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+        stream
+            .write_all(b"GET /mitm/api/records HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic YWRtaW46dGVzdA==\r\nConnection: close\r\n\r\n")
+            .await?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await?;
+        if let Some((_, body)) = response.split_once("\r\n\r\n") {
+            let page: serde_json::Value = serde_json::from_str(body)?;
+            if let Some(record) = page["records"].as_array().and_then(|records| {
+                records
+                    .iter()
+                    .find(|r| r["method"] == "GET" && r["capture_state"] == "complete")
+            }) {
+                let id = record["id"].as_str().ok_or("missing id")?;
+                let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+                stream
+                    .write_all(
+                        format!("GET /mitm/api/records/{id} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic YWRtaW46dGVzdA==\r\nConnection: close\r\n\r\n")
+                            .as_bytes(),
+                    )
+                    .await?;
+                let mut response = String::new();
+                stream.read_to_string(&mut response).await?;
+                let (_, body) = response.split_once("\r\n\r\n").ok_or("missing body")?;
+                let detail: serde_json::Value = serde_json::from_str(body)?;
+                assert_eq!(detail["stub"]["source"], "ui");
+                assert_eq!(detail["response_body"], "直接填写 body");
+                let headers = detail["request_headers"].as_array().ok_or("missing headers")?;
+                assert!(headers.iter().any(|h| h[0] == "x-request" && h[1] == "replaced"));
+                assert!(!headers.iter().any(|h| h[0] == "x-remove"));
+                found = true;
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(found, "completed capture not found");
+    proxy.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ui_headers_apply_to_dynamic_and_original_upstreams() -> Result<(), DynError> {
+    use std::sync::Arc;
+    use tokio_rustls::rustls::{
+        ServerConfig,
+        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    };
+    let temp_dir = unique_temp_dir("ui_upstream_headers")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let key = rcgen::KeyPair::generate()?;
+    let cert = rcgen::CertificateParams::new(vec!["localhost".into()])?.self_signed(&key)?;
+    let tls_config = ServerConfig::builder().with_no_client_auth().with_single_cert(
+        vec![CertificateDer::from(cert.der().to_vec())],
+        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+    )?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_config));
+    let proxy = start_proxy(vec![
+        "--mitm-users".into(),
+        "admin:test".into(),
+        "--mitm-domain-suffix".into(),
+        "localhost".into(),
+        "--mitm-ca-cert".into(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".into(),
+        ca.key_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+    for mode in ["upstream", "headers", "mod_header"] {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let port = listener.local_addr()?.port();
+        let acceptor = acceptor.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            let mut stream: Box<dyn UiTestStream> = if mode != "upstream" {
+                Box::new(acceptor.accept(stream).await?)
+            } else {
+                Box::new(stream)
+            };
+            let head = read_http_head(&mut stream).await?.to_ascii_lowercase();
+            assert!(head.contains("\r\nx-set: replaced\r\n"), "{head}");
+            assert!(!head.contains("x-remove"), "{head}");
+            assert_eq!(head.matches("\r\nx-add:").count(), 2, "{head}");
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nX-Set: old\r\nX-Remove: old\r\nX-Add: original\r\nConnection: close\r\n\r\nbody").await?;
+            stream.shutdown().await?;
+            Ok::<_, DynError>(())
+        });
+        let edits = serde_json::json!([
+            {"op":"add", "name":"x-add", "value":"extra"},
+            {"op":"set", "name":"x-set", "value":"replaced"},
+            {"op":"remove", "name":"x-remove"}
+        ]);
+        let rule = serde_json::json!({"authority":format!("localhost:{port}"), "path":"/headers", "enabled":true, "mode":mode, "url_pattern":format!(r"^https://localhost:{port}/headers\?match=1$"), "upstream":format!("http://127.0.0.1:{port}"), "request_headers":edits, "response_headers":edits}).to_string();
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+        stream.write_all(format!("POST /mitm/api/stubs HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic YWRtaW46dGVzdA==\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{rule}", rule.len()).as_bytes()).await?;
+        let mut saved = String::new();
+        stream.read_to_string(&mut saved).await?;
+        assert!(saved.starts_with("HTTP/1.1 200"), "{saved}");
+        let mut tls = connect_to_mitm_target(proxy.port, port, ca.cert_der.clone()).await?;
+        tls.write_all(format!("GET /headers?match=1 HTTP/1.1\r\nHost: localhost:{port}\r\nX-Add: original\r\nX-Set: old\r\nX-Remove: old\r\nConnection: close\r\n\r\n").as_bytes()).await?;
+        let head = timeout_step("header rule response", read_http_head(&mut tls))
+            .await?
+            .to_ascii_lowercase();
+        assert!(head.starts_with("http/1.1 200"), "{head}");
+        assert!(head.contains("\r\nx-set: replaced\r\n"), "{head}");
+        assert!(!head.contains("x-remove"), "{head}");
+        assert_eq!(head.matches("\r\nx-add:").count(), 2, "{head}");
+        assert_eq!(read_exact_bytes(&mut tls, 4).await?, b"body");
+        server.await??;
+    }
+    proxy.shutdown().await?;
+    Ok(())
+}
+
+trait UiTestStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> UiTestStream for T {}

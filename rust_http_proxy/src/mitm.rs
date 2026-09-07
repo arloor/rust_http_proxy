@@ -130,7 +130,7 @@ pub(crate) struct MitmDynamicStub {
 
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum MitmStubUpstreamConfig {
+pub(crate) enum MitmStubUpstreamConfig {
     Url(String),
     Detailed(Upstream),
 }
@@ -230,6 +230,78 @@ pub(crate) fn parse_mitm_stub_specs(config_file: &Option<String>) -> Result<Mitm
 }
 
 impl MitmStubSpecs {
+    pub(crate) fn file_rules(&self) -> Vec<serde_json::Value> {
+        let mut rules = Vec::new();
+        for (authority, entries) in self.stubs.iter() {
+            for (index, rule) in entries.iter().enumerate() {
+                let (mode, status, body, upstream, headers) = match &rule.action {
+                    MitmStubAction::Static(response) => (
+                        "response",
+                        Some(response.status.as_u16()),
+                        Some(String::from_utf8_lossy(&response.body).into_owned()),
+                        serde_json::Value::Null,
+                        response
+                            .headers
+                            .iter()
+                            .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("[binary]").to_owned()))
+                            .collect::<Vec<_>>(),
+                    ),
+                    MitmStubAction::Dynamic(stub) => {
+                        ("upstream", None, None, serde_json::to_value(&stub.upstream).unwrap_or_default(), Vec::new())
+                    }
+                };
+                rules.push(serde_json::json!({"id": format!("file:{authority}:{index}"), "authority": authority, "path": rule.path, "mode": mode, "status": status, "body": body, "upstream": upstream, "headers": headers}));
+            }
+        }
+        rules.sort_by_cached_key(|rule| rule["id"].as_str().unwrap_or_default().to_owned());
+        rules
+    }
+
+    pub(crate) fn matched(&self, authority: &str, path: &str) -> Option<crate::mitm_rules::MatchedStub> {
+        use crate::mitm_rules::{HeaderEdit, HeaderOperation, MatchedStub, RuleMode, StubTrace};
+        let action = self.find(authority, path)?;
+        let mut trace = StubTrace {
+            source: "file".to_owned(),
+            mode: RuleMode::Response,
+            rule_id: format!("{authority}{path}"),
+            request_headers: Vec::new(),
+            response_headers: Vec::new(),
+            upstream: None,
+        };
+        match &action {
+            MitmStubAction::Static(response) => {
+                trace.response_headers = response
+                    .headers
+                    .iter()
+                    .map(|(name, value)| HeaderEdit {
+                        op: HeaderOperation::Set,
+                        name: name.to_string(),
+                        value: value.to_str().unwrap_or("[binary]").to_owned(),
+                    })
+                    .collect();
+            }
+            MitmStubAction::Dynamic(stub) => {
+                trace.mode = RuleMode::Upstream;
+                trace.upstream = Some(stub.upstream.url_base.clone());
+                trace.request_headers = stub
+                    .upstream
+                    .headers
+                    .iter()
+                    .flatten()
+                    .map(|(name, value)| HeaderEdit {
+                        op: HeaderOperation::Set,
+                        name: name.to_ascii_lowercase(),
+                        value: value.clone(),
+                    })
+                    .collect();
+            }
+        }
+        Some(MatchedStub {
+            action: Some(action),
+            trace,
+        })
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.stubs.is_empty()
     }
@@ -242,7 +314,7 @@ impl MitmStubSpecs {
     }
 }
 
-fn parse_dynamic_stub_upstream(
+pub(crate) fn parse_dynamic_stub_upstream(
     upstream: MitmStubUpstreamConfig, authority: &str, path: &str,
 ) -> Result<Upstream, crate::DynError> {
     let mut upstream = match upstream {

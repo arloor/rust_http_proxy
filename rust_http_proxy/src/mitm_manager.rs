@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 
 use crate::DynError;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 pub(crate) const DEFAULT_MAX_RECORDS: usize = 1000;
 pub(crate) const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const DEFAULT_PAGE_LIMIT: usize = 100;
@@ -142,6 +142,7 @@ pub(crate) struct RecordDetail {
     pub response_body_note: Option<String>,
     pub response_body_image: Option<String>,
     pub error: Option<String>,
+    pub stub: Option<crate::mitm_rules::StubTrace>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -196,6 +197,11 @@ pub(crate) struct MitmEvent {
 
 enum StoreCommand {
     Create(RecordStart),
+    Stub {
+        id: String,
+        trace: String,
+        request_headers: String,
+    },
     ResponseHead {
         id: String,
         head: ResponseHead,
@@ -233,6 +239,7 @@ impl StoreCommand {
     fn kind(&self) -> &'static str {
         match self {
             Self::Create(_) => "create",
+            Self::Stub { .. } => "stub",
             Self::ResponseHead { .. } => "response_head",
             Self::Body { .. } => "body",
             Self::FinishBody { .. } => "finish_body",
@@ -263,6 +270,8 @@ struct PendingBody {
 
 pub(crate) struct MitmManager {
     db_path: PathBuf,
+    file_stubs: RwLock<crate::mitm::MitmStubSpecs>,
+    ui_stubs: RwLock<Vec<crate::mitm_rules::UiStubRule>>,
     ca_available: bool,
     capture_enabled: AtomicBool,
     stored_capture_enabled: AtomicBool,
@@ -298,6 +307,19 @@ impl MitmManager {
         let (stored_capture_enabled, max_records, body_limit_bytes) = load_settings(&connection)?;
         let capture_enabled = cli_capture_enabled || stored_capture_enabled;
         let mut targets = load_targets(&connection)?;
+        let ui_stubs = {
+            let mut statement = connection.prepare("SELECT rule_json FROM stub_rules ORDER BY rowid")?;
+            let json = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut rules = Vec::new();
+            for json in json {
+                let mut rule: crate::mitm_rules::UiStubRule = serde_json::from_str(&json)?;
+                rule.validate().map_err(|e| format!("invalid stored MITM rule: {e}"))?;
+                rules.push(rule);
+            }
+            rules
+        };
         drop(connection);
         // DB 中没有的 CLI 目标只存在于内存（不落库），负数 id 避免与自增主键冲突
         let mut synthetic_id = 0i64;
@@ -320,6 +342,8 @@ impl MitmManager {
         let (events, _) = broadcast::channel(1024);
         let manager = Arc::new(Self {
             db_path: db_path.clone(),
+            file_stubs: RwLock::new(crate::mitm::MitmStubSpecs::default()),
+            ui_stubs: RwLock::new(ui_stubs),
             ca_available,
             capture_enabled: AtomicBool::new(capture_enabled),
             stored_capture_enabled: AtomicBool::new(stored_capture_enabled),
@@ -561,6 +585,96 @@ impl MitmManager {
             .read()
             .map(|requests| requests.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn set_file_stubs(&self, specs: crate::mitm::MitmStubSpecs) {
+        *self.file_stubs.write().unwrap_or_else(|e| e.into_inner()) = specs;
+    }
+
+    pub(crate) fn list_stubs(&self) -> serde_json::Value {
+        let file = self.file_stubs.read().unwrap_or_else(|e| e.into_inner());
+        let ui = self.ui_stubs.read().unwrap_or_else(|e| e.into_inner());
+        serde_json::json!({"file": file.file_rules(), "ui": *ui})
+    }
+
+    pub(crate) fn find_ui_stub(
+        &self, authority: &str, path: &str, url: &str,
+    ) -> Option<crate::mitm_rules::MatchedStub> {
+        self.ui_stubs
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|rule| {
+                rule.enabled
+                    && if rule.mode == crate::mitm_rules::RuleMode::ModHeader {
+                        rule.compiled_url_pattern
+                            .as_ref()
+                            .is_some_and(|pattern| pattern.is_match(url))
+                    } else {
+                        rule.authority.eq_ignore_ascii_case(authority) && rule.path == path
+                    }
+            })
+            .map(crate::mitm_rules::UiStubRule::matched)
+    }
+
+    // Called on a blocking worker: commit and publish while holding one lock so concurrent edits stay ordered.
+    pub(crate) fn save_stub(
+        &self, id: Option<String>, mut rule: crate::mitm_rules::UiStubRule,
+    ) -> Result<crate::mitm_rules::UiStubRule, ManagerError> {
+        rule.validate().map_err(ManagerError::BadRequest)?;
+        let mut rules = self.ui_stubs.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(id) = id.as_ref() {
+            if !rules.iter().any(|rule| &rule.id == id) {
+                return Err(ManagerError::BadRequest("UI 规则不存在，文件规则只读".to_owned()));
+            }
+        }
+        if rules.iter().any(|existing| {
+            Some(&existing.id) != id.as_ref()
+                && if rule.mode == crate::mitm_rules::RuleMode::ModHeader {
+                    existing.mode == rule.mode && existing.url_pattern == rule.url_pattern
+                } else {
+                    existing.mode != crate::mitm_rules::RuleMode::ModHeader
+                        && existing.authority == rule.authority
+                        && existing.path == rule.path
+                }
+        }) {
+            return Err(ManagerError::Conflict("该匹配条件已有 UI 规则，请编辑已有规则".to_owned()));
+        }
+        if id.is_none() && rules.len() >= 1000 {
+            return Err(ManagerError::BadRequest("UI 规则最多 1000 条".to_owned()));
+        }
+        rule.id = id.unwrap_or_else(|| format!("{:032x}", rand::random::<u128>()));
+        let json = serde_json::to_string(&rule).map_err(|e| ManagerError::Database(e.to_string()))?;
+        let connection = open_connection(&self.db_path)?;
+        connection.execute("INSERT INTO stub_rules(id, rule_json) VALUES(?1, ?2) ON CONFLICT(id) DO UPDATE SET rule_json=excluded.rule_json", params![rule.id, json])?;
+        if let Some(existing) = rules.iter_mut().find(|existing| existing.id == rule.id) {
+            *existing = rule.clone();
+        } else {
+            rules.push(rule.clone());
+        }
+        self.emit("stubs", None);
+        Ok(rule)
+    }
+
+    pub(crate) fn delete_stub(&self, id: &str) -> Result<(), ManagerError> {
+        let mut rules = self.ui_stubs.write().unwrap_or_else(|e| e.into_inner());
+        if !rules.iter().any(|rule| rule.id == id) {
+            return Err(ManagerError::BadRequest("UI 规则不存在，文件规则只读".to_owned()));
+        }
+        open_connection(&self.db_path)?.execute("DELETE FROM stub_rules WHERE id=?1", [id])?;
+        rules.retain(|rule| rule.id != id);
+        self.emit("stubs", None);
+        Ok(())
+    }
+
+    pub(crate) fn record_stub(&self, id: &str, trace: &crate::mitm_rules::StubTrace, headers: &HeaderMap) {
+        if let Ok(trace) = serde_json::to_string(trace) {
+            self.send(StoreCommand::Stub {
+                id: id.to_owned(),
+                trace,
+                request_headers: headers_json(headers),
+            });
+        }
     }
 
     pub(crate) fn begin_record(&self, metadata: RecordMetadata<'_>) -> Option<String> {
@@ -872,7 +986,8 @@ fn initialize_schema(
     if has_legacy_mitm_enabled {
         connection.execute("ALTER TABLE settings DROP COLUMN mitm_enabled", [])?;
     }
-    for column in ["request_body_image", "response_body_image"] {
+    connection.execute("CREATE TABLE IF NOT EXISTS stub_rules (id TEXT PRIMARY KEY, rule_json TEXT NOT NULL)", [])?;
+    for column in ["request_body_image", "response_body_image", "stub_json"] {
         if !table_has_column(connection, "records", column)? {
             connection.execute(&format!("ALTER TABLE records ADD COLUMN {column} TEXT"), [])?;
         }
@@ -1005,6 +1120,17 @@ fn apply_store_command(
     events: &broadcast::Sender<MitmEvent>,
 ) -> Result<(), ManagerError> {
     match command {
+        StoreCommand::Stub {
+            id,
+            trace,
+            request_headers,
+        } => {
+            connection.execute(
+                "UPDATE records SET stub_json=?1, request_headers_json=?2 WHERE id=?3",
+                params![trace, request_headers, id],
+            )?;
+            emit(events, "record_updated", Some(id));
+        }
         StoreCommand::Create(record) => {
             connection.execute(
                 "INSERT INTO records(id, started_at_ms, client_ip, client_port, proxy_username, authority, host, path, query, method, request_version, request_headers_json)
@@ -1358,7 +1484,7 @@ fn get_record(connection: &Connection, id: &str) -> Result<Option<RecordDetail>,
             method, response_status, duration_ms, capture_state, request_version, request_headers_json,
             request_body, request_body_bytes, request_body_truncated, request_body_note, request_body_image,
             response_version, response_headers_json, response_body, response_body_bytes, response_body_truncated,
-            response_body_note, response_body_image, error FROM records WHERE id=?1",
+            response_body_note, response_body_image, error, stub_json FROM records WHERE id=?1",
     )?;
     statement
         .query_row([id], |row| {
@@ -1398,6 +1524,9 @@ fn get_record(connection: &Connection, id: &str) -> Result<Option<RecordDetail>,
                 response_body_note: row.get(26)?,
                 response_body_image: row.get(27)?,
                 error: row.get(28)?,
+                stub: row
+                    .get::<_, Option<String>>(29)?
+                    .and_then(|json| serde_json::from_str(&json).ok()),
             })
         })
         .optional()

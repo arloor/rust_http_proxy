@@ -36,6 +36,7 @@ export type RecordSummary = {
 }
 
 export type RecordDetail = RecordSummary & {
+  stub?: StubTrace | null
   request_version: string
   request_headers: [string, string][]
   request_body: string
@@ -73,4 +74,22 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fullUrl(record: Pick<RecordSummary, 'authority' | 'path' | 'query'>): string {
   return `https://${record.authority}${record.path}${record.query ? `?${record.query}` : ''}`
+}
+
+export type HeaderEdit = { op: 'add' | 'set' | 'remove'; name: string; value: string }
+export type StubMode = 'response' | 'upstream' | 'headers' | 'mod_header'
+export type StubRule = {
+  id: string; authority: string; path: string; enabled: boolean; mode: StubMode
+  url_pattern: string
+  body: string; status: number | null; upstream: string | null
+  request_headers: HeaderEdit[]; response_headers: HeaderEdit[]
+}
+export type FileStubRule = {
+  id: string; authority: string; path: string; mode: StubMode
+  status: number | null; body: string | null; upstream: Record<string, unknown> | null; headers: [string, string][]
+}
+export type StubRules = { file: FileStubRule[]; ui: StubRule[] }
+export type StubTrace = {
+  source: 'file' | 'ui'; mode: StubMode; rule_id: string; upstream: string | null
+  request_headers: HeaderEdit[]; response_headers: HeaderEdit[]
 }

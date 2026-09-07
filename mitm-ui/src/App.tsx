@@ -1,3 +1,4 @@
+import { StubRulesDialog, headerOpLabel } from './StubRules'
 import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
@@ -34,6 +35,7 @@ const methods = ['', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 const SENSITIVE_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'proxy-authorization'])
 
 function App() {
+  const [stubEditor, setStubEditor] = useState<{ record?: RecordDetail } | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [targets, setTargets] = useState<Target[]>([])
   const [groups, setGroups] = useState<HostGroup[]>([])
@@ -511,7 +513,7 @@ function App() {
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
       const target = event.target as HTMLElement
-      if (target.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (target.closest('dialog, input, textarea, select, [contenteditable="true"]')) return
       if (event.key === 'Escape') {
         if (lightboxSrc) {
           setLightboxSrc(null)
@@ -580,6 +582,7 @@ function App() {
         <button className="recent-requests-trigger" onClick={openRecentRequests}>
           <span aria-hidden="true">↺</span> 最近请求
         </button>
+        <button className="recent-requests-trigger" onClick={() => setStubEditor({})}>⇄ Stub 规则</button>
         <div className="status-line">
           {settings?.ca_available ? (
             <a
@@ -814,6 +817,7 @@ function App() {
           : selected && (
             <Detail
               detail={selected}
+              onCreateStub={() => setStubEditor({ record: selected })}
               tab={detailTab}
               onTabChange={setDetailTab}
               onClose={closeDetail}
@@ -833,6 +837,7 @@ function App() {
           onRefresh={() => void refreshRecentRequests()}
         />
       )}
+      {stubEditor && <StubRulesDialog record={stubEditor.record} onClose={() => setStubEditor(null)} />}
       {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
     </main>
   )
@@ -1129,6 +1134,7 @@ function DetailLoading({
 
 function Detail({
   detail,
+  onCreateStub,
   tab,
   onTabChange,
   onClose,
@@ -1138,6 +1144,7 @@ function Detail({
   onZoomImage,
 }: {
   detail: RecordDetail
+  onCreateStub: () => void
   tab: 'request' | 'response'
   onTabChange: (tab: 'request' | 'response') => void
   onClose: () => void
@@ -1159,6 +1166,7 @@ function Detail({
     if (el) atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 8
   }
   const request = tab === 'request'
+  const edits = (request ? detail.stub?.request_headers : detail.stub?.response_headers) ?? []
   const headers = request ? detail.request_headers : detail.response_headers
   const rawBody = request ? detail.request_body : detail.response_body
   const body = pretty ? prettyBody(rawBody) : rawBody
@@ -1183,6 +1191,7 @@ function Detail({
       <div className="detail-url-row">
         <p className="detail-url">{url}</p>
         <div className="detail-actions">
+          <button className="ghost" onClick={onCreateStub}>为此请求创建 Stub</button>
           <button className="ghost" onClick={() => void onCopy(url, 'URL')}>复制 URL</button>
           <button className="ghost" onClick={() => void onCopy(toCurl(detail), 'cURL')}>复制 cURL</button>
           <button className="ghost" onClick={() => void onCopy(toHttpResponse(detail), '响应')}>复制响应</button>
@@ -1200,6 +1209,9 @@ function Detail({
         <button className={tab === 'request' ? 'active' : ''} onClick={() => onTabChange('request')}>Request</button>
         <button className={tab === 'response' ? 'active' : ''} onClick={() => onTabChange('response')}>Response</button>
       </div>
+      {detail.stub && <div className="stub-origin-note"><b>mitm-stub · {detail.stub.source === 'file' ? '配置文件' : 'UI 规则'}{detail.stub.mode === 'mod_header' ? ' · mod-header' : ''}</b><span>{request
+        ? `${detail.stub.mode === 'upstream' ? '请求转发至替代上游；' : detail.stub.mode === 'response' ? '直接返回配置响应，未发送到上游；' : ''}${edits.length ? '下方标记的请求头由规则修改。' : '请求内容来自客户端。'}`
+        : detail.stub.mode === 'response' ? 'Body 与状态码来自 Stub 覆写。' : detail.stub.mode === 'upstream' ? 'Body 与状态码来自 Stub 上游。' : 'Body 与状态码来自原始服务。'}{!request && edits.length > 0 ? ' 标记的响应头由规则修改。' : ''}</span>{detail.stub.upstream && <code>{detail.stub.upstream}</code>}{edits.length > 0 && <div className="stub-applied-headers">{edits.map((edit, i) => <span key={i}>{headerOpLabel[edit.op]} {edit.name}</span>)}</div>}</div>}
       <h3>
         Headers
         <span className="heading-actions">
@@ -1209,9 +1221,14 @@ function Detail({
       </h3>
       <div className="header-list">
         {headers.length === 0 && <div className="empty-headers">(none)</div>}
-        {headers.map(([name, value], index) => (
-          <div className={`header-row ${SENSITIVE_HEADERS.has(name.toLowerCase()) ? 'sensitive' : ''}`} key={`${name}-${index}`}>
-            <span className="header-name">{name}</span>
+        {headers.map(([name, value], index) => {
+          const headerEdits = edits.filter((edit) => edit.name.toLowerCase() === name.toLowerCase())
+          // An append keeps the upstream values; only the final appended rows belong to the rule.
+          const fromStub = (!request && detail.stub?.mode === 'response') || headerEdits.some((edit) => edit.op === 'set') ||
+            (headerEdits.some((edit) => edit.op === 'remove') && headerEdits.some((edit) => edit.op === 'add')) ||
+            headers.slice(index).filter(([other]) => other.toLowerCase() === name.toLowerCase()).length <= headerEdits.filter((edit) => edit.op === 'add').length
+          return <div className={`header-row ${SENSITIVE_HEADERS.has(name.toLowerCase()) ? 'sensitive' : ''}`} key={`${name}-${index}`}>
+            <span className="header-name">{name}{fromStub && <i className="stub-badge" title="此 Header 由 mitm-stub 规则修改">stub</i>}</span>
             <span className="header-value">{value}</span>
             <button
               className="ghost compact header-copy"
@@ -1220,7 +1237,7 @@ function Detail({
               onClick={() => void onCopy(`${name}\n${value}`, name)}
             >复制</button>
           </div>
-        ))}
+        })}
       </div>
       <h3>
         Body

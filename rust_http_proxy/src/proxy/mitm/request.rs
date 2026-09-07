@@ -24,6 +24,7 @@ use crate::{
     location::{BuiltUpstreamRequest, build_upstream_req},
     mitm::{MitmDynamicStub, MitmStubAction, MitmStubResponse, MitmStubSpecs},
     mitm_manager::{MitmManager, RecordMetadata, ResponseHead, headers_json, version_label},
+    mitm_rules::{StubTrace, apply_headers},
     proxy::{
         connect::HttpClientStream,
         http::{SchemeHostPort, full_body, get_client_ip, is_websocket_upgrade, origin_form},
@@ -65,6 +66,25 @@ pub(super) async fn handle_mitm_request(
         .map(|authority| authority.host().to_ascii_lowercase())
         .unwrap_or_else(|_| request_authority.to_ascii_lowercase());
     let request_path = req.uri().path().to_owned();
+    let request_url = format!(
+        "https://{}{}",
+        request_authority.strip_suffix(":443").unwrap_or(&request_authority),
+        req.uri().path_and_query().map(|value| value.as_str()).unwrap_or("/")
+    );
+    let matched_stub = context
+        .stub_specs
+        .matched(&access_label.target, &request_path)
+        .or_else(|| {
+            context
+                .manager
+                .find_ui_stub(&access_label.target, &request_path, &request_url)
+        });
+    let stub_trace = matched_stub.as_ref().map(|stub| stub.trace.clone());
+    if let Some(stub) = matched_stub.as_ref() {
+        if !matches!(stub.action, Some(MitmStubAction::Dynamic(_))) {
+            apply_headers(req.headers_mut(), &stub.trace.request_headers);
+        }
+    }
     // 面板自己的 /mitm 流量如果也落库，会把留存窗口和 URL 分类挤满。
     let record_id = if crate::mitm_web::is_management_path(&request_path) {
         None
@@ -83,6 +103,10 @@ pub(super) async fn handle_mitm_request(
         })
     };
 
+    if let (Some(id), Some(trace)) = (record_id.as_deref(), stub_trace.as_ref()) {
+        context.manager.record_stub(id, trace, req.headers());
+    }
+
     info!(
         "[mitm] {:^35} ==> {} authority={} {:?} {:?}",
         SocketAddrFormat(&client_socket_addr).to_string(),
@@ -92,7 +116,7 @@ pub(super) async fn handle_mitm_request(
         req.version(),
     );
 
-    if let Some(stub_action) = context.stub_specs.find(&access_label.target, req.uri().path()) {
+    if let Some(stub_action) = matched_stub.and_then(|stub| stub.action) {
         match stub_action {
             MitmStubAction::Static(stub_response) => {
                 info!("[mitm static stub] returning configured response for {access_label}{}", req.uri().path());
@@ -104,7 +128,14 @@ pub(super) async fn handle_mitm_request(
                     record_id.clone(),
                 )
                 .await?;
-                return build_mitm_stub_response(stub_response, access_label, context.manager.clone(), record_id);
+                return build_mitm_stub_response(
+                    stub_response,
+                    access_label,
+                    context.manager.clone(),
+                    record_id,
+                    stub_trace.as_ref(),
+                    req.method() == http::Method::HEAD,
+                );
             }
             MitmStubAction::Dynamic(dynamic_stub) => {
                 let client_upgrade = is_websocket.then(|| hyper::upgrade::on(&mut req));
@@ -124,6 +155,7 @@ pub(super) async fn handle_mitm_request(
                     record_id,
                     client_upgrade,
                     context.ipv6_first,
+                    stub_trace.as_ref(),
                 )
                 .await;
             }
@@ -132,8 +164,16 @@ pub(super) async fn handle_mitm_request(
 
     if is_websocket {
         let client_ip = get_client_ip(&req, client_socket_addr);
-        return handle_mitm_websocket_upgrade(req, mitm_proxy_client, access_label, client_ip, context, record_id)
-            .await;
+        return handle_mitm_websocket_upgrade(
+            req,
+            mitm_proxy_client,
+            access_label,
+            client_ip,
+            context,
+            record_id,
+            stub_trace.as_ref(),
+        )
+        .await;
     }
 
     let client_ip = get_client_ip(&req, client_socket_addr);
@@ -162,7 +202,7 @@ pub(super) async fn handle_mitm_request(
             )
             .await
     };
-    let resp = match response_result {
+    let mut resp = match response_result {
         Ok(response) => response,
         Err(error) => {
             if let Some(id) = record_id.as_ref() {
@@ -171,12 +211,16 @@ pub(super) async fn handle_mitm_request(
             return Err(error);
         }
     };
+    if let Some(trace) = stub_trace.as_ref() {
+        apply_headers(resp.headers_mut(), &trace.response_headers);
+    }
     record_response_head(&context.manager, record_id.as_deref(), &resp, None);
     Ok(map_mitm_response_body(resp, context.manager, record_id))
 }
 
 fn build_mitm_stub_response(
     stub_response: MitmStubResponse, access_label: AccessLabel, manager: Arc<MitmManager>, record_id: Option<String>,
+    trace: Option<&StubTrace>, head: bool,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     let mut builder = Response::builder().status(stub_response.status);
     let headers = builder
@@ -185,15 +229,32 @@ fn build_mitm_stub_response(
     for (name, value) in stub_response.headers {
         headers.insert(name, value);
     }
+    if let Some(trace) = trace {
+        apply_headers(headers, &trace.response_headers);
+    }
     headers.remove(TRANSFER_ENCODING);
     headers.insert(
         CONTENT_LENGTH,
-        HeaderValue::from_str(&stub_response.body.len().to_string())
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
+        HeaderValue::from_str(
+            &if stub_response.status == http::StatusCode::RESET_CONTENT {
+                0
+            } else {
+                stub_response.body.len()
+            }
+            .to_string(),
+        )
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?,
     );
+    if matches!(stub_response.status.as_u16(), 204 | 304) {
+        headers.remove(CONTENT_LENGTH);
+    }
+    let payload = if head || matches!(stub_response.status.as_u16(), 204 | 205 | 304) {
+        Bytes::new()
+    } else {
+        stub_response.body
+    };
     let body =
-        CounterBody::new(full_body(stub_response.body), METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-            .boxed();
+        CounterBody::new(full_body(payload), METRICS.proxy_traffic.clone(), LabelImpl::new(access_label)).boxed();
     let response = builder
         .body(body)
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
@@ -207,15 +268,23 @@ async fn forward_to_dynamic_mitm_stub(
     stub_http1_client: &ReverseProxyClient<BoxBody<Bytes, io::Error>>,
     stub_http2_client: &ReverseProxyClient<BoxBody<Bytes, io::Error>>, access_label: AccessLabel,
     request_authority: String, manager: Arc<MitmManager>, record_id: Option<String>,
-    client_upgrade: Option<hyper::upgrade::OnUpgrade>, ipv6_first: Option<bool>,
+    client_upgrade: Option<hyper::upgrade::OnUpgrade>, ipv6_first: Option<bool>, trace: Option<&StubTrace>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     let original = mitm_original_origin(&request_authority)
         .map_err(|error| record_mitm_error(&manager, record_id.as_deref(), error))?;
     let BuiltUpstreamRequest {
-        request: req,
+        request: mut req,
         connection_key,
     } = build_upstream_req("", &dynamic_stub.upstream, req, &original)
         .map_err(|error| record_mitm_error(&manager, record_id.as_deref(), error))?;
+    if let Some(trace) = trace {
+        if trace.source == "ui" {
+            apply_headers(req.headers_mut(), &trace.request_headers);
+        }
+        if let Some(id) = record_id.as_deref() {
+            manager.record_stub(id, trace, req.headers());
+        }
+    }
     let request_is_upgrade = client_upgrade.is_some();
     if request_is_upgrade && connection_key.protocol != DirectProtocol::Http1 {
         return Err(record_mitm_error(
@@ -249,6 +318,9 @@ async fn forward_to_dynamic_mitm_stub(
             return Err(record_mitm_error(&manager, record_id.as_deref(), error));
         }
     };
+    if let Some(trace) = trace {
+        apply_headers(response.headers_mut(), &trace.response_headers);
+    }
     record_response_head(&manager, record_id.as_deref(), &response, None);
 
     if let Some(client_upgrade) = client_upgrade {
@@ -285,9 +357,11 @@ fn mitm_original_origin(authority: &str) -> io::Result<SchemeHostPort> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_mitm_websocket_upgrade(
     mut req: Request<Incoming>, mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
     access_label: AccessLabel, client_ip: String, context: MitmRequestContext, record_id: Option<String>,
+    trace: Option<&StubTrace>,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     debug!("[mitm] WebSocket upgrade request to {}", access_label.target);
     let client_upgrade = hyper::upgrade::on(&mut req);
@@ -325,6 +399,9 @@ async fn handle_mitm_websocket_upgrade(
             return Err(error);
         }
     };
+    if let Some(trace) = trace {
+        apply_headers(upstream_response.headers_mut(), &trace.response_headers);
+    }
     record_response_head(
         &context.manager,
         record_id.as_deref(),
