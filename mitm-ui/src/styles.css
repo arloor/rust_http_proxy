@@ -362,7 +362,7 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 }
 
 /* Stub rules: a focused editor with immutable file rules alongside persisted UI rules. */
-.stub-dialog { width: min(1180px, calc(100vw - 48px)); height: min(880px, calc(100vh - 48px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--line); border-radius: 16px; color: var(--text); background: var(--panel); box-shadow: 0 24px 90px #0f172a40; overflow: hidden; }
+.stub-dialog { width: min(1320px, calc(100vw - 48px)); height: min(880px, calc(100vh - 48px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--line); border-radius: 16px; color: var(--text); background: var(--panel); box-shadow: 0 24px 90px #0f172a40; overflow: hidden; }
 .stub-dialog[open] { display: flex; flex-direction: column; }
 .stub-dialog::backdrop { background: #0f172a70; backdrop-filter: blur(3px); }
 .stub-dialog button { cursor: pointer; border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px; background: white; font-size: 12px; font-weight: 600; }
@@ -374,7 +374,7 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 .stub-dialog .stub-close { border: none; font-size: 26px; font-weight: 400; padding: 2px 10px; }
 .stub-policy { display: flex; gap: 12px; padding: 11px 26px; background: #f0fdfa; border-block: 1px solid #ccfbf1; font-size: 12px; color: #115e59; }
 .stub-policy b { white-space: nowrap; }
-.stub-layout { display: grid; grid-template-columns: 292px minmax(0, 1fr); flex: 1; min-height: 0; }
+.stub-layout { display: grid; grid-template-columns: 390px minmax(0, 1fr); flex: 1; min-height: 0; }
 .stub-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; padding: 20px 16px 12px; background: #f8fafc; border-right: 1px solid var(--line); }
 .stub-dialog input:not([type=checkbox]), .stub-dialog select, .stub-dialog textarea { min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; background: white; color: var(--text); font: inherit; }
 .stub-dialog :is(input, select, textarea, button):focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
@@ -430,7 +430,63 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 .stub-origin-note { background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 7px; padding: 10px 12px; margin: 12px 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #115e59; overflow-wrap: anywhere; }
 .stub-applied-headers { display: flex; flex-wrap: wrap; gap: 6px; }
 .stub-applied-headers span { background: white; border: 1px solid #ccfbf1; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
-@media (max-width: 1100px) { .stub-layout { grid-template-columns: 242px minmax(0, 1fr); } .stub-editor { padding: 20px; } }
+@media (max-width: 1100px) { .stub-layout { grid-template-columns: 330px minmax(0, 1fr); } .stub-editor { padding: 20px; } }
 .stub-body-editor .stub-section-title label { white-space: nowrap; }
 .stub-body-editor .stub-section-title input { width: 90px; flex-shrink: 0; }
 .stub-mode-label + .stub-match-fields { margin-top: 18px; }
+
+.stub-dialog .stub-list-item { gap: 9px; padding: 15px; margin-bottom: 12px; background: white; border-color: #e2e8f0; }
+.stub-list-item .stub-card-top { justify-content: space-between; gap: 8px; }
+.stub-list-item .stub-card-top strong { font-size: 11px; color: var(--text-3); font-weight: 600; }
+.stub-list-item .stub-card-url { color: var(--text); font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; font-weight: 600; }
+.stub-list-item .stub-card-scope { font-size: 10px; color: var(--text-3); }
+.stub-list-item .stub-card-effects { display: flex; flex-direction: column; align-items: stretch; gap: 10px; border-top: 1px solid #e2e8f0; padding-top: 11px; width: 100%; }
+.stub-card-effect { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 9px; font-size: 11px; line-height: 1.6; }
+.stub-card-label { color: var(--text-3); font-weight: 600; }
+.stub-card-values { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--text-2); font-weight: 400; }
+.stub-card-values code { font-size: 11px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.stub-card-header { display: flex; align-items: baseline; gap: 6px; }
+.stub-card-op { font-size: 10px; font-style: normal; color: #0f766e; flex-shrink: 0; }
+.stub-card-op.remove { color: #b91c1c; }
+.stub-card-muted { color: var(--text-3); font-size: 10px; font-weight: 400; }
+.stub-card-changed { color: #0f766e; font-weight: 600; }
+
+/* Rules occupy the full table; the editor opens as a dismissible right drawer. */
+.stub-layout { display: block; position: relative; overflow: hidden; }
+.stub-table-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 20px 24px 12px; }
+.stub-table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.stub-table-toolbar > div { flex: 1; display: flex; align-items: baseline; gap: 12px; }
+.stub-table-toolbar strong { font-size: 15px; }
+.stub-table-toolbar span { color: var(--text-3); font-size: 12px; }
+.stub-dialog .stub-table-toolbar input { width: 240px; font-size: 12px; }
+.stub-table-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid #e2e8f0; border-radius: 9px; }
+.stub-rules-table { width: 100%; min-width: 920px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 12px; text-align: left; }
+.stub-rules-table .rule-source-col { width: 120px; }
+.stub-rules-table .rule-match-col { width: 29%; }
+.stub-rules-table .rule-body-col { width: 18%; }
+.stub-rules-table .rule-action-col { width: 90px; }
+.stub-rules-table th { width: auto; position: sticky; top: 0; z-index: 1; background: #f8fafc; color: var(--text-3); font-size: 11px; font-weight: 600; padding: 13px 14px; border-bottom: 1px solid #e2e8f0; }
+.stub-rules-table td { white-space: normal; text-overflow: clip; vertical-align: top; padding: 18px 14px; border-bottom: 1px solid #e2e8f0; overflow-wrap: anywhere; }
+.stub-rules-table tr:last-child td { border-bottom: 0; }
+.stub-rules-table tbody tr:hover { background: #f8fafc; }
+.stub-rules-table tr.selected { background: #f0fdfa; }
+.stub-rules-table .stub-badge { align-self: flex-start; }
+.stub-rules-table .stub-card-values { gap: 7px; }
+.stub-rules-table .stub-table-url { font-size: 12px; font-weight: 600; line-height: 1.65; color: var(--text); }
+.stub-match-kind { color: var(--text-3); font-size: 10px; }
+.stub-rule-state { font-size: 11px; color: var(--text-3); }
+.stub-rule-state.enabled { color: #0f766e; }
+.stub-rule-state.shadowed { color: #92400e; }
+.stub-rules-table .stub-table-empty { text-align: center; color: var(--text-3); padding: 70px 16px; }
+.stub-table-foot { margin: 12px 0 0; font-size: 11px; color: var(--text-3); }
+.stub-dialog .stub-editor-backdrop { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; background: #0f172a35; border: 0; border-radius: 0; cursor: default; }
+.stub-dialog .stub-editor-backdrop:hover:not(:disabled) { background: #0f172a35; }
+.stub-layout > .stub-editor { position: absolute; top: 0; right: 0; bottom: 0; width: min(720px, 76%); z-index: 3; background: white; border-left: 1px solid var(--line); box-shadow: -12px 0 36px #0f172a1c; padding-top: 0; }
+.stub-editor-toolbar { display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 2; background: white; padding: 16px 0; margin-bottom: 16px; border-bottom: 1px solid #e2e8f0; }
+.stub-editor-toolbar strong { font-size: 15px; }
+.stub-dialog .stub-editor-toolbar button { border: 0; font-size: 23px; padding: 0 8px; font-weight: 400; }
+
+.stub-rules-table tbody tr { cursor: default; }
+.stub-rules-table th:nth-child(2), .stub-rules-table td:nth-child(2) { display: table-cell; }
+
+.stub-rules-table button { white-space: nowrap; }
