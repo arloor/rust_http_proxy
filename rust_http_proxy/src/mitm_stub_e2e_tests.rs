@@ -509,7 +509,8 @@ async fn ui_headers_apply_to_dynamic_and_original_upstreams() -> Result<(), DynE
         let edits = serde_json::json!([
             {"op":"add", "name":"x-add", "value":"extra"},
             {"op":"set", "name":"x-set", "value":"replaced"},
-            {"op":"remove", "name":"x-remove"}
+            {"op":"remove", "name":"x-remove"},
+            {"enabled":false, "op":"set", "name":"x-set", "value":"disabled"}
         ]);
         let rule = serde_json::json!({"authority":format!("localhost:{port}"), "path":"/headers", "enabled":true, "mode":mode, "url_pattern":format!(r"^https://localhost:{port}/headers\?match=1$"), "upstream":format!("http://127.0.0.1:{port}"), "request_headers":edits, "response_headers":edits}).to_string();
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port)).await?;

@@ -10,10 +10,16 @@ use crate::mitm::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct HeaderEdit {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     pub op: HeaderOperation,
     pub name: String,
     #[serde(default)]
     pub value: String,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -57,6 +63,9 @@ impl HeaderEdit {
 
 pub(crate) fn apply_headers(headers: &mut HeaderMap, edits: &[HeaderEdit]) {
     for edit in edits {
+        if !edit.enabled {
+            continue;
+        }
         let Ok(name) = edit.name.parse::<HeaderName>() else {
             continue;
         };
@@ -206,8 +215,18 @@ impl UiStubRule {
                 source: "ui".to_owned(),
                 mode: self.mode,
                 rule_id: self.id.clone(),
-                request_headers: self.request_headers.clone(),
-                response_headers: self.response_headers.clone(),
+                request_headers: self
+                    .request_headers
+                    .iter()
+                    .filter(|edit| edit.enabled)
+                    .cloned()
+                    .collect(),
+                response_headers: self
+                    .response_headers
+                    .iter()
+                    .filter(|edit| edit.enabled)
+                    .cloned()
+                    .collect(),
                 upstream: self.upstream.clone(),
             },
         }
@@ -241,11 +260,19 @@ mod tests {
         headers.append("x-delete", HeaderValue::from_static("two"));
         let edits = vec![
             HeaderEdit {
+                enabled: true,
                 op: HeaderOperation::Add,
                 name: "X-Test".into(),
                 value: "extra".into(),
             },
             HeaderEdit {
+                enabled: false,
+                op: HeaderOperation::Set,
+                name: "X-Test".into(),
+                value: "disabled".into(),
+            },
+            HeaderEdit {
+                enabled: true,
                 op: HeaderOperation::Remove,
                 name: "X-Delete".into(),
                 value: String::new(),
@@ -260,6 +287,7 @@ mod tests {
         apply_headers(
             &mut headers,
             &[HeaderEdit {
+                enabled: true,
                 op: HeaderOperation::Set,
                 name: "x-test".into(),
                 value: "replacement".into(),
@@ -276,6 +304,7 @@ mod tests {
         ] {
             assert!(
                 HeaderEdit {
+                    enabled: true,
                     op: HeaderOperation::Set,
                     name: name.into(),
                     value: "x".into()
@@ -286,6 +315,7 @@ mod tests {
         }
         assert!(
             HeaderEdit {
+                enabled: true,
                 op: HeaderOperation::Add,
                 name: "x-test".into(),
                 value: "a\r\nb".into()
@@ -293,6 +323,26 @@ mod tests {
             .validate()
             .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_header_edits_default_to_enabled_and_disabled_edits_are_not_traced() -> Result<(), crate::DynError> {
+        let edit: HeaderEdit =
+            serde_json::from_value(serde_json::json!({"op":"set", "name":"x-legacy", "value":"yes"}))?;
+        assert!(edit.enabled);
+
+        let mut rule: UiStubRule = serde_json::from_value(serde_json::json!({
+            "mode":"mod_header", "enabled":true, "url_pattern":"example",
+            "request_headers":[
+                {"op":"set", "name":"x-enabled", "value":"yes"},
+                {"enabled":false, "op":"set", "name":"x-disabled", "value":"no"}
+            ]
+        }))?;
+        rule.validate()?;
+        let matched = rule.matched();
+        assert_eq!(matched.trace.request_headers.len(), 1);
+        assert_eq!(matched.trace.request_headers[0].name, "x-enabled");
         Ok(())
     }
 

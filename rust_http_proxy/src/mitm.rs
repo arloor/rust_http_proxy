@@ -274,6 +274,7 @@ impl MitmStubSpecs {
                     .headers
                     .iter()
                     .map(|(name, value)| HeaderEdit {
+                        enabled: true,
                         op: HeaderOperation::Set,
                         name: name.to_string(),
                         value: value.to_str().unwrap_or("[binary]").to_owned(),
@@ -289,6 +290,7 @@ impl MitmStubSpecs {
                     .iter()
                     .flatten()
                     .map(|(name, value)| HeaderEdit {
+                        enabled: true,
                         op: HeaderOperation::Set,
                         name: name.to_ascii_lowercase(),
                         value: value.clone(),

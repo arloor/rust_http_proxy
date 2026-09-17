@@ -401,9 +401,16 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 .stub-body-editor .stub-section-title label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .stub-body-editor input { max-width: 90px; }
 .stub-dialog textarea { resize: vertical; min-height: 164px; font: 12px/1.7 var(--font-mono); tab-size: 2; background: #f8fafc; }
-.stub-header-edit { display: grid; grid-template-columns: 78px minmax(100px, 1fr) minmax(100px, 1.3fr) 30px; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stub-header-edit { display: grid; grid-template-columns: 32px 78px minmax(100px, 1fr) minmax(100px, 1.3fr) 30px; align-items: center; gap: 8px; margin-bottom: 8px; }
 .stub-header-edit input, .stub-header-edit select { font-size: 12px !important; }
 .stub-header-edit input:disabled { background: #f1f5f9; }
+.stub-header-edit.off > :not(.stub-header-toggle) { opacity: .48; }
+.stub-dialog .stub-header-toggle { position: relative; width: 30px; height: 18px; padding: 0; border: 0; border-radius: 99px; background: #cbd5e1; transition: background .15s; }
+.stub-dialog .stub-header-toggle:hover:not(:disabled) { background: #94a3b8; }
+.stub-header-toggle i { position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; border-radius: 50%; background: white; box-shadow: 0 1px 2px #0f172a40; transition: left .15s; }
+.stub-dialog .stub-header-toggle.on { background: var(--teal); }
+.stub-dialog .stub-header-toggle.on:hover:not(:disabled) { background: #0f766e; }
+.stub-header-toggle.on i { left: 14px; }
 .stub-dialog .stub-remove-header { padding: 4px; font-size: 20px; border-color: transparent; color: var(--text-3); }
 .stub-headers-empty { border: 1px dashed var(--line); border-radius: 6px; padding: 12px; color: var(--text-3); font-size: 12px; }
 .stub-form-footer { position: sticky; bottom: -24px; background: white; margin-top: 24px; padding: 16px 0; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -446,6 +453,7 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 .stub-card-values { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--text-2); font-weight: 400; }
 .stub-card-values code { font-size: 11px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .stub-card-header { display: flex; align-items: baseline; gap: 6px; }
+.stub-card-header.off { opacity: .5; }
 .stub-card-op { font-size: 10px; font-style: normal; color: #0f766e; flex-shrink: 0; }
 .stub-card-op.remove { color: #b91c1c; }
 .stub-card-muted { color: var(--text-3); font-size: 10px; font-weight: 400; }

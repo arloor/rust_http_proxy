@@ -76,7 +76,7 @@ export function fullUrl(record: Pick<RecordSummary, 'authority' | 'path' | 'quer
   return `https://${record.authority}${record.path}${record.query ? `?${record.query}` : ''}`
 }
 
-export type HeaderEdit = { op: 'add' | 'set' | 'remove'; name: string; value: string }
+export type HeaderEdit = { enabled: boolean; op: 'add' | 'set' | 'remove'; name: string; value: string }
 export type StubMode = 'response' | 'upstream' | 'headers' | 'mod_header'
 export type StubRule = {
   id: string; authority: string; path: string; enabled: boolean; mode: StubMode
