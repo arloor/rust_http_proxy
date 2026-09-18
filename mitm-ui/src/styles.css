@@ -54,7 +54,8 @@ a.ca-pill:hover { filter: brightness(0.97); }
 .control-strip .danger { border: 1px solid #fecaca; background: #fff; color: var(--red); border-radius: 6px; cursor: pointer; padding: 7px 12px; font-size: 12px; font-weight: 600; transition: background .15s, opacity .15s; }
 .control-strip .danger:hover:not(:disabled) { background: #fef2f2; }
 .control-strip .danger:disabled { opacity: .45; cursor: not-allowed; }
-.recent-requests-trigger { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #99f6e4; background: #f0fdfa; color: var(--teal-text); border-radius: 6px; padding: 7px 12px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.recent-requests-trigger { display: inline-flex; align-items: center; gap: 8px; border: 1px solid #99f6e4; background: #f0fdfa; color: var(--teal-text); border-radius: 8px; padding: 8px 16px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all .15s; }
+.recent-requests-trigger svg { color: var(--teal-text); flex: none; }
 .recent-requests-trigger:hover { background: #ccfbf1; border-color: #5eead4; }
 .recent-requests-trigger span { font-size: 16px; line-height: 1; }
 .toggle-control { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; color: var(--text-2); cursor: pointer; }
@@ -450,14 +451,16 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 .stub-list-item .stub-card-effects { display: flex; flex-direction: column; align-items: stretch; gap: 10px; border-top: 1px solid #e2e8f0; padding-top: 11px; width: 100%; }
 .stub-card-effect { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 9px; font-size: 11px; line-height: 1.6; }
 .stub-card-label { color: var(--text-3); font-weight: 600; }
-.stub-card-values { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--text-2); font-weight: 400; }
-.stub-card-values code { font-size: 11px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
-.stub-card-header { display: flex; align-items: baseline; gap: 6px; }
+.stub-card-values { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; color: var(--text-2); font-weight: 400; }
+.stub-card-values code { font-size: 11px; color: var(--text-2); white-space: pre-wrap; word-break: break-all; }
+.stub-card-header { display: flex; align-items: flex-start; gap: 6px; width: 100%; line-height: 1.5; }
+.stub-header-code { font-size: 12px; color: var(--text-2); word-break: break-all; flex: 1; }
 .stub-card-header.off { opacity: .5; }
 .stub-card-op { font-size: 10px; font-style: normal; color: #0f766e; flex-shrink: 0; }
 .stub-card-op.remove { color: #b91c1c; }
 .stub-card-muted { color: var(--text-3); font-size: 10px; font-weight: 400; }
 .stub-card-changed { color: #0f766e; font-weight: 600; }
+.stub-upstream-url { font-size: 11.5px; color: var(--text-3); word-break: break-all; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; margin-top: 2px; display: inline-block; }
 
 /* Rules occupy the full table; the editor opens as a dismissible right drawer. */
 .stub-layout { display: block; position: relative; overflow: hidden; }
@@ -469,20 +472,20 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 .stub-dialog .stub-table-toolbar input { width: 240px; font-size: 12px; }
 .stub-table-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid #e2e8f0; border-radius: 9px; }
 .stub-rules-table { width: 100%; min-width: 920px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 12px; text-align: left; }
-.stub-rules-table .rule-source-col { width: 120px; }
-.stub-rules-table .rule-match-col { width: 29%; }
+.stub-rules-table .rule-source-col { width: 100px; }
+.stub-rules-table .rule-match-col { width: 32%; }
 .stub-rules-table .rule-body-col { width: 18%; }
-.stub-rules-table .rule-action-col { width: 90px; }
+.stub-rules-table .rule-action-col { width: 80px; }
 .stub-rules-table th { width: auto; position: sticky; top: 0; z-index: 1; background: #f8fafc; color: var(--text-3); font-size: 11px; font-weight: 600; padding: 13px 14px; border-bottom: 1px solid #e2e8f0; }
-.stub-rules-table td { white-space: normal; text-overflow: clip; vertical-align: top; padding: 18px 14px; border-bottom: 1px solid #e2e8f0; overflow-wrap: anywhere; }
+.stub-rules-table td { white-space: normal; text-overflow: clip; vertical-align: top; padding: 20px 14px; border-bottom: 1px solid #e2e8f0; overflow-wrap: anywhere; }
 .stub-rules-table tr:last-child td { border-bottom: 0; }
 .stub-rules-table tbody tr:hover { background: #f8fafc; }
 .stub-rules-table tr.selected { background: #f0fdfa; }
-.stub-rules-table .stub-badge { align-self: flex-start; }
-.stub-rules-table .stub-card-values { gap: 7px; }
-.stub-rules-table .stub-table-url { font-size: 12px; font-weight: 600; line-height: 1.65; color: var(--text); }
+.stub-rules-table .stub-badge { align-self: flex-start; display: inline-flex; align-items: center; justify-content: center; font: normal 11px var(--font-sans); padding: 3px 8px; border-radius: 4px; color: #0f766e; background: #ccfbf1; white-space: nowrap; font-weight: 600; }
+.stub-rules-table .stub-card-values { gap: 6px; }
+.stub-rules-table .stub-table-url { font-size: 13px; font-weight: 600; line-height: 1.5; color: #0f172a; word-break: break-all; margin: 2px 0; }
 .stub-match-kind { color: var(--text-3); font-size: 10px; }
-.stub-rule-state { font-size: 11px; color: var(--text-3); }
+.stub-rule-state { font-size: 12px; color: var(--text-3); font-weight: 500; margin-left: 2px; }
 .stub-rule-state.enabled { color: #0f766e; }
 .stub-rule-state.shadowed { color: #92400e; }
 .stub-rules-table .stub-table-empty { text-align: center; color: var(--text-3); padding: 70px 16px; }
@@ -497,4 +500,5 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 .stub-rules-table tbody tr { cursor: default; }
 .stub-rules-table th:nth-child(2), .stub-rules-table td:nth-child(2) { display: table-cell; }
 
-.stub-rules-table button { white-space: nowrap; }
+.stub-rules-table button.stub-ghost-btn { white-space: nowrap; padding: 6px 14px; border-radius: 6px; font-size: 13px; color: #334155; border: 1px solid #cbd5e1; transition: all .15s; }
+.stub-rules-table button.stub-ghost-btn:hover { background: #f8fafc; border-color: #94a3b8; color: #0f172a; }

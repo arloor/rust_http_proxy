@@ -118,19 +118,19 @@ function RuleRow({ rule, selected, shadowed = false, onSelect }: {
   const responseHeaders: HeaderEdit[] = ui ? rule.response_headers : rule.headers.map(([name, value]) => ({ enabled: true, op: 'set', name, value }))
   const staticResponse = rule.mode === 'response'
   return <tr className={selected ? 'selected' : ''}>
-    <td><span className="stub-card-values"><span className={`stub-badge ${!ui ? 'file' : ''}`}>{ui ? 'UI 规则' : '配置文件 · 只读'}</span>{ui && <span className={`stub-rule-state ${shadowed ? 'shadowed' : rule.enabled ? 'enabled' : ''}`}>{shadowed ? '被文件规则覆盖' : rule.enabled ? '已启用' : '已停用'}</span>}</span></td>
-    <td><span className="stub-card-values"><span className="stub-match-kind">{regex ? '正则匹配' : '精确匹配'} · {modeLabel[rule.mode]}</span><code className="stub-table-url">{match}</code><span className="stub-card-muted">{regex ? '完整 URL · 含 query' : '域名 + 路径 · 忽略 query'} · 所有方法</span></span></td>
-    <td><span className="stub-card-values"><HeaderSummary edits={requestHeaders} fallback="保留原始请求头" />{!ui && Boolean(rule.upstream?.authority) && <span className="stub-card-muted">Host：{String(rule.upstream?.authority)}</span>}{staticResponse && <span className="stub-card-muted">不发送上游{requestHeaders.some((edit) => edit.enabled) ? '，修改仅用于抓取' : ''}</span>}</span></td>
-    <td><span className="stub-card-values"><HeaderSummary edits={responseHeaders} fallback={staticResponse ? 'Stub 自动生成' : '保留原始响应头'} />{staticResponse && <span className="stub-card-muted">状态码 {rule.status ?? 200} · 长度自动计算</span>}</span></td>
-    <td><span className="stub-card-values"><span className="stub-card-muted">请求：客户端原文</span><span className={staticResponse || upstream ? 'stub-card-changed' : ''}>响应：{staticResponse ? ui ? 'UI 编写的正文' : '配置文件 body_file' : upstream ? '替代上游' : '原始上游（不覆写）'}</span>{upstream && <code>{upstream}</code>}</span></td>
-    <td><button type="button" aria-label={`${ui ? '编辑' : '查看'}规则 ${match}`} onClick={onSelect}>{ui ? '编辑' : '查看'}</button></td>
+    <td><div className="stub-card-values"><span className={`stub-badge ${!ui ? 'file' : ''}`}>{ui ? 'UI 规则' : '配置文件 · 只读'}</span>{ui && <span className={`stub-rule-state ${shadowed ? 'shadowed' : rule.enabled ? 'enabled' : ''}`}>{shadowed ? '被文件规则覆盖' : rule.enabled ? '已启用' : '已停用'}</span>}</div></td>
+    <td><div className="stub-card-values"><span className="stub-match-kind">{regex ? '正则匹配' : '精确匹配'} · {modeLabel[rule.mode]}</span><code className="stub-table-url">{match}</code><span className="stub-card-muted">{regex ? '完整 URL · 含 query' : '域名 + 路径 · 忽略 query'} · 所有方法</span></div></td>
+    <td><div className="stub-card-values"><HeaderSummary edits={requestHeaders} fallback="保留原始请求头" />{!ui && Boolean(rule.upstream?.authority) && <span className="stub-card-muted">Host：{String(rule.upstream?.authority)}</span>}{staticResponse && <span className="stub-card-muted">不发送上游{requestHeaders.some((edit) => edit.enabled) ? '，修改仅用于抓取' : ''}</span>}</div></td>
+    <td><div className="stub-card-values"><HeaderSummary edits={responseHeaders} fallback={staticResponse ? 'Stub 自动生成' : '保留原始响应头'} />{staticResponse && <span className="stub-card-muted">状态码 {rule.status ?? 200} · 长度自动计算</span>}</div></td>
+    <td><div className="stub-card-values"><span className="stub-card-muted">请求：客户端原文</span><span className={staticResponse || upstream ? 'stub-card-changed' : ''}>响应：{staticResponse ? ui ? 'UI 编写的正文' : '配置文件 body_file' : upstream ? '替代上游' : '原始上游（不覆写）'}</span>{upstream && <code className="stub-upstream-url">{upstream}</code>}</div></td>
+    <td><button type="button" className="stub-ghost-btn" aria-label={`${ui ? '编辑' : '查看'}规则 ${match}`} onClick={onSelect}>{ui ? '编辑' : '查看'}</button></td>
   </tr>
 
 }
 
 function HeaderSummary({ edits, fallback }: { edits: HeaderEdit[]; fallback: string }) {
   if (!edits.length) return <span className="stub-card-muted">{fallback}</span>
-  return <>{edits.map((edit, index) => <span className={`stub-card-header ${edit.enabled ? '' : 'off'}`} key={index}><em className={`stub-card-op ${edit.op}`}>{edit.enabled ? headerOpLabel[edit.op] : '停用'}</em><code>{edit.name}{edit.op !== 'remove' && <> = {edit.value || '(空值)'}</>}</code></span>)}</>
+  return <>{edits.map((edit, index) => <div className={`stub-card-header ${edit.enabled ? '' : 'off'}`} key={index}><em className={`stub-card-op ${edit.op}`}>{edit.enabled ? headerOpLabel[edit.op] : '停用'}</em><code className="stub-header-code">{edit.name}{edit.op !== 'remove' && <> = {edit.value || '(空值)'}</>}</code></div>)}</>
 }
 
 function HeaderEditor({ title, edits, onChange }: { title: string; edits: HeaderEdit[]; onChange: (edits: HeaderEdit[]) => void }) {
