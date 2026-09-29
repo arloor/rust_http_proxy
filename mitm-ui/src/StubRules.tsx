@@ -61,7 +61,17 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
   }
   const shadowed = (rule: StubRule) => rule.mode !== 'mod_header' && rules.file.some((item) => item.authority === rule.authority.trim().toLowerCase() && item.path === rule.path)
   const visible = (rule: { authority: string; path: string; url_pattern?: string }) => `${rule.authority}${rule.path}${rule.url_pattern ?? ''}`.toLowerCase().includes(filter.toLowerCase())
-  return <dialog className="stub-dialog" ref={dialog} onCancel={(event) => { event.preventDefault(); if (draft || file) choose(null); else close() }} aria-labelledby="stub-title">
+  return <dialog className="stub-dialog" ref={dialog}
+    onMouseDown={(event) => {
+      if (event.target !== event.currentTarget || event.button !== 0) return
+      // 原生 dialog 的遮罩事件也以 dialog 为目标，需用坐标排除内部空白区域。
+      const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect()
+      if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) {
+        if (draft || file) choose(null)
+        else close()
+      }
+    }}
+    onCancel={(event) => { event.preventDefault(); if (draft || file) choose(null); else close() }} aria-labelledby="stub-title">
     <header className="stub-dialog-head"><div><span className="stub-eyebrow">MITM STUB</span><h2 id="stub-title">请求与响应规则</h2></div><button type="button" className="stub-close" aria-label="关闭规则配置" onClick={close}>×</button></header>
     <div className="stub-policy"><b>文件优先</b><span>文件规则优先 → UI 按创建顺序首次命中 → 原始请求。mod-header 按完整 URL 正则匹配，其余模式精确匹配域名和路径。</span></div>
     <div className="stub-layout">
