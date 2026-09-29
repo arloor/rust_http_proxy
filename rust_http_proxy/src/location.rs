@@ -15,7 +15,7 @@ use crate::config::{Config, Param, normalize_static_auth_path_prefixes, parse_ba
 use crate::forward_proxy_client::{DirectConnectionKey, DirectProtocol};
 use crate::proxy::AccessLabel;
 use crate::proxy::SchemeHostPort;
-use crate::proxy::spawn_websocket_tunnel;
+use crate::proxy::promote_websocket_upgrade;
 use crate::reverse_proxy_client::ReverseProxyClient;
 
 pub(crate) struct RedirectBackpaths {
@@ -34,6 +34,16 @@ const GITHUB_URL_BASE: [&str; 6] = [
     "https://release-assets.githubusercontent.com",
 ];
 
+#[derive(Serialize, Deserialize, Eq, PartialEq, Default)]
+pub(crate) struct LocationAuth {
+    #[serde(default, skip_serializing)]
+    pub(crate) basic_auth_users: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) basic_auth_path_prefixes: Vec<String>,
+    #[serde(skip)]
+    pub(crate) basic_auth: HashMap<String, String>,
+}
+
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum LocationConfig {
@@ -41,23 +51,15 @@ pub(crate) enum LocationConfig {
         #[serde(default = "root")]
         location: String,
         upstream: Upstream,
-        #[serde(default, skip_serializing)]
-        basic_auth_users: Vec<String>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        basic_auth_path_prefixes: Vec<String>,
-        #[serde(skip)]
-        basic_auth: HashMap<String, String>,
+        #[serde(flatten)]
+        auth: LocationAuth,
     },
     Serving {
         #[serde(default = "root")]
         location: String,
         static_dir: String,
-        #[serde(default, skip_serializing)]
-        basic_auth_users: Vec<String>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        basic_auth_path_prefixes: Vec<String>,
-        #[serde(skip)]
-        basic_auth: HashMap<String, String>,
+        #[serde(flatten)]
+        auth: LocationAuth,
     },
 }
 
@@ -81,6 +83,12 @@ impl LocationConfig {
             LocationConfig::Serving { location, .. } => location,
         }
     }
+
+    pub(crate) fn auth_mut(&mut self) -> &mut LocationAuth {
+        match self {
+            LocationConfig::ReverseProxy { auth, .. } | LocationConfig::Serving { auth, .. } => auth,
+        }
+    }
 }
 
 pub(crate) async fn handle_websocket_upgrade_reverse(
@@ -98,22 +106,14 @@ pub(crate) async fn handle_websocket_upgrade_reverse(
         .send_request_uncached(upstream_req, connection_key, &traffic_label, ipv6_first)
         .await?;
 
-    // 检查上游是否返回 101 Switching Protocols
-    if upstream_resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+    let upgraded = promote_websocket_upgrade(&mut upstream_resp, client_upgrade_fut, Some(traffic_label), "reverse");
+    if upgraded {
+        info!("[reverse] WebSocket upgrade successful, status: {}", upstream_resp.status());
+    } else {
         warn!("WebSocket upgrade failed, upstream returned: {}", upstream_resp.status());
-        return Ok(upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed()));
     }
 
-    info!("[reverse] WebSocket upgrade successful, status: {}", upstream_resp.status());
-
-    // 准备上游的升级
-    let upstream_upgrade_fut = hyper::upgrade::on(&mut upstream_resp);
-
-    spawn_websocket_tunnel(client_upgrade_fut, upstream_upgrade_fut, Some(traffic_label), "reverse");
-
-    let client_response = upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
-
-    Ok(client_response)
+    Ok(upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed()))
 }
 
 pub(crate) struct BuiltUpstreamRequest<B> {
@@ -473,9 +473,11 @@ pub(crate) fn parse_location_specs(
             vec.push(crate::location::LocationConfig::Serving {
                 location: "/".to_string(),
                 static_dir: static_dir.clone(),
-                basic_auth_users: default_basic_auth_users.clone(),
-                basic_auth_path_prefixes: default_basic_auth_path_prefixes.clone(),
-                basic_auth: HashMap::new(),
+                auth: LocationAuth {
+                    basic_auth_users: default_basic_auth_users.clone(),
+                    basic_auth_path_prefixes: default_basic_auth_path_prefixes.clone(),
+                    basic_auth: HashMap::new(),
+                },
             });
         }
     }
@@ -514,9 +516,7 @@ pub(crate) fn parse_location_specs(
                                 authority: None,
                                 headers: None,
                             },
-                            basic_auth_users: Vec::new(),
-                            basic_auth_path_prefixes: Vec::new(),
-                            basic_auth: HashMap::new(),
+                            auth: LocationAuth::default(),
                         });
                     }
                     Err(err) => {
@@ -536,47 +536,30 @@ pub(crate) fn parse_location_specs(
                 return Err("location should start with '/'".into());
             }
             // 验证并解析 location 级 Basic 认证。
-            match location_config {
-                LocationConfig::Serving {
-                    location,
-                    basic_auth_users,
-                    basic_auth_path_prefixes,
-                    basic_auth,
-                    ..
-                }
-                | LocationConfig::ReverseProxy {
-                    location,
-                    basic_auth_users,
-                    basic_auth_path_prefixes,
-                    basic_auth,
-                    ..
-                } => {
-                    let parsed_basic_auth = parse_basic_auth_users(basic_auth_users.clone());
-                    let normalized_path_prefixes =
-                        normalize_static_auth_path_prefixes(std::mem::take(basic_auth_path_prefixes));
-                    if !basic_auth_users.is_empty() && parsed_basic_auth.is_empty() {
-                        return Err(
-                            format!("location {} requires valid basic_auth_users username:password", location).into()
-                        );
-                    }
-                    if parsed_basic_auth.is_empty() && !normalized_path_prefixes.is_empty() {
-                        return Err(format!(
-                            "location {} basic_auth_path_prefixes requires basic_auth_users",
-                            location
-                        )
-                        .into());
-                    }
-                    if !parsed_basic_auth.is_empty() {
-                        *basic_auth = parsed_basic_auth;
-                        if normalized_path_prefixes.is_empty() {
-                            basic_auth_path_prefixes.push(location.clone());
-                        } else {
-                            *basic_auth_path_prefixes = normalized_path_prefixes
-                                .iter()
-                                .map(|path_prefix| join_location_auth_path_prefix(location, path_prefix))
-                                .collect();
-                        }
-                    }
+            let location_path = location_config.location().to_owned();
+            let auth = location_config.auth_mut();
+            let parsed_basic_auth = parse_basic_auth_users(auth.basic_auth_users.clone());
+            let normalized_path_prefixes =
+                normalize_static_auth_path_prefixes(std::mem::take(&mut auth.basic_auth_path_prefixes));
+            if !auth.basic_auth_users.is_empty() && parsed_basic_auth.is_empty() {
+                return Err(
+                    format!("location {location_path} requires valid basic_auth_users username:password").into()
+                );
+            }
+            if parsed_basic_auth.is_empty() && !normalized_path_prefixes.is_empty() {
+                return Err(
+                    format!("location {location_path} basic_auth_path_prefixes requires basic_auth_users").into()
+                );
+            }
+            if !parsed_basic_auth.is_empty() {
+                auth.basic_auth = parsed_basic_auth;
+                if normalized_path_prefixes.is_empty() {
+                    auth.basic_auth_path_prefixes.push(location_path.clone());
+                } else {
+                    auth.basic_auth_path_prefixes = normalized_path_prefixes
+                        .iter()
+                        .map(|path_prefix| join_location_auth_path_prefix(&location_path, path_prefix))
+                        .collect();
                 }
             }
 
@@ -738,24 +721,17 @@ default_host:
             .ok_or("downloads location not found")?;
 
         match private {
-            LocationConfig::Serving {
-                basic_auth,
-                basic_auth_path_prefixes,
-                ..
-            } => {
+            LocationConfig::Serving { auth, .. } => {
                 let encoded = general_purpose::STANDARD.encode("alice:secret");
-                assert_eq!(basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
-                assert_eq!(basic_auth_path_prefixes, &vec!["/private/".to_string()]);
+                assert_eq!(auth.basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
+                assert_eq!(auth.basic_auth_path_prefixes.as_slice(), ["/private/".to_string()].as_slice());
             }
             _ => panic!("private should be serving"),
         }
 
         match downloads {
-            LocationConfig::Serving {
-                basic_auth_path_prefixes,
-                ..
-            } => {
-                assert_eq!(basic_auth_path_prefixes, &vec!["/downloads/secret".to_string()]);
+            LocationConfig::Serving { auth, .. } => {
+                assert_eq!(auth.basic_auth_path_prefixes.as_slice(), ["/downloads/secret".to_string()].as_slice());
             }
             _ => panic!("downloads should be serving"),
         }
@@ -810,22 +786,17 @@ default_host:
             .ok_or("service location not found")?;
 
         match api {
-            LocationConfig::ReverseProxy {
-                basic_auth,
-                basic_auth_path_prefixes,
-                ..
-            } => {
+            LocationConfig::ReverseProxy { auth, .. } => {
                 let encoded = general_purpose::STANDARD.encode("alice:secret");
-                assert_eq!(basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
-                assert_eq!(basic_auth_path_prefixes, &vec!["/api".to_string()]);
+                assert_eq!(auth.basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
+                assert_eq!(auth.basic_auth_path_prefixes.as_slice(), ["/api".to_string()].as_slice());
             }
             _ => panic!("api should be reverse proxy"),
         }
         match service {
-            LocationConfig::ReverseProxy {
-                basic_auth_path_prefixes,
-                ..
-            } => assert_eq!(basic_auth_path_prefixes, &vec!["/service/private".to_string()]),
+            LocationConfig::ReverseProxy { auth, .. } => {
+                assert_eq!(auth.basic_auth_path_prefixes.as_slice(), ["/service/private".to_string()].as_slice());
+            }
             _ => panic!("service should be reverse proxy"),
         }
 
@@ -1270,14 +1241,10 @@ default_host:
             .ok_or("default serving location not found")?;
 
         match default_location {
-            LocationConfig::Serving {
-                basic_auth,
-                basic_auth_path_prefixes,
-                ..
-            } => {
+            LocationConfig::Serving { auth, .. } => {
                 let encoded = general_purpose::STANDARD.encode("alice:secret");
-                assert_eq!(basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
-                assert_eq!(basic_auth_path_prefixes, &vec!["/private".to_string()]);
+                assert_eq!(auth.basic_auth.get(&format!("Basic {encoded}")), Some(&"alice".to_string()));
+                assert_eq!(auth.basic_auth_path_prefixes.as_slice(), ["/private".to_string()].as_slice());
             }
             _ => panic!("default location should be serving"),
         }
@@ -1307,11 +1274,8 @@ default_host:
             .ok_or("default serving location not found")?;
 
         match default_location {
-            LocationConfig::Serving {
-                basic_auth_path_prefixes,
-                ..
-            } => {
-                assert_eq!(basic_auth_path_prefixes, &vec!["/".to_string()]);
+            LocationConfig::Serving { auth, .. } => {
+                assert_eq!(auth.basic_auth_path_prefixes.as_slice(), ["/".to_string()].as_slice());
             }
             _ => panic!("default location should be serving"),
         }

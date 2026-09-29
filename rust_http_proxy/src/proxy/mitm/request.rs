@@ -29,7 +29,7 @@ use crate::{
         connect::HttpClientStream,
         http::{SchemeHostPort, full_body, get_client_ip, is_websocket_upgrade, origin_form},
         labels::AccessLabel,
-        tunnel::spawn_websocket_tunnel,
+        tunnel::promote_websocket_upgrade,
     },
     reverse_proxy_client::ReverseProxyClient,
 };
@@ -324,10 +324,8 @@ async fn forward_to_dynamic_mitm_stub(
     record_response_head(&manager, record_id.as_deref(), &response, None);
 
     if let Some(client_upgrade) = client_upgrade {
-        if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
+        if promote_websocket_upgrade(&mut response, client_upgrade, None, "mitm dynamic stub") {
             info!("[mitm dynamic stub] WebSocket upgrade successful for {access_label}");
-            let upstream_upgrade = hyper::upgrade::on(&mut response);
-            spawn_websocket_tunnel(client_upgrade, upstream_upgrade, None, "mitm dynamic stub");
             if let Some(id) = record_id.as_ref() {
                 manager.finish_record(id, "upgraded");
             }
@@ -409,13 +407,10 @@ async fn handle_mitm_websocket_upgrade(
         Some("WebSocket payload frames are not captured".to_owned()),
     );
 
-    if upstream_response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+    if !promote_websocket_upgrade(&mut upstream_response, client_upgrade, None, "mitm") {
         warn!("[mitm] WebSocket upgrade failed, upstream returned: {}", upstream_response.status());
         return Ok(map_mitm_response_body(upstream_response, context.manager, record_id));
     }
-
-    let upstream_upgrade = hyper::upgrade::on(&mut upstream_response);
-    spawn_websocket_tunnel(client_upgrade, upstream_upgrade, None, "mitm");
     if let Some(id) = record_id.as_ref() {
         context.manager.finish_record(id, "upgraded");
     }

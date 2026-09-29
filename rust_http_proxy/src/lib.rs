@@ -7,6 +7,7 @@ mod axum_handler;
 #[cfg(target_os = "linux")]
 mod cgroup_stats;
 pub mod config;
+mod connection_pool;
 #[cfg(test)]
 mod e2e_test_support;
 #[cfg(all(target_os = "linux", feature = "bpf"))]
@@ -31,6 +32,8 @@ mod mitm_rules;
 mod mitm_stub_e2e_tests;
 mod mitm_web;
 mod proxy;
+#[cfg(test)]
+mod reuse_regression_e2e_tests;
 mod reverse_proxy_client;
 #[cfg(test)]
 mod reverse_proxy_e2e_tests;

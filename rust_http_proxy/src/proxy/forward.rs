@@ -8,20 +8,22 @@ use {io_x::CounterIO, prom_label::LabelImpl};
 
 use axum::extract::Request;
 use http::{header::HOST, header::HeaderValue};
-use http_body_util::{BodyExt, combinators::BoxBody};
+use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
 use hyper::{Method, Response, body::Bytes, http};
 use hyper_util::rt::TokioIo;
 use log::{debug, info, warn};
 
-use super::connect::{EitherTlsStream, HttpClientStream, build_tls_connector, connect_with_preference};
+use super::connect::{HttpClientStream, bypass_endpoint, into_bypass_stream};
 use super::handler::{InterceptResultAdapter, ProxyHandler};
 use super::http::{
-    build_authenticate_resp, empty_body, full_body, get_client_ip, is_schema_secure, is_websocket_upgrade, origin_form,
+    boxed_io_body, build_authenticate_resp, empty_body, full_body, get_client_ip, is_schema_secure,
+    is_websocket_upgrade, origin_form,
 };
-use super::labels::{AccessLabel, TunnelHandshakeLabel};
+use super::labels::AccessLabel;
 use super::padding::append_random_padding_headers;
-use super::tunnel::{spawn_websocket_tunnel, tunnel};
+use super::parent_connect::{ParentConnect, complete_parent_connect};
+use super::tunnel::{dial_timed_tunnel, log_tunnel_path, promote_websocket_upgrade, tunnel};
 
 impl ProxyHandler {
     fn should_mitm(&self, req: &Request<Incoming>) -> bool {
@@ -150,28 +152,13 @@ impl ProxyHandler {
             )
             .await?;
 
-        // 检查响应状态码
-        if upstream_response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        if !promote_websocket_upgrade(&mut upstream_response, client_upgrade, None, "forward") {
             warn!("[forward] WebSocket upgrade failed, upstream returned: {}", upstream_response.status());
             return Err(io::Error::other(format!("WebSocket upgrade failed: {}", upstream_response.status())));
         }
 
         info!("[forward] WebSocket upgrade successful, status: {}", upstream_response.status());
-
-        // 获取上游的 upgrade future
-        let upstream_upgrade = hyper::upgrade::on(&mut upstream_response);
-
-        // 启动异步任务进行双向数据转发（正向代理场景不统计流量）
-        spawn_websocket_tunnel(client_upgrade, upstream_upgrade, None, "forward");
-
-        let response = upstream_response.map(|body| {
-            body.map_err(|e| {
-                let e = e;
-                io::Error::new(ErrorKind::InvalidData, e)
-            })
-            .boxed()
-        });
-        Ok(response)
+        Ok(upstream_response.map(boxed_io_body))
     }
 
     /// 代理普通请求
@@ -215,13 +202,7 @@ impl ProxyHandler {
             )
             .await
         {
-            Ok(resp) => Ok(resp.map(|body| {
-                body.map_err(|e| {
-                    let e = e;
-                    io::Error::new(ErrorKind::InvalidData, e)
-                })
-                .boxed()
-            })),
+            Ok(resp) => Ok(resp.map(boxed_io_body)),
             Err(e) => Err(e),
         }
     }
@@ -285,13 +266,7 @@ impl ProxyHandler {
             )
             .await
         {
-            Ok(resp) => Ok(resp.map(|body| {
-                body.map_err(|e| {
-                    let e = e;
-                    io::Error::new(ErrorKind::InvalidData, e)
-                })
-                .boxed()
-            })),
+            Ok(resp) => Ok(resp.map(boxed_io_body)),
             Err(e) => {
                 warn!("[forward_bypass simple_proxy error] [{}]: [{}] {} ", access_label, e.kind(), e);
                 Err(e)
@@ -313,7 +288,7 @@ impl ProxyHandler {
                 Ok(resp)
             }
             Some(addr) => {
-                let bypass_host = format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port);
+                let bypass_host = bypass_endpoint(forward_bypass_config);
                 let access_label = AccessLabel {
                     client: client_socket_addr.ip().to_canonical().to_string(),
                     target: bypass_host.clone(),
@@ -321,20 +296,8 @@ impl ProxyHandler {
                     relay_over_tls: Some(forward_bypass_config.is_https),
                 };
 
-                // 首先建立 TCP 连接
-                let start_time = std::time::Instant::now();
-                let tcp_stream = match connect_with_preference(&bypass_host, forward_bypass_config.ipv6_first).await {
-                    Ok(stream) => {
-                        // 记录从接收请求到完成bypass握手的耗时
-                        let duration = start_time.elapsed();
-                        METRICS
-                            .tunnel_bypass_setup_duration
-                            .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
-                                target: access_label.target.clone(),
-                            }))
-                            .observe(duration.as_millis() as f64);
-                        stream
-                    }
+                let tcp_stream = match dial_timed_tunnel(&bypass_host, forward_bypass_config.ipv6_first).await {
+                    Ok(stream) => stream,
                     Err(e) => {
                         warn!("[forward_bypass tunnel establish error] [{}]: [{}] {} ", access_label, e.kind(), e);
                         let mut resp = Response::new(full_body("Failed to connect to bypass server"));
@@ -342,99 +305,40 @@ impl ProxyHandler {
                         return Ok(resp);
                     }
                 };
-
-                debug!(
-                    "[forward_bypass tunnel {}], [true path: {} -> {}]",
-                    access_label,
-                    client_socket_addr.ip().to_canonical().to_string() + ":" + &client_socket_addr.port().to_string(),
-                    tcp_stream
-                        .peer_addr()
-                        .map(|addr| addr.ip().to_canonical().to_string() + ":" + &addr.port().to_string())
-                        .unwrap_or("failed".to_owned())
-                );
+                log_tunnel_path("forward_bypass tunnel", &access_label, client_socket_addr, tcp_stream.peer_addr());
                 let access_tag = access_label.to_string();
 
-                // 根据 is_https 决定是否建立 TLS 连接，然后统一处理
-                use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-
-                let stream = if forward_bypass_config.is_https {
-                    // 建立 TLS 连接
-                    let connector = build_tls_connector();
-                    // 需要 clone host 以避免生命周期问题
-                    let host = forward_bypass_config.host.clone();
-                    let server_name = tokio_rustls::rustls::pki_types::ServerName::try_from(host.as_str())
-                        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
-                        .to_owned();
-
-                    match connector.connect(server_name, tcp_stream).await {
-                        Ok(tls_stream) => EitherTlsStream::Tls { stream: tls_stream },
-                        Err(e) => {
-                            warn!("[forward_bypass TLS handshake error] [{}]: {}", access_tag, e);
-                            let mut resp =
-                                Response::new(full_body("Failed to establish TLS connection to bypass server"));
-                            *resp.status_mut() = http::StatusCode::BAD_GATEWAY;
-                            return Ok(resp);
-                        }
+                let stream = match into_bypass_stream(forward_bypass_config, tcp_stream).await {
+                    Ok(stream) => stream,
+                    Err(error) if error.kind() == ErrorKind::InvalidInput => return Err(error),
+                    Err(_) => {
+                        let mut resp = Response::new(full_body("Failed to establish TLS connection to bypass server"));
+                        *resp.status_mut() = http::StatusCode::BAD_GATEWAY;
+                        return Ok(resp);
                     }
-                } else {
-                    // 使用普通 TCP 连接
-                    EitherTlsStream::Tcp { stream: tcp_stream }
                 };
 
-                // 统一处理流
-                let dst_stream = CounterIO::new(stream, proxy_traffic.clone(), LabelImpl::new(access_label.clone()));
-                let mut reader = tokio::io::BufReader::new(dst_stream);
-
-                // 向bypass服务器发送CONNECT请求
+                // 握手字节也计入流量，所以先包 CounterIO 再写 CONNECT。
+                let counted = CounterIO::new(stream, proxy_traffic.clone(), LabelImpl::new(access_label.clone()));
                 let client_ip = get_client_ip(&req, client_socket_addr);
-                let mut connect_request =
-                    format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\nX-Forwarded-For: {}\r\n", addr, addr, client_ip);
-
-                // 如果配置了 username 和 password，添加 Proxy-Authorization 头
-                if let (Some(username), Some(password)) =
-                    (&forward_bypass_config.username, &forward_bypass_config.password)
+                let target = addr.to_string();
+                let dst_stream = match complete_parent_connect(
+                    counted,
+                    ParentConnect {
+                        target: &target,
+                        client_ip: &client_ip,
+                        username: forward_bypass_config.username.as_deref(),
+                        password: forward_bypass_config.password.as_deref(),
+                    },
+                )
+                .await
                 {
-                    let credentials = format!("{}:{}", username, password);
-                    let encoded =
-                        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
-                    connect_request.push_str(&format!("Proxy-Authorization: Basic {}\r\n", encoded));
-                }
-
-                connect_request.push_str("\r\n");
-
-                if let Err(e) = reader.get_mut().write_all(connect_request.as_bytes()).await {
-                    warn!("[forward_bypass write CONNECT error] [{}]: {}", access_tag, e);
-                    return Err(io::Error::other(e));
-                }
-
-                // 读取bypass服务器的响应（应该是200 OK）
-                let mut response_line = String::new();
-                if let Err(e) = reader.read_line(&mut response_line).await {
-                    warn!("[forward_bypass read response error] [{}]: {}", access_tag, e);
-                    return Err(io::Error::other(e));
-                }
-
-                // 检查响应是否是200
-                let status_code = response_line.split_whitespace().nth(1).unwrap_or("");
-                if status_code != "200" {
-                    warn!("[forward_bypass unexpected response] [{}]: {}", access_tag, response_line);
-                    return Err(io::Error::other("unexpected response from bypass server"));
-                }
-
-                // 读取并丢弃响应头直到空行
-                loop {
-                    let mut header_line = String::new();
-                    if let Err(e) = reader.read_line(&mut header_line).await {
-                        warn!("[forward_bypass read header error] [{}]: {}", access_tag, e);
-                        return Err(io::Error::other("unexpected response from bypass server"));
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        warn!("[forward_bypass unexpected response] [{}]: {}", access_tag, error);
+                        return Err(error);
                     }
-                    if header_line == "\r\n" || header_line == "\n" {
-                        break;
-                    }
-                }
-
-                // 从BufReader中取回原始stream
-                let dst_stream = reader.into_inner();
+                };
 
                 tokio::task::spawn(async move {
                     let src_upgraded = match hyper::upgrade::on(req).await {
@@ -487,38 +391,15 @@ impl ProxyHandler {
                             username,
                             relay_over_tls: None,
                         };
-                        // Connect to remote server
-                        let start_time = std::time::Instant::now();
-                        match connect_with_preference(&addr.to_string(), ipv6_first).await {
+                        // if the DST server did not respond the FIN(shutdown) from the SRC client, then you will see a pair of FIN-WAIT-2 and CLOSE_WAIT in the proxy server
+                        // which two socketAddrs are in the true path.
+                        // use this command to check:
+                        // netstat -ntp|grep -E "CLOSE_WAIT|FIN_WAIT"|sort
+                        // The DST server should answer for this problem, becasue it ignores the FIN
+                        // Dont worry, after the FIN_WAIT_2 timeout, the CLOSE_WAIT connection will close.
+                        match dial_timed_tunnel(&addr.to_string(), ipv6_first).await {
                             Ok(target_stream) => {
-                                // 记录从接收请求到成功建立连接的耗时
-                                let duration = start_time.elapsed();
-                                METRICS
-                                    .tunnel_bypass_setup_duration
-                                    .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
-                                        target: access_label.target.clone(),
-                                    }))
-                                    .observe(duration.as_millis() as f64);
-
-                                // if the DST server did not respond the FIN(shutdown) from the SRC client, then you will see a pair of FIN-WAIT-2 and CLOSE_WAIT in the proxy server
-                                // which two socketAddrs are in the true path.
-                                // use this command to check:
-                                // netstat -ntp|grep -E "CLOSE_WAIT|FIN_WAIT"|sort
-                                // The DST server should answer for this problem, becasue it ignores the FIN
-                                // Dont worry, after the FIN_WAIT_2 timeout, the CLOSE_WAIT connection will close.
-                                debug!(
-                                    "[tunnel {}], [true path: {} -> {}]",
-                                    access_label,
-                                    client_socket_addr.ip().to_canonical().to_string()
-                                        + ":"
-                                        + &client_socket_addr.port().to_string(),
-                                    target_stream
-                                        .peer_addr()
-                                        .map(|addr| addr.ip().to_canonical().to_string()
-                                            + ":"
-                                            + &addr.port().to_string())
-                                        .unwrap_or("failed".to_owned())
-                                );
+                                log_tunnel_path("tunnel", &access_label, client_socket_addr, target_stream.peer_addr());
                                 let access_tag = access_label.to_string();
                                 let dst_stream =
                                     CounterIO::new(target_stream, proxy_traffic, LabelImpl::new(access_label));

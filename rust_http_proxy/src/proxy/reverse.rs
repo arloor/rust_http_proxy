@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     io::{self, ErrorKind},
     net::SocketAddr,
     sync::LazyLock,
@@ -17,12 +16,15 @@ use crate::{
     forward_proxy_client::DirectProtocol,
     hyper_x::CounterBody,
     ip_x::SocketAddrFormat,
-    location::{BuiltUpstreamRequest, Upstream, build_upstream_req, handle_websocket_upgrade_reverse, normalize302},
+    location::{
+        BuiltUpstreamRequest, LocationAuth, Upstream, build_upstream_req, handle_websocket_upgrade_reverse,
+        normalize302,
+    },
 };
 
 use super::{
     handler::{InterceptResultAdapter, ProxyHandler},
-    http::{SchemeHostPort, build_authenticate_resp, check_static_basic_auth, is_websocket_upgrade},
+    http::{LocationAccess, SchemeHostPort, authorize_location, is_websocket_upgrade},
     labels::{AccessLabel, ReverseProxyReqLabel},
 };
 
@@ -48,28 +50,21 @@ impl ProxyHandler {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn handle_reverse_proxy(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, original_scheme_host_port: &SchemeHostPort,
-        location: &str, upstream: &Upstream, basic_auth: &HashMap<String, String>, basic_auth_path_prefixes: &[String],
+        location: &str, upstream: &Upstream, auth: &LocationAuth,
     ) -> Result<InterceptResultAdapter, io::Error> {
         let config = &self.config;
         let res = async {
-            config.allow_cidrs.check_serving_control(client_socket_addr)?;
             let mut request = req;
-            let authenticated_username = match check_static_basic_auth(
+            let authenticated_username = match authorize_location(
+                &config.allow_cidrs,
+                client_socket_addr,
                 request.headers(),
                 request.uri().path(),
-                basic_auth,
-                basic_auth_path_prefixes,
-            ) {
-                Ok(username) => username,
-                Err(e) => {
-                    warn!(
-                        "reverse proxy basic auth failed from {} for {}: {}",
-                        SocketAddrFormat(&client_socket_addr),
-                        request.uri().path(),
-                        e
-                    );
-                    return Ok(build_authenticate_resp(false));
-                }
+                auth,
+                "reverse proxy",
+            )? {
+                LocationAccess::Allowed(username) => username,
+                LocationAccess::Challenge(response) => return Ok(response),
             };
             // 只在当前路径实际使用了入口认证时移除凭据；未受保护路径保持原有透传行为。
             if authenticated_username.is_some() {
@@ -195,10 +190,7 @@ impl ProxyHandler {
 
         match res {
             Ok(resp) => Ok(InterceptResultAdapter::Return(resp)),
-            Err(e) => match e.kind() {
-                ErrorKind::PermissionDenied => Ok(InterceptResultAdapter::Drop),
-                _ => Err(e),
-            },
+            Err(error) => InterceptResultAdapter::from_gate_error(error),
         }
     }
 }

@@ -1,15 +1,12 @@
 //! HTTP Client
 #![allow(clippy::type_complexity)]
 use std::{
-    collections::VecDeque,
     error::Error,
-    fmt::Debug,
+    fmt::{Debug, Display, Formatter},
     io::{self, ErrorKind},
-    sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use base64::Engine as _;
 use http::{
     HeaderMap, HeaderValue, Uri, Version, header,
     header::{CONNECTION, HOST, TE, TRANSFER_ENCODING, UPGRADE},
@@ -22,26 +19,18 @@ use hyper::{
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use io_x::{CounterIO, TimeoutIO};
 use log::{debug, error, info, trace, warn};
-use lru_time_cache::LruCache;
 use prom_label::LabelImpl;
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
-use tokio::sync::Mutex;
 use tokio_rustls::rustls::pki_types;
 
 use crate::{
     config::ForwardBypassConfig,
+    connection_pool::{IdlePool, MAX_IDLE_HTTP1_PER_KEY, MAX_IDLE_HTTP2_PER_KEY, PooledConn},
     proxy::{
-        AccessLabel, EitherTlsStream, HttpClientStream, build_tls_connector, build_tls_connector_with_http_alpn,
-        build_tls_connector_with_http1_alpn, build_tls_connector_with_http2_alpn,
+        AccessLabel, EitherTlsStream, HttpClientStream, ParentConnect, build_tls_connector_with_http_alpn,
+        build_tls_connector_with_http1_alpn, build_tls_connector_with_http2_alpn, complete_parent_connect,
+        connect_with_preference, into_bypass_stream,
     },
 };
-
-pub const CONN_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
-/// 清理任务的执行间隔
-const CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
-const MAX_POOL_KEYS: usize = 1024;
-const MAX_IDLE_HTTP1_PER_KEY: usize = 5;
-const MAX_IDLE_HTTP2_PER_KEY: usize = 1;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DirectProtocol {
@@ -55,6 +44,12 @@ pub(crate) struct DirectConnectionKey {
     pub(crate) tls_server_name: Option<String>,
     pub(crate) authority: String,
     pub(crate) protocol: DirectProtocol,
+}
+
+impl Display for DirectConnectionKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} via {} {:?} tls={:?}", self.authority, self.connect_to, self.protocol, self.tls_server_name)
+    }
 }
 
 pub(crate) enum DirectSendError<B> {
@@ -79,13 +74,13 @@ impl<B> DirectSendError<B> {
 }
 
 pub struct ForwardProxyClient<B> {
-    cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>,
+    pool: IdlePool<AccessLabel, HttpConnection<B>>,
 }
 
 impl<B> Clone for ForwardProxyClient<B> {
     fn clone(&self) -> Self {
         Self {
-            cache_conn: self.cache_conn.clone(),
+            pool: self.pool.clone(),
         }
     }
 }
@@ -98,63 +93,7 @@ where
 {
     /// Create a new HttpClient
     pub fn new() -> ForwardProxyClient<B> {
-        let cache_conn =
-            Arc::new(Mutex::new(LruCache::with_expiry_duration_and_capacity(CONN_EXPIRE_TIMEOUT, MAX_POOL_KEYS)));
-
-        // 启动后台清理任务
-        Self::spawn_cleanup_task(cache_conn.clone());
-
-        ForwardProxyClient { cache_conn }
-    }
-
-    /// 启动定时清理过期连接的后台任务
-    fn spawn_cleanup_task(cache_conn: Arc<Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>>) {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
-            loop {
-                interval.tick().await;
-                Self::cleanup_expired_connections(&cache_conn).await;
-            }
-        });
-    }
-
-    /// 清理过期和已关闭的连接
-    async fn cleanup_expired_connections(
-        cache_conn: &Mutex<LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>>,
-    ) {
-        let mut cache = cache_conn.lock().await;
-        let now = Instant::now();
-        let mut total_removed = 0usize;
-        let mut empty_keys = Vec::new();
-
-        // 收集所有的 key
-        let keys: Vec<AccessLabel> = cache.iter().map(|(k, _)| k.clone()).collect();
-
-        for key in keys {
-            if let Some(queue) = cache.get_mut(&key) {
-                let before_len = queue.len();
-                // 保留未过期且未关闭的连接
-                queue.retain(|(conn, inst)| {
-                    let expired = now.duration_since(*inst) >= CONN_EXPIRE_TIMEOUT;
-                    let closed = conn.is_closed();
-                    !expired && !closed
-                });
-                let removed = before_len - queue.len();
-                total_removed += removed;
-
-                if queue.is_empty() {
-                    empty_keys.push(key);
-                }
-            }
-        }
-
-        // 移除空的条目
-        for key in empty_keys {
-            cache.remove(&key);
-        }
-
-        let elapsed = now.elapsed();
-        debug!("Connection cleanup completed: removed {} connections in {:?}", total_removed, elapsed);
+        ForwardProxyClient { pool: IdlePool::new() }
     }
 
     /// Make HTTP requests
@@ -164,7 +103,7 @@ where
         stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
         // 1. Check if there is an available client
-        if let Some(c) = self.get_cached_connection(access_label).await {
+        if let Some(c) = self.pool.take(access_label).await {
             debug!("HTTP client for host: {} taken from cache", access_label);
             match self.send_request_conn(access_label, c, req).await {
                 Ok(o) => return Ok(o),
@@ -209,7 +148,7 @@ where
         client_ip: &str,
         stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> Result<Response<body::Incoming>, std::io::Error> {
-        if let Some(c) = self.get_cached_connection(access_label).await {
+        if let Some(c) = self.pool.take(access_label).await {
             debug!("HTTP client via forward bypass for host: {} taken from cache", access_label);
             match self.send_request_conn(access_label, c, req).await {
                 Ok(o) => return Ok(o),
@@ -269,32 +208,6 @@ where
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
-    async fn get_cached_connection(&self, access_label: &AccessLabel) -> Option<HttpConnection<B>> {
-        if let Some(q) = self.cache_conn.lock().await.get_mut(access_label) {
-            debug!("HTTP client for host: {} found in cache, len: {}", access_label, q.len());
-            while let Some((c, inst)) = q.pop_front() {
-                let now = Instant::now();
-                if now - inst >= CONN_EXPIRE_TIMEOUT {
-                    debug!("HTTP connection for host: {access_label} expired",);
-                    continue;
-                }
-                if c.is_closed() {
-                    // true at once after connection.await return
-                    debug!("HTTP connection for host: {access_label} is closed",);
-                    continue;
-                }
-                if !c.is_ready() {
-                    debug!("HTTP connection for host: {access_label} is not ready",);
-                    continue;
-                }
-                return Some(c);
-            }
-        } else {
-            debug!("HTTP client for host: {access_label} not found in cache");
-        }
-        None
-    }
-
     pub(crate) async fn send_request_conn(
         &self, access_label: &AccessLabel, mut c: HttpConnection<B>, req: Request<B>,
     ) -> hyper::Result<Response<body::Incoming>> {
@@ -303,8 +216,7 @@ where
 
         if let Some(cacheable_conn) = c.clone_for_multiplexed_cache() {
             debug!("HTTP/2 connection for host: {access_label} {url} remains cached for multiplexing");
-            let mut cache = self.cache_conn.lock().await;
-            Self::insert_cached_connection(&mut cache, access_label.clone(), cacheable_conn);
+            Self::cache_connection(&self.pool, access_label.clone(), cacheable_conn).await;
         }
 
         let response = c.send_request(req, access_label).await?;
@@ -317,14 +229,13 @@ where
         // Check keep-alive
         if check_keep_alive(response.version(), response.headers(), false) {
             trace!("HTTP connection keep-alive for host: {access_label}, response: {response:?}");
-            let cache_conn = self.cache_conn.clone();
+            let pool = self.pool.clone();
             let access_label = access_label.clone();
             tokio::spawn(async move {
                 match c.ready().await {
                     Ok(_) => {
                         debug!("HTTP connection for host: {access_label} {url} is ready and will be cached");
-                        let mut cache = cache_conn.lock().await;
-                        Self::insert_cached_connection(&mut cache, access_label, c);
+                        Self::cache_connection(&pool, access_label, c).await;
                     }
                     Err(e) => {
                         debug!("HTTP connection for host: {access_label} {url} failed to become ready: {}", e);
@@ -336,30 +247,19 @@ where
         Ok(response)
     }
 
-    fn insert_cached_connection(
-        cache: &mut LruCache<AccessLabel, VecDeque<(HttpConnection<B>, Instant)>>, access_label: AccessLabel,
-        connection: HttpConnection<B>,
+    async fn cache_connection(
+        pool: &IdlePool<AccessLabel, HttpConnection<B>>, access_label: AccessLabel, connection: HttpConnection<B>,
     ) {
-        let max_idle = if connection.is_multiplexed() {
+        let multiplexed = connection.is_multiplexed();
+        let max_idle = if multiplexed {
             MAX_IDLE_HTTP2_PER_KEY
         } else {
             MAX_IDLE_HTTP1_PER_KEY
         };
-        let multiplexed = connection.is_multiplexed();
-        let queue = cache.entry(access_label).or_insert_with(VecDeque::new);
-        let same_kind = queue
-            .iter()
-            .filter(|(candidate, _)| candidate.is_multiplexed() == multiplexed)
-            .count();
-        if same_kind >= max_idle {
-            if let Some(index) = queue
-                .iter()
-                .position(|(candidate, _)| candidate.is_multiplexed() == multiplexed)
-            {
-                queue.remove(index);
-            }
-        }
-        queue.push_back((connection, Instant::now()));
+        pool.insert_same_class(access_label, connection, max_idle, move |candidate| {
+            candidate.is_multiplexed() == multiplexed
+        })
+        .await;
     }
 }
 
@@ -546,54 +446,23 @@ where
         access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig, client_ip: &str, allow_http2: bool,
         stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
     ) -> io::Result<HttpConnection<B>> {
-        let bypass_host = format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port);
-        let tcp_stream = crate::proxy::connect_with_preference(&bypass_host, forward_bypass_config.ipv6_first).await?;
-        let mut parent_stream = if forward_bypass_config.is_https {
-            let connector = build_tls_connector();
-            let server_name = pki_types::ServerName::try_from(forward_bypass_config.host.as_str())
-                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
-                .to_owned();
-            match connector.connect(server_name, tcp_stream).await {
-                Ok(tls_stream) => EitherTlsStream::Tls { stream: tls_stream },
-                Err(e) => {
-                    warn!("[forward_bypass TLS handshake error] [{}]: {}", bypass_host, e);
-                    return Err(e);
-                }
-            }
-        } else {
-            EitherTlsStream::Tcp { stream: tcp_stream }
-        };
-
-        let mut connect_request = format!(
-            "CONNECT {} HTTP/1.1\r\nHost: {}\r\nX-Forwarded-For: {}\r\n",
-            access_label.target, access_label.target, client_ip
-        );
-        if let (Some(username), Some(password)) = (&forward_bypass_config.username, &forward_bypass_config.password) {
-            let credentials = format!("{username}:{password}");
-            let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
-            connect_request.push_str(&format!("Proxy-Authorization: Basic {encoded}\r\n"));
-        }
-        connect_request.push_str("\r\n");
-
-        parent_stream.write_all(connect_request.as_bytes()).await?;
-        let mut reader = tokio::io::BufReader::new(parent_stream);
-        let mut response_line = String::new();
-        reader.read_line(&mut response_line).await?;
-        let status_code = response_line.split_whitespace().nth(1).unwrap_or("");
-        if status_code != "200" {
-            return Err(io::Error::other(format!(
-                "unexpected response from forward bypass: {}",
-                response_line.trim_end()
-            )));
-        }
-        loop {
-            let mut header_line = String::new();
-            reader.read_line(&mut header_line).await?;
-            if header_line == "\r\n" || header_line == "\n" {
-                break;
-            }
-        }
-        let parent_stream = reader.into_inner();
+        let tcp_stream = connect_with_preference(
+            &crate::proxy::bypass_endpoint(forward_bypass_config),
+            forward_bypass_config.ipv6_first,
+        )
+        .await?;
+        let parent_stream = into_bypass_stream(forward_bypass_config, tcp_stream).await?;
+        // HTTP 客户端这条路不记 tunnel_bypass_setup_duration，流量从请求开始才计数。
+        let parent_stream = complete_parent_connect(
+            parent_stream,
+            ParentConnect {
+                target: &access_label.target,
+                client_ip,
+                username: forward_bypass_config.username.as_deref(),
+                password: forward_bypass_config.password.as_deref(),
+            },
+        )
+        .await?;
 
         let (stream, use_http2) = if let Some(true) = access_label.relay_over_tls {
             let connector = if allow_http2 {
@@ -613,7 +482,7 @@ where
             let use_http2 = allow_http2 && stream.get_ref().1.alpn_protocol() == Some(b"h2");
             (HttpClientStream::TlsOverProxy { stream }, use_http2)
         } else {
-            (HttpClientStream::Direct { stream: parent_stream }, false)
+            (HttpClientStream::ViaProxy { stream: parent_stream }, false)
         };
 
         let stream = stream_map_func(stream, access_label.clone());
@@ -750,20 +619,6 @@ where
         }
     }
 
-    pub fn is_closed(&self) -> bool {
-        match self {
-            HttpConnection::Http1(r) => r.is_closed(),
-            HttpConnection::Http2(r) => r.is_closed(),
-        }
-    }
-
-    pub fn is_ready(&self) -> bool {
-        match self {
-            HttpConnection::Http1(r) => r.is_ready(),
-            HttpConnection::Http2(r) => r.is_ready(),
-        }
-    }
-
     pub async fn ready(&mut self) -> Result<(), hyper::Error> {
         match self {
             HttpConnection::Http1(r) => r.ready().await,
@@ -779,6 +634,22 @@ where
         match self {
             HttpConnection::Http1(_) => None,
             HttpConnection::Http2(r) => Some(HttpConnection::Http2(r.clone())),
+        }
+    }
+}
+
+impl<B> PooledConn for HttpConnection<B> {
+    fn is_closed(&self) -> bool {
+        match self {
+            HttpConnection::Http1(sender) => sender.is_closed(),
+            HttpConnection::Http2(sender) => sender.is_closed(),
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        match self {
+            HttpConnection::Http1(sender) => sender.is_ready(),
+            HttpConnection::Http2(sender) => sender.is_ready(),
         }
     }
 }
@@ -923,6 +794,68 @@ fn handle_http_connection_error(protocol: &str, err: hyper::Error, access_label:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn http2_cached_connection_serves_overlapping_requests() {
+        use http_body_util::{BodyExt as _, Full};
+        use hyper::body::Bytes;
+        use std::sync::Arc;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let server = tokio::spawn(async move {
+            hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                .serve_connection(
+                    TokioIo::new(server_io),
+                    hyper::service::service_fn(move |_| {
+                        let barrier = barrier.clone();
+                        async move {
+                            // Neither response is sent until both streams are active.
+                            barrier.wait().await;
+                            Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
+                        }
+                    }),
+                )
+                .await
+                .unwrap();
+        });
+        let (sender, connection) = http2::handshake(TokioExecutor::new(), TokioIo::new(client_io))
+            .await
+            .unwrap();
+        let driver = tokio::spawn(connection);
+        let client = ForwardProxyClient::<Full<Bytes>>::new();
+        let label = AccessLabel {
+            client: "127.0.0.1".into(),
+            target: "example.com:80".into(),
+            username: String::new(),
+            relay_over_tls: None,
+        };
+        let request = || {
+            Request::builder()
+                .uri("http://example.com/item")
+                .body(Full::new(Bytes::new()))
+                .unwrap()
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let first = client.send_request_conn(&label, HttpConnection::Http2(sender), request());
+            let second = async {
+                let cached = loop {
+                    if let Some(cached) = client.pool.take(&label).await {
+                        break cached;
+                    }
+                    tokio::task::yield_now().await;
+                };
+                client.send_request_conn(&label, cached, request()).await
+            };
+            let (first, second) = tokio::join!(first, second);
+            for response in [first.unwrap(), second.unwrap()] {
+                assert_eq!(response.into_body().collect().await.unwrap().to_bytes(), "ok");
+            }
+        })
+        .await
+        .unwrap();
+        driver.abort();
+        server.abort();
+    }
 
     #[test]
     fn sanitize_http2_request_headers_removes_host() {

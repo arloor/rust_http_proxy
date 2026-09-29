@@ -4,6 +4,8 @@ use log::{debug, info, warn};
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
+use crate::config::ForwardBypassConfig;
+
 /// 实现 Happy Eyeballs 算法的TCP连接（RFC 6555, RFC 8305）
 /// 首先尝试解析所有地址，根据 ipv6_first 参数决定优先级，但会并发尝试以提高连接速度
 /// ipv6_first: None 表示使用系统默认顺序，Some(true) 表示 IPv6 优先，Some(false) 表示 IPv4 优先
@@ -274,7 +276,8 @@ pin_project_lite::pin_project! {
     #[project = HttpClientStreamProj]
     pub(crate) enum HttpClientStream {
         Direct { #[pin] stream: EitherTlsStream },
-        TlsOverProxy { #[pin] stream: TlsStream<EitherTlsStream> },
+        ViaProxy { #[pin] stream: tokio::io::BufReader<EitherTlsStream> },
+        TlsOverProxy { #[pin] stream: TlsStream<tokio::io::BufReader<EitherTlsStream>> },
     }
 }
 
@@ -284,6 +287,7 @@ impl tokio::io::AsyncRead for HttpClientStream {
     ) -> std::task::Poll<io::Result<()>> {
         match self.project() {
             HttpClientStreamProj::Direct { stream } => stream.poll_read(cx, buf),
+            HttpClientStreamProj::ViaProxy { stream } => stream.poll_read(cx, buf),
             HttpClientStreamProj::TlsOverProxy { stream } => stream.poll_read(cx, buf),
         }
     }
@@ -295,6 +299,7 @@ impl tokio::io::AsyncWrite for HttpClientStream {
     ) -> std::task::Poll<io::Result<usize>> {
         match self.project() {
             HttpClientStreamProj::Direct { stream } => stream.poll_write(cx, buf),
+            HttpClientStreamProj::ViaProxy { stream } => stream.poll_write(cx, buf),
             HttpClientStreamProj::TlsOverProxy { stream } => stream.poll_write(cx, buf),
         }
     }
@@ -302,6 +307,7 @@ impl tokio::io::AsyncWrite for HttpClientStream {
     fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
         match self.project() {
             HttpClientStreamProj::Direct { stream } => stream.poll_flush(cx),
+            HttpClientStreamProj::ViaProxy { stream } => stream.poll_flush(cx),
             HttpClientStreamProj::TlsOverProxy { stream } => stream.poll_flush(cx),
         }
     }
@@ -311,6 +317,7 @@ impl tokio::io::AsyncWrite for HttpClientStream {
     ) -> std::task::Poll<io::Result<()>> {
         match self.project() {
             HttpClientStreamProj::Direct { stream } => stream.poll_shutdown(cx),
+            HttpClientStreamProj::ViaProxy { stream } => stream.poll_shutdown(cx),
             HttpClientStreamProj::TlsOverProxy { stream } => stream.poll_shutdown(cx),
         }
     }
@@ -323,6 +330,30 @@ impl tokio::io::AsyncRead for EitherTlsStream {
         match self.project() {
             EitherTlsStreamProj::Tcp { stream } => stream.poll_read(cx, buf),
             EitherTlsStreamProj::Tls { stream } => stream.poll_read(cx, buf),
+        }
+    }
+}
+
+pub(crate) fn bypass_endpoint(config: &ForwardBypassConfig) -> String {
+    format!("{}:{}", config.host, config.port)
+}
+
+/// 连上父代理后，明文保持 TCP，HTTPS 父代理再握一次 TLS。失败时返回错误，由调用方决定是 502 还是继续向上抛。
+pub(crate) async fn into_bypass_stream(
+    config: &ForwardBypassConfig, tcp_stream: TcpStream,
+) -> io::Result<EitherTlsStream> {
+    if !config.is_https {
+        return Ok(EitherTlsStream::Tcp { stream: tcp_stream });
+    }
+    let connector = build_tls_connector();
+    let server_name = ServerName::try_from(config.host.as_str())
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
+        .to_owned();
+    match connector.connect(server_name, tcp_stream).await {
+        Ok(stream) => Ok(EitherTlsStream::Tls { stream }),
+        Err(error) => {
+            warn!("[forward_bypass TLS handshake error] [{}]: {}", bypass_endpoint(config), error);
+            Err(error)
         }
     }
 }

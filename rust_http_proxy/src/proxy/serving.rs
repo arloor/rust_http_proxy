@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
     io::{self, ErrorKind},
     net::SocketAddr,
 };
@@ -8,28 +7,26 @@ use std::{
 use axum::extract::Request;
 use http_body_util::BodyExt;
 use hyper::{body::Incoming, http};
-use log::warn;
 use percent_encoding::percent_decode_str;
 use prom_label::LabelImpl;
 
-use crate::{METRICS, axum_handler, ip_x::SocketAddrFormat, static_serve};
+use crate::{METRICS, axum_handler, location::LocationAuth, static_serve};
 
 use super::{
     handler::{InterceptResultAdapter, ProxyHandler},
-    http::{build_authenticate_resp, check_static_basic_auth},
+    http::{LocationAccess, authorize_location},
     labels::AccessLabel,
 };
 
 impl ProxyHandler {
     pub(super) async fn handle_static_serving(
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, location: &str, static_dir: &str,
-        basic_auth: &HashMap<String, String>, basic_auth_path_prefixes: &[String],
+        auth: &LocationAuth,
     ) -> Result<InterceptResultAdapter, io::Error> {
         let config = &self.config;
         let res = async {
-            config.allow_cidrs.check_serving_control(client_socket_addr)?;
-
             if axum_handler::AXUM_PATHS.contains(&req.uri().path()) {
+                config.allow_cidrs.check_serving_control(client_socket_addr)?;
                 return static_serve::not_found().map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
             }
 
@@ -38,22 +35,16 @@ impl ProxyHandler {
             let request_path = percent_decode_str(raw_path)
                 .decode_utf8()
                 .unwrap_or(Cow::from(raw_path));
-            let username = match check_static_basic_auth(
+            let username = match authorize_location(
+                &config.allow_cidrs,
+                client_socket_addr,
                 req.headers(),
                 request_path.as_ref(),
-                basic_auth,
-                basic_auth_path_prefixes,
-            ) {
-                Ok(username) => username,
-                Err(e) => {
-                    warn!(
-                        "static basic auth failed from {} for {}: {}",
-                        SocketAddrFormat(&client_socket_addr),
-                        request_path,
-                        e
-                    );
-                    return Ok(build_authenticate_resp(false));
-                }
+                auth,
+                "static",
+            )? {
+                LocationAccess::Allowed(username) => username,
+                LocationAccess::Challenge(response) => return Ok(response),
             };
             // Some(username) 表示该路径命中认证前缀且已通过认证，响应需要禁止缓存
             let auth_protected = username.is_some();
@@ -93,10 +84,7 @@ impl ProxyHandler {
                     Ok(InterceptResultAdapter::Return(resp))
                 }
             }
-            Err(e) => match e.kind() {
-                ErrorKind::PermissionDenied => Ok(InterceptResultAdapter::Drop),
-                _ => Err(e),
-            },
+            Err(error) => InterceptResultAdapter::from_gate_error(error),
         }
     }
 }

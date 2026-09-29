@@ -296,6 +296,32 @@ pub(crate) async fn start_tls_h2_routing_server(
     Ok(TestServer { addr, task })
 }
 
+pub(crate) async fn start_fixed_response_server(response: &'static [u8]) -> Result<TestServer, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let _ = read_http_head(&mut stream).await?;
+        stream.write_all(response).await?;
+        Ok(())
+    });
+    Ok(TestServer { addr, task })
+}
+
+pub(crate) async fn start_tls_fixed_response_server(response: &'static [u8]) -> Result<TestServer, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let acceptor = TlsAcceptor::from(Arc::new(test_server_tls_config()?));
+    let task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut stream = acceptor.accept(stream).await?;
+        let _ = read_http_head(&mut stream).await?;
+        stream.write_all(response).await?;
+        Ok(())
+    });
+    Ok(TestServer { addr, task })
+}
+
 pub(crate) async fn start_tcp_echo_server() -> Result<TestServer, DynError> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
     let addr = listener.local_addr()?;

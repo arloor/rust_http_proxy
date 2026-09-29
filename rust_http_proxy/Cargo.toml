@@ -104,3 +104,6 @@ bpf_static = ["bpf", "socket_filter/static", "cgroup_traffic/static"]
 aws_lc_rs = ["tokio-rustls/aws-lc-rs"]
 ring = ["tokio-rustls/ring"]
 winservice = ["windows-service"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

@@ -1,8 +1,4 @@
-use std::{
-    io::{self, ErrorKind},
-    net::SocketAddr,
-    time::Duration,
-};
+use std::{io, net::SocketAddr, time::Duration};
 
 use crate::{METRICS, address::host_addr, config::ForwardBypassConfig};
 use {
@@ -18,17 +14,17 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use hyper_util::server::conn::auto;
 use log::{debug, info, warn};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::pin;
 use tokio_rustls::TlsAcceptor;
-use tokio_rustls::rustls::pki_types;
 
-use crate::proxy::connect::{EitherTlsStream, HttpClientStream, build_tls_connector, connect_with_preference};
+use crate::proxy::connect::{EitherTlsStream, HttpClientStream, bypass_endpoint, into_bypass_stream};
 use crate::proxy::handler::ProxyHandler;
 use crate::proxy::http::{empty_body, full_body, get_client_ip};
-use crate::proxy::labels::{AccessLabel, TunnelHandshakeLabel};
+use crate::proxy::labels::AccessLabel;
 use crate::proxy::padding::append_random_padding_headers;
-use crate::proxy::tunnel::tunnel;
+use crate::proxy::parent_connect::{ParentConnect, complete_parent_connect};
+use crate::proxy::tunnel::{dial_timed_tunnel, log_tunnel_path, tunnel};
 
 use super::request::{MitmRequestContext, handle_mitm_request};
 
@@ -281,23 +277,8 @@ async fn connect_direct_tunnel_target(
         username,
         relay_over_tls: None,
     };
-    let start_time = std::time::Instant::now();
-    let target_stream = connect_with_preference(target, ipv6_first).await?;
-    METRICS
-        .tunnel_bypass_setup_duration
-        .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
-            target: access_label.target.clone(),
-        }))
-        .observe(start_time.elapsed().as_millis() as f64);
-    debug!(
-        "[mitm bypass tunnel {}], [true path: {} -> {}]",
-        access_label,
-        client_socket_addr.ip().to_canonical().to_string() + ":" + &client_socket_addr.port().to_string(),
-        target_stream
-            .peer_addr()
-            .map(|addr| addr.ip().to_canonical().to_string() + ":" + &addr.port().to_string())
-            .unwrap_or("failed".to_owned())
-    );
+    let target_stream = dial_timed_tunnel(target, ipv6_first).await?;
+    log_tunnel_path("mitm bypass tunnel", &access_label, client_socket_addr, target_stream.peer_addr());
     Ok(CounterIO::new(
         HttpClientStream::Direct {
             stream: EitherTlsStream::Tcp { stream: target_stream },
@@ -311,69 +292,29 @@ async fn connect_forward_bypass_tunnel_target(
     target: &str, client_socket_addr: SocketAddr, username: String, forward_bypass_config: &ForwardBypassConfig,
     client_ip: String,
 ) -> io::Result<CounterIO<HttpClientStream, LabelImpl<AccessLabel>>> {
-    let bypass_host = format!("{}:{}", forward_bypass_config.host, forward_bypass_config.port);
+    let bypass_host = bypass_endpoint(forward_bypass_config);
     let access_label = AccessLabel {
         client: client_socket_addr.ip().to_canonical().to_string(),
         target: bypass_host.clone(),
         username,
         relay_over_tls: Some(forward_bypass_config.is_https),
     };
-    let start_time = std::time::Instant::now();
-    let tcp_stream = connect_with_preference(&bypass_host, forward_bypass_config.ipv6_first).await?;
-    METRICS
-        .tunnel_bypass_setup_duration
-        .get_or_create(&LabelImpl::new(TunnelHandshakeLabel {
-            target: access_label.target.clone(),
-        }))
-        .observe(start_time.elapsed().as_millis() as f64);
-
-    let parent_stream = if forward_bypass_config.is_https {
-        let connector = build_tls_connector();
-        let server_name = pki_types::ServerName::try_from(forward_bypass_config.host.as_str())
-            .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
-            .to_owned();
-        EitherTlsStream::Tls {
-            stream: connector.connect(server_name, tcp_stream).await?,
-        }
-    } else {
-        EitherTlsStream::Tcp { stream: tcp_stream }
-    };
-
-    let mut reader = tokio::io::BufReader::new(parent_stream);
-    let mut connect_request =
-        format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nX-Forwarded-For: {client_ip}\r\n");
-    if let (Some(username), Some(password)) = (&forward_bypass_config.username, &forward_bypass_config.password) {
-        let credentials = format!("{}:{}", username, password);
-        let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, credentials.as_bytes());
-        connect_request.push_str(&format!("Proxy-Authorization: Basic {encoded}\r\n"));
-    }
-    connect_request.push_str("\r\n");
-    reader.get_mut().write_all(connect_request.as_bytes()).await?;
-
-    let mut response_line = String::new();
-    reader.read_line(&mut response_line).await?;
-    let status_code = response_line.split_whitespace().nth(1).unwrap_or("");
-    if status_code != "200" {
-        return Err(io::Error::other(format!("unexpected response from bypass server: {response_line}")));
-    }
-
-    loop {
-        let mut header_line = String::new();
-        if reader.read_line(&mut header_line).await? == 0 {
-            return Err(io::Error::new(
-                ErrorKind::UnexpectedEof,
-                "bypass server closed before CONNECT response headers completed",
-            ));
-        }
-        if header_line == "\r\n" || header_line == "\n" {
-            break;
-        }
-    }
+    let tcp_stream = dial_timed_tunnel(&bypass_host, forward_bypass_config.ipv6_first).await?;
+    let parent_stream = into_bypass_stream(forward_bypass_config, tcp_stream).await?;
+    // 非 HTTP 回退在客户端已经收到 200 之后才握手，流量从隧道开始才计数。
+    let parent_stream = complete_parent_connect(
+        parent_stream,
+        ParentConnect {
+            target,
+            client_ip: &client_ip,
+            username: forward_bypass_config.username.as_deref(),
+            password: forward_bypass_config.password.as_deref(),
+        },
+    )
+    .await?;
 
     Ok(CounterIO::new(
-        HttpClientStream::Direct {
-            stream: reader.into_inner(),
-        },
+        HttpClientStream::ViaProxy { stream: parent_stream },
         METRICS.proxy_traffic.clone(),
         LabelImpl::new(access_label),
     ))

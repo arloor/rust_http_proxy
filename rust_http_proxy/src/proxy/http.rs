@@ -9,8 +9,12 @@ use axum::extract::Request;
 use http::{HeaderMap, Uri, header::HeaderValue};
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::{Response, Version, body::Bytes, body::Incoming};
+use log::warn;
 
 use crate::axum_handler;
+use crate::config::AllowCIRRS;
+use crate::ip_x::SocketAddrFormat;
+use crate::location::LocationAuth;
 
 pub(crate) struct SchemeHostPort {
     pub(crate) scheme: String,
@@ -158,6 +162,40 @@ pub(super) fn check_static_basic_auth(
     }
 
     Ok(None)
+}
+
+pub(super) enum LocationAccess {
+    Allowed(Option<String>),
+    Challenge(Response<BoxBody<Bytes, io::Error>>),
+}
+
+/// 先做网段门禁，再做路径 Basic 认证。网段拒绝保持 PermissionDenied，交给调用方丢连接；认证失败返回 401。
+pub(super) fn authorize_location(
+    allow_cidrs: &AllowCIRRS, client_socket_addr: SocketAddr, headers: &HeaderMap, request_path: &str,
+    auth: &LocationAuth, scenario: &str,
+) -> io::Result<LocationAccess> {
+    allow_cidrs.check_serving_control(client_socket_addr)?;
+    match check_static_basic_auth(headers, request_path, &auth.basic_auth, &auth.basic_auth_path_prefixes) {
+        Ok(username) => Ok(LocationAccess::Allowed(username)),
+        Err(error) => {
+            warn!(
+                "{scenario} basic auth failed from {} for {}: {}",
+                SocketAddrFormat(&client_socket_addr),
+                request_path,
+                error
+            );
+            Ok(LocationAccess::Challenge(build_authenticate_resp(false)))
+        }
+    }
+}
+
+pub(super) fn boxed_io_body<B, E>(body: B) -> BoxBody<Bytes, io::Error>
+where
+    B: http_body::Body<Data = Bytes, Error = E> + Send + Sync + 'static,
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    body.map_err(|error| io::Error::new(ErrorKind::InvalidData, error))
+        .boxed()
 }
 
 pub(crate) fn build_authenticate_resp(for_proxy: bool) -> Response<BoxBody<Bytes, io::Error>> {

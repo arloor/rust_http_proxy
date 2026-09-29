@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     io::{self, ErrorKind},
     net::SocketAddr,
     sync::Arc,
@@ -9,7 +8,7 @@ use crate::{
     axum_handler::AppProxyError,
     config::Config,
     forward_proxy_client::ForwardProxyClient,
-    location::{DEFAULT_HOST, LocationConfig, Upstream},
+    location::{DEFAULT_HOST, LocationAuth, LocationConfig, Upstream},
     mitm_manager::MitmManager,
     reverse_proxy_client::ReverseProxyClient,
 };
@@ -30,6 +29,15 @@ pub(crate) enum InterceptResultAdapter {
     Continue(Request<Incoming>),
 }
 
+impl InterceptResultAdapter {
+    pub(super) fn from_gate_error(error: io::Error) -> Result<Self, io::Error> {
+        match error.kind() {
+            ErrorKind::PermissionDenied => Ok(Self::Drop),
+            _ => Err(error),
+        }
+    }
+}
+
 /// 服务类型枚举
 enum ServiceType<'a> {
     /// 反向代理
@@ -37,15 +45,13 @@ enum ServiceType<'a> {
         original_scheme_host_port: SchemeHostPort,
         location: &'a String,
         upstream: &'a Upstream,
-        basic_auth: &'a HashMap<String, String>,
-        basic_auth_path_prefixes: &'a [String],
+        auth: &'a LocationAuth,
     },
     /// Location配置的静态文件托管
     LocationStaticServing {
         location: &'a String,
         static_dir: &'a String,
-        basic_auth: &'a HashMap<String, String>,
-        basic_auth_path_prefixes: &'a [String],
+        auth: &'a LocationAuth,
     },
     /// 正向代理
     ForwardProxy,
@@ -140,27 +146,21 @@ impl ProxyHandler {
                     Some(LocationConfig::ReverseProxy {
                         location,
                         upstream,
-                        basic_auth,
-                        basic_auth_path_prefixes,
-                        ..
+                        auth,
                     }) => Ok(ServiceType::ReverseProxy {
                         original_scheme_host_port,
                         location,
                         upstream,
-                        basic_auth,
-                        basic_auth_path_prefixes,
+                        auth,
                     }),
                     Some(LocationConfig::Serving {
                         static_dir,
                         location,
-                        basic_auth,
-                        basic_auth_path_prefixes,
-                        ..
+                        auth,
                     }) => Ok(ServiceType::LocationStaticServing {
                         location,
                         static_dir,
-                        basic_auth,
-                        basic_auth_path_prefixes,
+                        auth,
                     }),
                     None => Ok(ServiceType::NonMatch),
                 }
@@ -179,15 +179,12 @@ impl ServiceType<'_> {
         match self {
             ServiceType::NonMatch => {
                 // 仍然检查allow_cidrs，避免漏到 axum router
-                if let Err(e) = proxy_handler
+                if let Err(error) = proxy_handler
                     .config
                     .allow_cidrs
                     .check_serving_control(client_socket_addr)
                 {
-                    return match e.kind() {
-                        ErrorKind::PermissionDenied => Ok(InterceptResultAdapter::Drop),
-                        _ => Err(e),
-                    };
+                    return InterceptResultAdapter::from_gate_error(error);
                 }
                 Ok(InterceptResultAdapter::Continue(req))
             }
@@ -195,36 +192,19 @@ impl ServiceType<'_> {
                 original_scheme_host_port,
                 location,
                 upstream,
-                basic_auth,
-                basic_auth_path_prefixes,
+                auth,
             } => {
                 proxy_handler
-                    .handle_reverse_proxy(
-                        req,
-                        client_socket_addr,
-                        original_scheme_host_port,
-                        location,
-                        upstream,
-                        basic_auth,
-                        basic_auth_path_prefixes,
-                    )
+                    .handle_reverse_proxy(req, client_socket_addr, original_scheme_host_port, location, upstream, auth)
                     .await
             }
             ServiceType::LocationStaticServing {
                 static_dir,
                 location,
-                basic_auth,
-                basic_auth_path_prefixes,
+                auth,
             } => {
                 proxy_handler
-                    .handle_static_serving(
-                        req,
-                        client_socket_addr,
-                        location,
-                        static_dir,
-                        basic_auth,
-                        basic_auth_path_prefixes,
-                    )
+                    .handle_static_serving(req, client_socket_addr, location, static_dir, auth)
                     .await
             }
             ServiceType::ForwardProxy => proxy_handler.handle_forward_proxy(req, client_socket_addr).await,
