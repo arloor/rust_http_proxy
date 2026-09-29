@@ -39,8 +39,8 @@ chrono = "0.4"
 pin-project-lite.workspace = true
 prometheus-client.workspace = true
 flate2 = { version = "1.0" }
-brotli = "8"
-zstd = "0.13"
+brotli = "9"
+zstd = "0.14"
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 clap = { version = "4.4", features = ["derive"] }
 base64 = "0.23"
@@ -55,12 +55,12 @@ lru_time_cache = "0.11"
 toml = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.132"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled", "fallible_uint"] }
 rust-embed = "8.7"
 # axum-bootstrap = { git = "https://github.com/arloor/axum-bootstrap", branch = "master",default-features = false  }
 axum-bootstrap = { version = "0.1.33", default-features = false }
 tower = "0.5"
-tower-http = { version = "0.6", features = [
+tower-http = { version = "0.7", features = [
     "cors",
     "timeout",
     "trace",
