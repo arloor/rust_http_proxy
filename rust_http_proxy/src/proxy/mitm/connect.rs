@@ -18,13 +18,13 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::pin;
 use tokio_rustls::TlsAcceptor;
 
-use crate::proxy::connect::{EitherTlsStream, HttpClientStream, bypass_endpoint, into_bypass_stream};
+use crate::proxy::connect::bypass_endpoint;
 use crate::proxy::handler::ProxyHandler;
-use crate::proxy::http::{empty_body, full_body, get_client_ip};
+use crate::proxy::http::{get_client_ip, invalid_connect_target, text_response};
 use crate::proxy::labels::AccessLabel;
-use crate::proxy::padding::append_random_padding_headers;
-use crate::proxy::parent_connect::{ParentConnect, complete_parent_connect};
-use crate::proxy::tunnel::{dial_timed_tunnel, log_tunnel_path, tunnel};
+use crate::proxy::padding::connect_established;
+use crate::proxy::parent_connect::open_parent_tunnel;
+use crate::proxy::tunnel::{dial_direct_tunnel, tunnel};
 
 use super::request::{MitmRequestContext, handle_mitm_request};
 
@@ -39,15 +39,10 @@ impl ProxyHandler {
         &self, req: Request<Incoming>, client_socket_addr: SocketAddr, username: String,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         let Some(addr) = host_addr(req.uri()) else {
-            warn!("CONNECT host is not socket addr: {:?}", req.uri());
-            let mut resp = Response::new(full_body("CONNECT must be to a socket address"));
-            *resp.status_mut() = http::StatusCode::BAD_REQUEST;
-            return Ok(resp);
+            return Ok(invalid_connect_target(req.uri()));
         };
         let Some(mitm_authority) = self.config.mitm_authority.as_ref().cloned() else {
-            let mut resp = Response::new(full_body("MITM is not enabled"));
-            *resp.status_mut() = http::StatusCode::BAD_REQUEST;
-            return Ok(resp);
+            return Ok(text_response(http::StatusCode::BAD_REQUEST, "MITM is not enabled"));
         };
 
         let cert_host = addr.host();
@@ -56,9 +51,7 @@ impl ProxyHandler {
             Ok(tls_config) => tls_config,
             Err(e) => {
                 warn!("[mitm cert error] [{}]: {}", target, e);
-                let mut resp = Response::new(full_body("Failed to generate MITM certificate"));
-                *resp.status_mut() = http::StatusCode::BAD_GATEWAY;
-                return Ok(resp);
+                return Ok(text_response(http::StatusCode::BAD_GATEWAY, "Failed to generate MITM certificate"));
             }
         };
 
@@ -184,9 +177,7 @@ impl ProxyHandler {
             }
         });
 
-        let mut response = Response::new(empty_body());
-        append_random_padding_headers(response.headers_mut());
-        Ok(response)
+        Ok(connect_established())
     }
 }
 
@@ -258,66 +249,22 @@ async fn tunnel_mitm_bypass<U>(
 where
     U: AsyncRead + AsyncWrite + Unpin,
 {
-    let target_io = match forward_bypass {
-        Some(forward_bypass_config) => {
-            connect_forward_bypass_tunnel_target(target, client_socket_addr, username, forward_bypass_config, client_ip)
-                .await?
+    match forward_bypass {
+        Some(config) => {
+            let access_label =
+                AccessLabel::new(client_socket_addr, bypass_endpoint(config), username, Some(config.is_https));
+            // 非 HTTP 回退在客户端已经收到 200 之后才握手，流量从隧道开始才计数。
+            let parent_stream = open_parent_tunnel(config, target, &client_ip, true, |stream| stream).await?;
+            let target_io = CounterIO::new(parent_stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label));
+            tunnel(client_io, target_io).await
         }
-        None => connect_direct_tunnel_target(target, client_socket_addr, username, ipv6_first).await?,
-    };
-    tunnel(client_io, target_io).await
-}
-
-async fn connect_direct_tunnel_target(
-    target: &str, client_socket_addr: SocketAddr, username: String, ipv6_first: Option<bool>,
-) -> io::Result<CounterIO<HttpClientStream, LabelImpl<AccessLabel>>> {
-    let access_label = AccessLabel {
-        client: client_socket_addr.ip().to_canonical().to_string(),
-        target: target.to_owned(),
-        username,
-        relay_over_tls: None,
-    };
-    let target_stream = dial_timed_tunnel(target, ipv6_first).await?;
-    log_tunnel_path("mitm bypass tunnel", &access_label, client_socket_addr, target_stream.peer_addr());
-    Ok(CounterIO::new(
-        HttpClientStream::Direct {
-            stream: EitherTlsStream::Tcp { stream: target_stream },
-        },
-        METRICS.proxy_traffic.clone(),
-        LabelImpl::new(access_label),
-    ))
-}
-
-async fn connect_forward_bypass_tunnel_target(
-    target: &str, client_socket_addr: SocketAddr, username: String, forward_bypass_config: &ForwardBypassConfig,
-    client_ip: String,
-) -> io::Result<CounterIO<HttpClientStream, LabelImpl<AccessLabel>>> {
-    let bypass_host = bypass_endpoint(forward_bypass_config);
-    let access_label = AccessLabel {
-        client: client_socket_addr.ip().to_canonical().to_string(),
-        target: bypass_host.clone(),
-        username,
-        relay_over_tls: Some(forward_bypass_config.is_https),
-    };
-    let tcp_stream = dial_timed_tunnel(&bypass_host, forward_bypass_config.ipv6_first).await?;
-    let parent_stream = into_bypass_stream(forward_bypass_config, tcp_stream).await?;
-    // 非 HTTP 回退在客户端已经收到 200 之后才握手，流量从隧道开始才计数。
-    let parent_stream = complete_parent_connect(
-        parent_stream,
-        ParentConnect {
-            target,
-            client_ip: &client_ip,
-            username: forward_bypass_config.username.as_deref(),
-            password: forward_bypass_config.password.as_deref(),
-        },
-    )
-    .await?;
-
-    Ok(CounterIO::new(
-        HttpClientStream::ViaProxy { stream: parent_stream },
-        METRICS.proxy_traffic.clone(),
-        LabelImpl::new(access_label),
-    ))
+        None => {
+            let access_label = AccessLabel::new(client_socket_addr, target, username, None);
+            let target_io =
+                dial_direct_tunnel("mitm bypass tunnel", access_label, client_socket_addr, ipv6_first).await?;
+            tunnel(client_io, target_io).await
+        }
+    }
 }
 
 pin_project_lite::pin_project! {

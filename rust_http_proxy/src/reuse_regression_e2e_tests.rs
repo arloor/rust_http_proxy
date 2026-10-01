@@ -8,15 +8,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use base64::Engine as _;
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
+use http_body_util::Full;
+use hyper::body::{Bytes, Incoming};
+use hyper::service::service_fn;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
+use tokio_rustls::TlsAcceptor;
 
 use crate::DynError;
 use crate::e2e_test_support::{
-    RunningProxy, SSH_BANNER, WS_PAYLOAD, assert_ok, connect_to_mitm_target, read_exact_bytes, read_http_head,
-    remove_temp_dir, start_fixed_response_server, start_plain_http_server, start_proxy, start_tcp_banner_server,
-    start_tcp_echo_server, start_tls_fixed_response_server, start_tls_http_server, timeout_step, unique_temp_dir,
+    RunningProxy, SSH_BANNER, WS_PAYLOAD, assert_ok, connect_to_mitm_target, header_value, read_exact_bytes,
+    read_http_head, read_response, recv_channel, recv_connect_target, remove_temp_dir, start_fixed_response_server,
+    start_forward_bypass_proxy, start_plain_http_server, start_proxy, start_tcp_banner_server, start_tcp_echo_server,
+    start_tls_fixed_response_server, start_tls_http_server, test_server_tls_config, timeout_step, unique_temp_dir,
     write_test_ca,
 };
 
@@ -117,97 +123,8 @@ fn bypass_url(parent: &ObservingParent) -> String {
     format!("http://{PARENT_USER}:{PARENT_PASSWORD}@127.0.0.1:{}", parent.addr.port())
 }
 
-async fn recv_channel(step: &'static str, receiver: &mut tokio::sync::mpsc::Receiver<String>) -> io::Result<String> {
-    match tokio::time::timeout(Duration::from_secs(5), receiver.recv()).await {
-        Ok(Some(value)) => Ok(value),
-        Ok(None) => Err(io::Error::new(ErrorKind::BrokenPipe, format!("{step} channel closed"))),
-        Err(_) => Err(io::Error::new(ErrorKind::TimedOut, format!("{step} timed out"))),
-    }
-}
-
 async fn recv_parent_head(parent: &mut ObservingParent) -> io::Result<String> {
     recv_channel("parent CONNECT head", &mut parent.head_rx).await
-}
-
-fn header_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
-    head.lines().find_map(|line| {
-        let (key, value) = line.split_once(':')?;
-        key.eq_ignore_ascii_case(name).then_some(value.trim())
-    })
-}
-
-async fn read_http_body<T>(stream: &mut T, head: &str) -> io::Result<Vec<u8>>
-where
-    T: AsyncRead + Unpin,
-{
-    let lower = head.to_ascii_lowercase();
-    if let Some(length) = header_value(&lower, "content-length").and_then(|value| value.parse::<usize>().ok()) {
-        return read_exact_bytes(stream, length).await;
-    }
-    if header_value(&lower, "transfer-encoding").is_some_and(|value| value.contains("chunked")) {
-        return read_chunked_body(stream).await;
-    }
-    let mut body = Vec::new();
-    let _ = tokio::time::timeout(Duration::from_millis(200), stream.read_to_end(&mut body)).await;
-    Ok(body)
-}
-
-async fn read_chunked_body<T>(stream: &mut T) -> io::Result<Vec<u8>>
-where
-    T: AsyncRead + Unpin,
-{
-    let mut body = Vec::new();
-    loop {
-        let size_line = read_crlf_line(stream).await?;
-        let size_hex = size_line.trim().split(';').next().unwrap_or("0");
-        let size = usize::from_str_radix(size_hex, 16).map_err(|error| {
-            io::Error::new(ErrorKind::InvalidData, format!("bad chunk size {size_line:?}: {error}"))
-        })?;
-        if size == 0 {
-            loop {
-                let trailer = read_crlf_line(stream).await?;
-                if trailer.is_empty() {
-                    break;
-                }
-            }
-            return Ok(body);
-        }
-        body.extend(read_exact_bytes(stream, size).await?);
-        let crlf = read_crlf_line(stream).await?;
-        if !crlf.is_empty() {
-            return Err(io::Error::new(ErrorKind::InvalidData, format!("chunk missing CRLF, got {crlf:?}")));
-        }
-    }
-}
-
-async fn read_crlf_line<T>(stream: &mut T) -> io::Result<String>
-where
-    T: AsyncRead + Unpin,
-{
-    let mut line = Vec::new();
-    loop {
-        let mut byte = [0u8; 1];
-        stream.read_exact(&mut byte).await?;
-        if byte[0] == b'\n' {
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            return String::from_utf8(line).map_err(|error| io::Error::new(ErrorKind::InvalidData, error));
-        }
-        line.push(byte[0]);
-        if line.len() > 8192 {
-            return Err(io::Error::new(ErrorKind::InvalidData, "HTTP line is too long"));
-        }
-    }
-}
-
-async fn read_response<T>(stream: &mut T) -> io::Result<(String, Vec<u8>)>
-where
-    T: AsyncRead + Unpin,
-{
-    let head = read_http_head(stream).await?;
-    let body = read_http_body(stream, &head).await?;
-    Ok((head, body))
 }
 
 struct KeepAliveUpstream {
@@ -218,6 +135,15 @@ struct KeepAliveUpstream {
 
 impl KeepAliveUpstream {
     async fn start() -> io::Result<Self> {
+        Self::start_with_tls(None).await
+    }
+
+    async fn start_tls() -> Result<Self, DynError> {
+        let acceptor = TlsAcceptor::from(Arc::new(test_server_tls_config()?));
+        Ok(Self::start_with_tls(Some(acceptor)).await?)
+    }
+
+    async fn start_with_tls(acceptor: Option<TlsAcceptor>) -> io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let addr = listener.local_addr()?;
         let accepts = Arc::new(AtomicUsize::new(0));
@@ -228,9 +154,16 @@ impl KeepAliveUpstream {
                     break;
                 };
                 let accepts = task_accepts.clone();
+                let acceptor = acceptor.clone();
                 tokio::spawn(async move {
                     accepts.fetch_add(1, Ordering::SeqCst);
-                    let _ = serve_two_keep_alive_responses(stream).await;
+                    let _ = match acceptor {
+                        Some(acceptor) => match acceptor.accept(stream).await {
+                            Ok(stream) => serve_two_keep_alive_responses(stream).await,
+                            Err(error) => Err(error),
+                        },
+                        None => serve_two_keep_alive_responses(stream).await,
+                    };
                 });
             }
         });
@@ -242,7 +175,10 @@ impl KeepAliveUpstream {
     }
 }
 
-async fn serve_two_keep_alive_responses(mut stream: TcpStream) -> io::Result<()> {
+async fn serve_two_keep_alive_responses<S>(mut stream: S) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     for _ in 0..2 {
         let _ = read_http_head(&mut stream).await?;
         stream
@@ -940,6 +876,187 @@ async fn reverse_http1_reuses_upstream_connection() -> Result<(), DynError> {
     assert_eq!(upstream.accepts.load(Ordering::SeqCst), 1, "reverse proxy should reuse the HTTP/1 upstream");
 
     upstream.abort();
+    proxy.shutdown().await?;
+    remove_temp_dir(temp_dir)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn forward_bypass_http1_reuses_parent_connection() -> Result<(), DynError> {
+    let parent = KeepAliveUpstream::start().await?;
+    let proxy = start_proxy(vec![
+        "--forward-bypass-url".to_owned(),
+        format!("http://127.0.0.1:{}", parent.addr.port()),
+    ])
+    .await?;
+
+    let first = proxy_keep_alive_get(proxy.port, "http://origin.invalid/one", "origin.invalid").await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let second = proxy_keep_alive_get(proxy.port, "http://origin.invalid/two", "origin.invalid").await?;
+
+    assert_eq!(first, KEEP_ALIVE_BODY);
+    assert_eq!(second, KEEP_ALIVE_BODY);
+    assert_eq!(parent.accepts.load(Ordering::SeqCst), 1, "bypass HTTP requests should reuse the parent connection");
+
+    parent.abort();
+    proxy.shutdown().await?;
+    Ok(())
+}
+
+async fn mitm_keep_alive_get(proxy_port: u16, upstream_port: u16, ca_cert_der: Vec<u8>) -> Result<Vec<u8>, DynError> {
+    let mut tls_stream = connect_to_mitm_target(proxy_port, upstream_port, ca_cert_der).await?;
+    tls_stream
+        .write_all(format!("GET /item HTTP/1.1\r\nHost: localhost:{upstream_port}\r\n\r\n").as_bytes())
+        .await?;
+    let (head, body) = timeout_step("MITM keep-alive response", read_response(&mut tls_stream)).await?;
+    assert_ok(&head)?;
+    Ok(body)
+}
+
+#[tokio::test]
+async fn mitm_https_reuses_upstream_connection_across_client_connections() -> Result<(), DynError> {
+    let upstream = KeepAliveUpstream::start_tls().await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_mitm_reuse_direct")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let proxy = start_proxy(mitm_args(&ca.cert_path, &ca.key_path, Vec::new())).await?;
+
+    let first = mitm_keep_alive_get(proxy.port, upstream.addr.port(), ca.cert_der.clone()).await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let second = mitm_keep_alive_get(proxy.port, upstream.addr.port(), ca.cert_der).await?;
+
+    assert_eq!(first, KEEP_ALIVE_BODY);
+    assert_eq!(second, KEEP_ALIVE_BODY);
+    assert_eq!(upstream.accepts.load(Ordering::SeqCst), 1, "MITM should reuse the HTTPS upstream");
+
+    upstream.abort();
+    proxy.shutdown().await?;
+    remove_temp_dir(temp_dir)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn mitm_https_via_bypass_reuses_parent_tunnel() -> Result<(), DynError> {
+    let upstream = KeepAliveUpstream::start_tls().await?;
+    let mut parent = start_forward_bypass_proxy().await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_mitm_reuse_bypass")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let proxy = start_proxy(mitm_args(
+        &ca.cert_path,
+        &ca.key_path,
+        vec![
+            "--forward-bypass-url".to_owned(),
+            format!("http://127.0.0.1:{}", parent.addr.port()),
+        ],
+    ))
+    .await?;
+
+    let first = mitm_keep_alive_get(proxy.port, upstream.addr.port(), ca.cert_der.clone()).await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    // 父代理只接受一次连接，第二个请求只有复用隧道才能成功。
+    let second = mitm_keep_alive_get(proxy.port, upstream.addr.port(), ca.cert_der).await?;
+
+    assert_eq!(first, KEEP_ALIVE_BODY);
+    assert_eq!(second, KEEP_ALIVE_BODY);
+    assert_eq!(recv_connect_target(&mut parent).await?, format!("localhost:{}", upstream.addr.port()));
+    assert_eq!(upstream.accepts.load(Ordering::SeqCst), 1);
+
+    upstream.abort();
+    parent.task.abort();
+    proxy.shutdown().await?;
+    remove_temp_dir(temp_dir)?;
+    Ok(())
+}
+
+struct H2CountingUpstream {
+    addr: SocketAddr,
+    accepts: Arc<AtomicUsize>,
+    task: JoinHandle<()>,
+}
+
+const H2_BODY: &[u8] = b"h2-ok";
+
+async fn start_h2_counting_upstream() -> Result<H2CountingUpstream, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let mut tls_config = test_server_tls_config()?;
+    tls_config.alpn_protocols = vec![b"h2".to_vec()];
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let task_accepts = accepts.clone();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            task_accepts.fetch_add(1, Ordering::SeqCst);
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                let Ok(tls_stream) = acceptor.accept(stream).await else {
+                    return;
+                };
+                let service = service_fn(|_req: hyper::Request<Incoming>| async {
+                    Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(Bytes::from_static(H2_BODY))))
+                });
+                let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(tls_stream), service)
+                    .await;
+            });
+        }
+    });
+    Ok(H2CountingUpstream { addr, accepts, task })
+}
+
+#[tokio::test]
+async fn reverse_http2_reuses_multiplexed_upstream_connection() -> Result<(), DynError> {
+    let upstream = start_h2_counting_upstream().await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_reverse_h2_reuse")?;
+    std::fs::create_dir_all(&temp_dir)?;
+    let config_path = temp_dir.join("locations.yaml");
+    std::fs::write(
+        &config_path,
+        format!(
+            "default_host:\n  - location: /h2/\n    upstream:\n      url_base: https://localhost:{}/\n      version: H2\n",
+            upstream.addr.port()
+        ),
+    )?;
+    let proxy = start_proxy(vec![
+        "--location-config-file".to_owned(),
+        config_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    for path in ["/h2/one", "/h2/two"] {
+        let (head, body) = request_origin_form(
+            proxy.port,
+            &format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+        )
+        .await?;
+        assert_ok(&head)?;
+        assert_eq!(body, H2_BODY);
+    }
+    assert_eq!(upstream.accepts.load(Ordering::SeqCst), 1, "reverse proxy should multiplex the HTTP/2 upstream");
+
+    upstream.task.abort();
+    proxy.shutdown().await?;
+    remove_temp_dir(temp_dir)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn mitm_h2_upstream_is_multiplexed_across_client_connections() -> Result<(), DynError> {
+    let upstream = start_h2_counting_upstream().await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_mitm_h2_reuse")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let proxy = start_proxy(mitm_args(&ca.cert_path, &ca.key_path, Vec::new())).await?;
+
+    let first = mitm_keep_alive_get(proxy.port, upstream.addr.port(), ca.cert_der.clone()).await?;
+    let second = mitm_keep_alive_get(proxy.port, upstream.addr.port(), ca.cert_der).await?;
+
+    assert_eq!(first, H2_BODY);
+    assert_eq!(second, H2_BODY);
+    assert_eq!(upstream.accepts.load(Ordering::SeqCst), 1, "MITM should multiplex the HTTP/2 upstream");
+
+    upstream.task.abort();
     proxy.shutdown().await?;
     remove_temp_dir(temp_dir)?;
     Ok(())

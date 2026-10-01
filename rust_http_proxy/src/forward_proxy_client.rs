@@ -1,5 +1,4 @@
 //! HTTP Client
-#![allow(clippy::type_complexity)]
 use std::{
     error::Error,
     fmt::{Debug, Display, Formatter},
@@ -20,17 +19,41 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use io_x::{CounterIO, TimeoutIO};
 use log::{debug, error, info, trace, warn};
 use prom_label::LabelImpl;
-use tokio_rustls::rustls::pki_types;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_rustls::client::TlsStream;
 
 use crate::{
+    METRICS,
     config::ForwardBypassConfig,
     connection_pool::{IdlePool, MAX_IDLE_HTTP1_PER_KEY, MAX_IDLE_HTTP2_PER_KEY, PooledConn},
     proxy::{
-        AccessLabel, EitherTlsStream, HttpClientStream, ParentConnect, build_tls_connector_with_http_alpn,
-        build_tls_connector_with_http1_alpn, build_tls_connector_with_http2_alpn, complete_parent_connect,
-        connect_with_preference, into_bypass_stream,
+        AccessLabel, EitherTlsStream, HttpClientStream, build_tls_connector_with_http_alpn,
+        build_tls_connector_with_http1_alpn, build_tls_connector_with_http2_alpn, connect_with_preference,
+        open_parent_tunnel, origin_form, tls_server_name, tls_server_name_for_authority,
     },
 };
+
+/// 请求经由哪条链路到达 `AccessLabel::target`。
+#[derive(Clone, Copy)]
+pub(crate) enum Route<'a> {
+    Direct {
+        ipv6_first: Option<bool>,
+    },
+    /// 先经父代理 CONNECT 到 target，再在隧道里发请求。
+    ViaParent {
+        config: &'a ForwardBypassConfig,
+        client_ip: &'a str,
+    },
+}
+
+impl Display for Route<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Route::Direct { .. } => write!(f, "direct"),
+            Route::ViaParent { config, .. } => write!(f, "via forward bypass {config}"),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DirectProtocol {
@@ -96,170 +119,98 @@ where
         ForwardProxyClient { pool: IdlePool::new() }
     }
 
-    /// Make HTTP requests
-    #[inline]
-    pub async fn send_request(
-        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> Result<Response<body::Incoming>, std::io::Error> {
-        // 1. Check if there is an available client
-        if let Some(c) = self.pool.take(access_label).await {
-            debug!("HTTP client for host: {} taken from cache", access_label);
-            match self.send_request_conn(access_label, c, req).await {
-                Ok(o) => return Ok(o),
-                Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
+    /// 普通请求：优先复用池中连接，新连接允许经 ALPN 协商 HTTP/2。
+    pub(crate) async fn send_request(
+        &self, req: Request<B>, access_label: &AccessLabel, route: Route<'_>,
+    ) -> io::Result<Response<body::Incoming>> {
+        let connection = match self.pool.take(access_label).await {
+            Some(connection) => {
+                debug!("HTTP client for host: {access_label} taken from cache");
+                connection
             }
-        }
-
-        // 2. If no. Make a new connection
-        let c = match HttpConnection::connect(access_label, ipv6_first, stream_map_func).await {
-            Ok(c) => c,
-            Err(err) => {
-                error!("failed to connect to host: {}, error: {}", access_label.target, err);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
-            }
+            None => HttpConnection::connect(access_label, route, true)
+                .await
+                .map_err(|err| {
+                    error!("failed to connect to host: {} {route}, error: {err}", access_label.target);
+                    io::Error::new(ErrorKind::InvalidData, err)
+                })?,
         };
-
-        self.send_request_conn(access_label, c, req)
+        self.send_request_conn(access_label, connection, req)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
 
-    pub async fn send_request_http1_only(
-        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> Result<Response<body::Incoming>, std::io::Error> {
-        let mut c = match HttpConnection::connect_http1_only(access_label, ipv6_first, stream_map_func).await {
-            Ok(c) => c,
-            Err(err) => {
-                error!("failed to connect to host with HTTP/1.1 only: {}, error: {}", access_label.target, err);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
-            }
-        };
-
+    /// Upgrade 请求：独占一条新建的 HTTP/1.1 连接，升级后连接归隧道所有，不放回池中。
+    pub(crate) async fn send_upgrade_request(
+        &self, req: Request<B>, access_label: &AccessLabel, route: Route<'_>,
+    ) -> io::Result<Response<body::Incoming>> {
+        let mut connection = HttpConnection::connect(access_label, route, false)
+            .await
+            .map_err(|err| {
+                error!("failed to connect to host with HTTP/1.1 only: {} {route}, error: {err}", access_label.target);
+                io::Error::new(ErrorKind::InvalidData, err)
+            })?;
         trace!("HTTP/1.1-only making request to host: {access_label}, request: {req:?}");
-        c.send_request(req, access_label)
+        connection
+            .send_request(req, access_label)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-    }
-
-    pub async fn send_request_via_forward_bypass(
-        &self, req: Request<B>, access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig,
-        client_ip: &str,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> Result<Response<body::Incoming>, std::io::Error> {
-        if let Some(c) = self.pool.take(access_label).await {
-            debug!("HTTP client via forward bypass for host: {} taken from cache", access_label);
-            match self.send_request_conn(access_label, c, req).await {
-                Ok(o) => return Ok(o),
-                Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
-            }
-        }
-
-        let c = match HttpConnection::connect_via_forward_bypass(
-            access_label,
-            forward_bypass_config,
-            client_ip,
-            stream_map_func,
-        )
-        .await
-        {
-            Ok(c) => c,
-            Err(err) => {
-                error!(
-                    "failed to connect to host: {} via forward bypass {}, error: {}",
-                    access_label.target, forward_bypass_config, err
-                );
-                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
-            }
-        };
-
-        self.send_request_conn(access_label, c, req)
-            .await
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-    }
-
-    pub async fn send_request_via_forward_bypass_http1_only(
-        &self, req: Request<B>, access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig,
-        client_ip: &str,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> Result<Response<body::Incoming>, std::io::Error> {
-        let mut c = match HttpConnection::connect_via_forward_bypass_http1_only(
-            access_label,
-            forward_bypass_config,
-            client_ip,
-            stream_map_func,
-        )
-        .await
-        {
-            Ok(c) => c,
-            Err(err) => {
-                error!(
-                    "failed to connect to host with HTTP/1.1 only: {} via forward bypass {}, error: {}",
-                    access_label.target, forward_bypass_config, err
-                );
-                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
-            }
-        };
-
-        trace!("HTTP/1.1-only making request via forward bypass to host: {access_label}, request: {req:?}");
-        c.send_request(req, access_label)
-            .await
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
 
     pub(crate) async fn send_request_conn(
-        &self, access_label: &AccessLabel, mut c: HttpConnection<B>, req: Request<B>,
+        &self, access_label: &AccessLabel, mut connection: HttpConnection<B>, req: Request<B>,
     ) -> hyper::Result<Response<body::Incoming>> {
         trace!("HTTP making request to host: {access_label}, request: {req:?}");
-        let url = req.uri().clone();
-
-        if let Some(cacheable_conn) = c.clone_for_multiplexed_cache() {
-            debug!("HTTP/2 connection for host: {access_label} {url} remains cached for multiplexing");
-            Self::cache_connection(&self.pool, access_label.clone(), cacheable_conn).await;
-        }
-
-        let response = c.send_request(req, access_label).await?;
+        self.pool.share_if_multiplexed(access_label, &connection).await;
+        let response = connection.send_request(req, access_label).await?;
         trace!("HTTP received response from host: {access_label}, response: {response:?}");
-
-        if c.is_multiplexed() {
-            return Ok(response);
-        }
-
-        // Check keep-alive
-        if check_keep_alive(response.version(), response.headers(), false) {
-            trace!("HTTP connection keep-alive for host: {access_label}, response: {response:?}");
-            let pool = self.pool.clone();
-            let access_label = access_label.clone();
-            tokio::spawn(async move {
-                match c.ready().await {
-                    Ok(_) => {
-                        debug!("HTTP connection for host: {access_label} {url} is ready and will be cached");
-                        Self::cache_connection(&pool, access_label, c).await;
-                    }
-                    Err(e) => {
-                        debug!("HTTP connection for host: {access_label} {url} failed to become ready: {}", e);
-                    }
-                };
-            });
-        }
-
+        self.pool
+            .recycle_after_response(access_label.clone(), connection, &response);
         Ok(response)
     }
+}
 
-    async fn cache_connection(
-        pool: &IdlePool<AccessLabel, HttpConnection<B>>, access_label: AccessLabel, connection: HttpConnection<B>,
-    ) {
+impl<K, B> IdlePool<K, HttpConnection<B>>
+where
+    K: Clone + Ord + Display + Send + Sync + 'static,
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn ::std::error::Error + Send + Sync>>,
+{
+    /// HTTP/2 连接在发请求前就放回池中，让并发请求共享同一条连接。
+    pub(crate) async fn share_if_multiplexed(&self, key: &K, connection: &HttpConnection<B>) {
+        if let Some(shared) = connection.clone_for_multiplexed_cache() {
+            debug!("HTTP/2 connection for {key} remains cached for multiplexing");
+            self.cache_http_connection(key.clone(), shared).await;
+        }
+    }
+
+    /// HTTP/1.1 连接只有在响应允许 keep-alive 时，才在连接空闲后放回池中。
+    pub(crate) fn recycle_after_response<T>(&self, key: K, mut connection: HttpConnection<B>, response: &Response<T>) {
+        if connection.is_multiplexed() || !check_keep_alive(response.version(), response.headers(), false) {
+            return;
+        }
+        let pool = self.clone();
+        tokio::spawn(async move {
+            match connection.ready().await {
+                Ok(()) => {
+                    debug!("HTTP connection for {key} is ready and will be cached");
+                    pool.cache_http_connection(key, connection).await;
+                }
+                Err(e) => debug!("HTTP connection for {key} failed to become ready: {e}"),
+            }
+        });
+    }
+
+    async fn cache_http_connection(&self, key: K, connection: HttpConnection<B>) {
         let multiplexed = connection.is_multiplexed();
         let max_idle = if multiplexed {
             MAX_IDLE_HTTP2_PER_KEY
         } else {
             MAX_IDLE_HTTP1_PER_KEY
         };
-        pool.insert_same_class(access_label, connection, max_idle, move |candidate| {
-            candidate.is_multiplexed() == multiplexed
-        })
-        .await;
+        self.insert_same_class(key, connection, max_idle, move |candidate| candidate.is_multiplexed() == multiplexed)
+            .await;
     }
 }
 
@@ -307,7 +258,6 @@ fn get_keep_alive_val(values: header::GetAll<HeaderValue>) -> Option<bool> {
     conn_keep_alive
 }
 
-#[allow(dead_code)]
 pub(crate) enum HttpConnection<B> {
     Http1(http1::SendRequest<B>),
     Http2(http2::SendRequest<B>),
@@ -324,15 +274,12 @@ where
         idle_timeout: Option<Duration>,
     ) -> io::Result<HttpConnection<B>> {
         let tcp_stream = crate::proxy::connect_with_preference(&connection_key.connect_to, ipv6_first).await?;
-        let stream = if let Some(tls_server_name) = &connection_key.tls_server_name {
+        let stream = if let Some(server_name) = &connection_key.tls_server_name {
             let connector = match connection_key.protocol {
                 DirectProtocol::Http1 => build_tls_connector_with_http1_alpn(),
                 DirectProtocol::Http2 => build_tls_connector_with_http2_alpn(),
             };
-            let server_name = pki_types::ServerName::try_from(tls_server_name.as_str())
-                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid TLS server name: {e}")))?
-                .to_owned();
-            let tls_stream = connector.connect(server_name, tcp_stream).await?;
+            let tls_stream = connector.connect(tls_server_name(server_name)?, tcp_stream).await?;
             let negotiated_alpn = tls_stream.get_ref().1.alpn_protocol();
             let valid_alpn = match connection_key.protocol {
                 DirectProtocol::Http1 => negotiated_alpn.is_none_or(|alpn| alpn == b"http/1.1"),
@@ -358,153 +305,54 @@ where
         }
     }
 
+    /// 按 `route` 建立到 `access_label.target` 的连接，流量按 `access_label` 计数。
+    /// `relay_over_tls == Some(true)` 时与 target 握 TLS；`allow_http2` 决定 ALPN 是否提供 h2。
     pub(crate) async fn connect(
-        access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
+        access_label: &AccessLabel, route: Route<'_>, allow_http2: bool,
     ) -> io::Result<HttpConnection<B>> {
-        Self::connect_with_http2_preference(access_label, ipv6_first, true, stream_map_func).await
-    }
-
-    pub(crate) async fn connect_http1_only(
-        access_label: &AccessLabel, ipv6_first: Option<bool>,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> io::Result<HttpConnection<B>> {
-        Self::connect_with_http2_preference(access_label, ipv6_first, false, stream_map_func).await
-    }
-
-    async fn connect_with_http2_preference(
-        access_label: &AccessLabel, ipv6_first: Option<bool>, allow_http2: bool,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> io::Result<HttpConnection<B>> {
-        let stream = crate::proxy::connect_with_preference(&access_label.target, ipv6_first).await?;
-        let (stream, use_http2) = if let Some(true) = access_label.relay_over_tls {
-            // 建立 TLS 连接
-            let connector = if allow_http2 {
-                build_tls_connector_with_http_alpn()
-            } else {
-                build_tls_connector_with_http1_alpn()
-            };
-
-            let host = &access_label
-                .target
-                .split(':')
-                .next()
-                .ok_or(io::Error::other("invalid host"))?;
-            let server_name = pki_types::ServerName::try_from(*host)
-                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
-                .to_owned();
-
-            match connector.connect(server_name, stream).await {
-                Ok(tls_stream) => {
-                    let use_http2 = allow_http2 && tls_stream.get_ref().1.alpn_protocol() == Some(b"h2");
-                    (EitherTlsStream::Tls { stream: tls_stream }, use_http2)
-                }
-                Err(e) => {
-                    warn!("[forward_bypass TLS handshake error] [{}]: {}", access_label, e);
-                    return Err(e);
+        let relay_over_tls = access_label.relay_over_tls == Some(true);
+        let (stream, use_http2) = match route {
+            Route::Direct { ipv6_first } => {
+                let tcp_stream = connect_with_preference(&access_label.target, ipv6_first).await?;
+                if relay_over_tls {
+                    let (stream, use_http2) = tls_handshake(tcp_stream, &access_label.target, allow_http2)
+                        .await
+                        .inspect_err(|e| warn!("[forward_bypass TLS handshake error] [{access_label}]: {e}"))?;
+                    (
+                        HttpClientStream::Direct {
+                            stream: EitherTlsStream::Tls { stream },
+                        },
+                        use_http2,
+                    )
+                } else {
+                    (
+                        HttpClientStream::Direct {
+                            stream: EitherTlsStream::Tcp { stream: tcp_stream },
+                        },
+                        false,
+                    )
                 }
             }
-        } else {
-            // 使用普通 TCP 连接
-            (EitherTlsStream::Tcp { stream }, false)
+            Route::ViaParent { config, client_ip } => {
+                // HTTP 客户端这条路不记 tunnel_bypass_setup_duration，流量从请求开始才计数。
+                let parent_stream = open_parent_tunnel(config, &access_label.target, client_ip, false, |s| s).await?;
+                if relay_over_tls {
+                    let (stream, use_http2) = tls_handshake(parent_stream, &access_label.target, allow_http2).await?;
+                    (HttpClientStream::TlsOverProxy { stream }, use_http2)
+                } else {
+                    (HttpClientStream::ViaProxy { stream: parent_stream }, false)
+                }
+            }
         };
 
-        let stream = stream_map_func(HttpClientStream::Direct { stream }, access_label.clone());
-
-        HttpConnection::connect_http(access_label, stream, use_http2).await
-    }
-
-    pub(crate) async fn connect_via_forward_bypass(
-        access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig, client_ip: &str,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> io::Result<HttpConnection<B>> {
-        Self::connect_via_forward_bypass_with_http2_preference(
-            access_label,
-            forward_bypass_config,
-            client_ip,
-            true,
-            stream_map_func,
-        )
-        .await
-    }
-
-    pub(crate) async fn connect_via_forward_bypass_http1_only(
-        access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig, client_ip: &str,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> io::Result<HttpConnection<B>> {
-        Self::connect_via_forward_bypass_with_http2_preference(
-            access_label,
-            forward_bypass_config,
-            client_ip,
-            false,
-            stream_map_func,
-        )
-        .await
-    }
-
-    async fn connect_via_forward_bypass_with_http2_preference(
-        access_label: &AccessLabel, forward_bypass_config: &ForwardBypassConfig, client_ip: &str, allow_http2: bool,
-        stream_map_func: impl FnOnce(HttpClientStream, AccessLabel) -> CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> io::Result<HttpConnection<B>> {
-        let tcp_stream = connect_with_preference(
-            &crate::proxy::bypass_endpoint(forward_bypass_config),
-            forward_bypass_config.ipv6_first,
-        )
-        .await?;
-        let parent_stream = into_bypass_stream(forward_bypass_config, tcp_stream).await?;
-        // HTTP 客户端这条路不记 tunnel_bypass_setup_duration，流量从请求开始才计数。
-        let parent_stream = complete_parent_connect(
-            parent_stream,
-            ParentConnect {
-                target: &access_label.target,
-                client_ip,
-                username: forward_bypass_config.username.as_deref(),
-                password: forward_bypass_config.password.as_deref(),
-            },
-        )
-        .await?;
-
-        let (stream, use_http2) = if let Some(true) = access_label.relay_over_tls {
-            let connector = if allow_http2 {
-                build_tls_connector_with_http_alpn()
-            } else {
-                build_tls_connector_with_http1_alpn()
-            };
-            let host = access_label
-                .target
-                .split(':')
-                .next()
-                .ok_or(io::Error::other("invalid host"))?;
-            let server_name = pki_types::ServerName::try_from(host)
-                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
-                .to_owned();
-            let stream = connector.connect(server_name, parent_stream).await?;
-            let use_http2 = allow_http2 && stream.get_ref().1.alpn_protocol() == Some(b"h2");
-            (HttpClientStream::TlsOverProxy { stream }, use_http2)
-        } else {
-            (HttpClientStream::ViaProxy { stream: parent_stream }, false)
-        };
-
-        let stream = stream_map_func(stream, access_label.clone());
-        HttpConnection::connect_http(access_label, stream, use_http2).await
-    }
-
-    async fn connect_http(
-        access_label: &AccessLabel, stream: CounterIO<HttpClientStream, LabelImpl<AccessLabel>>, use_http2: bool,
-    ) -> io::Result<HttpConnection<B>> {
+        let stream = CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label.clone()));
+        let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
         if use_http2 {
             debug!("HTTP/2 selected by ALPN for host: {access_label}");
-            Self::connect_http2(access_label, stream).await
+            Self::handshake_http2(access_label, stream).await
         } else {
-            Self::connect_http_http1(access_label, stream).await
+            Self::handshake_http1(access_label, stream).await
         }
-    }
-
-    async fn connect_http_http1(
-        access_label: &AccessLabel, stream: CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> io::Result<HttpConnection<B>> {
-        let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
-        Self::handshake_http1(access_label, stream).await
     }
 
     async fn handshake_http1<S>(access_label: &AccessLabel, stream: S) -> io::Result<HttpConnection<B>>
@@ -529,13 +377,6 @@ where
             }
         });
         Ok(HttpConnection::Http1(send_request))
-    }
-
-    async fn connect_http2(
-        access_label: &AccessLabel, stream: CounterIO<HttpClientStream, LabelImpl<AccessLabel>>,
-    ) -> io::Result<HttpConnection<B>> {
-        let stream = TimeoutIO::new(stream, crate::IDLE_TIMEOUT);
-        Self::handshake_http2(access_label, stream).await
     }
 
     async fn handshake_http2<S>(access_label: &AccessLabel, stream: S) -> io::Result<HttpConnection<B>>
@@ -597,7 +438,7 @@ where
                 let host = HeaderValue::from_str(&connection_key.authority)
                     .map_err(|e| DirectSendError::Preparation(io::Error::new(ErrorKind::InvalidInput, e)))?;
                 req.headers_mut().insert(HOST, host);
-                force_origin_form(&mut req);
+                origin_form(req.uri_mut());
                 sanitize_http1_request_headers(req.headers_mut());
                 sender
                     .try_send_request(req)
@@ -691,26 +532,25 @@ fn prepare_http1_request_for_connection_target<B>(req: &mut Request<B>, access_l
     // Direct origin connections must use origin-form ("/path?query"), while
     // parent forward proxies must receive absolute-form ("http://host/path").
     if uri_targets_current_connection(req.uri(), access_label) {
-        let path = req.uri().path_and_query().cloned();
-        *req.uri_mut() = path
-            .and_then(|path| {
-                let mut parts = http::uri::Parts::default();
-                parts.path_and_query = Some(path);
-                Uri::from_parts(parts).ok()
-            })
-            .unwrap_or_else(|| Uri::from_static("/"));
+        origin_form(req.uri_mut());
     }
 }
 
-fn force_origin_form<B>(req: &mut Request<B>) {
-    let path = req.uri().path_and_query().cloned();
-    *req.uri_mut() = path
-        .and_then(|path| {
-            let mut parts = http::uri::Parts::default();
-            parts.path_and_query = Some(path);
-            Uri::from_parts(parts).ok()
-        })
-        .unwrap_or_else(|| Uri::from_static("/"));
+/// 与 `target`（host:port）握 TLS，返回是否经 ALPN 选中了 h2。
+async fn tls_handshake<S>(stream: S, target: &str, allow_http2: bool) -> io::Result<(TlsStream<S>, bool)>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let connector = if allow_http2 {
+        build_tls_connector_with_http_alpn()
+    } else {
+        build_tls_connector_with_http1_alpn()
+    };
+    let stream = connector
+        .connect(tls_server_name_for_authority(target)?, stream)
+        .await?;
+    let use_http2 = allow_http2 && stream.get_ref().1.alpn_protocol() == Some(b"h2");
+    Ok((stream, use_http2))
 }
 
 fn replace_uri_authority<B>(req: &mut Request<B>, authority: &str) -> io::Result<()> {
@@ -889,6 +729,72 @@ mod tests {
         assert_eq!(request.uri().authority().map(http::uri::Authority::as_str), Some("api.bilibili.com"));
         assert!(!request.headers().contains_key(HOST));
         Ok(())
+    }
+
+    fn label(target: &str) -> AccessLabel {
+        AccessLabel {
+            client: "127.0.0.1".to_owned(),
+            target: target.to_owned(),
+            username: String::new(),
+            relay_over_tls: None,
+        }
+    }
+
+    #[test]
+    fn http1_request_to_origin_uses_origin_form_and_keeps_host() -> Result<(), crate::DynError> {
+        let mut request = Request::builder()
+            .uri("http://origin.example:8080/a?b=1")
+            .header(HOST, "origin.example:8080")
+            .body(())?;
+        prepare_http1_request_for_connection_target(&mut request, &label("origin.example:8080"));
+        assert_eq!(request.uri().to_string(), "/a?b=1");
+        assert_eq!(request.headers().get(HOST), Some(&HeaderValue::from_static("origin.example:8080")));
+        Ok(())
+    }
+
+    #[test]
+    fn http1_request_to_parent_proxy_keeps_absolute_form() -> Result<(), crate::DynError> {
+        let mut request = Request::builder().uri("http://origin.example/a").body(())?;
+        prepare_http1_request_for_connection_target(&mut request, &label("parent.example:3128"));
+        assert_eq!(request.uri().to_string(), "http://origin.example/a");
+        assert_eq!(request.headers().get(HOST), Some(&HeaderValue::from_static("origin.example")));
+        Ok(())
+    }
+
+    #[test]
+    fn http1_request_without_authority_falls_back_to_connection_target_host() -> Result<(), crate::DynError> {
+        let mut request = Request::builder().uri("/a").body(())?;
+        prepare_http1_request_for_connection_target(&mut request, &label("origin.example:443"));
+        assert_eq!(request.uri().to_string(), "/a");
+        assert_eq!(request.headers().get(HOST), Some(&HeaderValue::from_static("origin.example:443")));
+        Ok(())
+    }
+
+    #[test]
+    fn direct_request_shaping_helpers() -> Result<(), crate::DynError> {
+        let mut request = Request::builder().uri("https://logical.example/a?b").body(())?;
+        origin_form(request.uri_mut());
+        assert_eq!(request.uri().to_string(), "/a?b");
+
+        let mut request = Request::builder().uri("https://logical.example").body(())?;
+        origin_form(request.uri_mut());
+        assert_eq!(request.uri().to_string(), "/");
+
+        let mut request = Request::builder().uri("https://logical.example/a?b").body(())?;
+        replace_uri_authority(&mut request, "backend.example:8443")?;
+        assert_eq!(request.uri().to_string(), "https://backend.example:8443/a?b");
+        Ok(())
+    }
+
+    #[test]
+    fn keep_alive_follows_version_and_connection_headers() {
+        let mut headers = HeaderMap::new();
+        assert!(check_keep_alive(Version::HTTP_11, &headers, false));
+        assert!(!check_keep_alive(Version::HTTP_10, &headers, false));
+        headers.insert(CONNECTION, HeaderValue::from_static("close"));
+        assert!(!check_keep_alive(Version::HTTP_11, &headers, false));
+        headers.insert(CONNECTION, HeaderValue::from_static("Upgrade, Keep-Alive"));
+        assert!(check_keep_alive(Version::HTTP_10, &headers, false));
     }
 
     #[test]

@@ -1,6 +1,5 @@
 use http::header::LOCATION;
 use http::{HeaderName, HeaderValue, Request, Response, Uri, header};
-use http_body_util::BodyExt as _;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::body::Incoming;
@@ -16,6 +15,7 @@ use crate::forward_proxy_client::{DirectConnectionKey, DirectProtocol};
 use crate::proxy::AccessLabel;
 use crate::proxy::SchemeHostPort;
 use crate::proxy::promote_websocket_upgrade;
+use crate::proxy::{boxed_io_body, bracket_ipv6_host};
 use crate::reverse_proxy_client::ReverseProxyClient;
 
 pub(crate) struct RedirectBackpaths {
@@ -98,8 +98,7 @@ pub(crate) async fn handle_websocket_upgrade_reverse(
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
     // 客户端的升级 future 已经在调用前准备好了
 
-    // 将 Incoming body 转换为 BoxBody
-    let upstream_req = upstream_req.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed());
+    let upstream_req = upstream_req.map(boxed_io_body);
 
     // 发送升级请求到上游
     let mut upstream_resp = reverse_client
@@ -113,7 +112,7 @@ pub(crate) async fn handle_websocket_upgrade_reverse(
         warn!("WebSocket upgrade failed, upstream returned: {}", upstream_resp.status());
     }
 
-    Ok(upstream_resp.map(|body| body.map_err(|e| io::Error::new(ErrorKind::InvalidData, e)).boxed()))
+    Ok(upstream_resp.map(boxed_io_body))
 }
 
 pub(crate) struct BuiltUpstreamRequest<B> {
@@ -271,11 +270,7 @@ pub(crate) fn build_upstream_req<B>(
 
 fn resolve_upstream_template(value: &str, original: &SchemeHostPort) -> String {
     if value == "#{host}" {
-        let host = if original.host.contains(':') && !(original.host.starts_with('[') && original.host.ends_with(']')) {
-            format!("[{}]", original.host)
-        } else {
-            original.host.clone()
-        };
+        let host = bracket_ipv6_host(&original.host).into_owned();
         match normalized_origin_port(original) {
             Some(port) => format!("{host}:{port}"),
             None => host,
@@ -285,12 +280,20 @@ fn resolve_upstream_template(value: &str, original: &SchemeHostPort) -> String {
     }
 }
 
-fn normalized_origin_port(original: &SchemeHostPort) -> Option<u16> {
-    match (original.scheme.as_str(), original.port) {
-        (scheme, Some(443)) if scheme.eq_ignore_ascii_case("https") => None,
-        (scheme, Some(80)) if scheme.eq_ignore_ascii_case("http") => None,
-        (_, port) => port,
+fn http_default_port(scheme: &str) -> Option<u16> {
+    if scheme.eq_ignore_ascii_case("https") {
+        Some(443)
+    } else if scheme.eq_ignore_ascii_case("http") {
+        Some(80)
+    } else {
+        None
     }
+}
+
+fn normalized_origin_port(original: &SchemeHostPort) -> Option<u16> {
+    original
+        .port
+        .filter(|port| http_default_port(&original.scheme) != Some(*port))
 }
 
 fn socket_target(authority: &str, scheme: &str) -> io::Result<String> {
@@ -300,31 +303,22 @@ fn socket_target(authority: &str, scheme: &str) -> io::Result<String> {
     if authority.port_u16().is_some() {
         return Ok(authority.to_string());
     }
-    let default_port = if scheme.eq_ignore_ascii_case("https") { 443 } else { 80 };
+    let default_port = http_default_port(scheme).unwrap_or(80);
     Ok(format!("{authority}:{default_port}"))
 }
 
 fn normalize_inferred_http1_authority(
     authority: http::uri::Authority, scheme: &str,
 ) -> io::Result<http::uri::Authority> {
-    let default_port = if scheme.eq_ignore_ascii_case("https") {
-        443
-    } else if scheme.eq_ignore_ascii_case("http") {
-        80
-    } else {
+    let Some(default_port) = http_default_port(scheme) else {
         return Ok(authority);
     };
     if authority.port_u16() != Some(default_port) {
         return Ok(authority);
     }
 
-    let host = authority.host();
-    let host = if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    };
-    host.parse()
+    bracket_ipv6_host(authority.host())
+        .parse()
         .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("invalid upstream authority: {e}")))
 }
 
@@ -975,6 +969,16 @@ default_host:
             };
             assert_eq!(resolve_upstream_template("#{host}", &original), expected);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn socket_target_adds_scheme_default_port_only_when_missing() -> Result<(), crate::DynError> {
+        assert_eq!(socket_target("example.com", "https")?, "example.com:443");
+        assert_eq!(socket_target("example.com", "HTTP")?, "example.com:80");
+        assert_eq!(socket_target("example.com:8443", "http")?, "example.com:8443");
+        assert_eq!(socket_target("[::1]", "https")?, "[::1]:443");
+        assert!(socket_target("bad host", "http").is_err());
         Ok(())
     }
 

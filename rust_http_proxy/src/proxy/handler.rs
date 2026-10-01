@@ -22,7 +22,6 @@ use tokio::sync::broadcast;
 
 use super::http::{SchemeHostPort, extract_scheme_host_port};
 
-#[allow(dead_code)]
 pub(crate) enum InterceptResultAdapter {
     Drop,
     Return(Response<BoxBody<Bytes, io::Error>>),

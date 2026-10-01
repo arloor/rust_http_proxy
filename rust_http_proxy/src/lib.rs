@@ -39,6 +39,8 @@ mod reverse_proxy_client;
 mod reverse_proxy_e2e_tests;
 mod static_serve;
 #[cfg(test)]
+mod traffic_regression_e2e_tests;
+#[cfg(test)]
 mod websocket_e2e_tests;
 
 pub use metrics::METRICS;

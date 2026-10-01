@@ -1,4 +1,8 @@
+use std::io;
+
 use http::{HeaderMap, HeaderName, header::HeaderValue};
+use http_body_util::combinators::BoxBody;
+use hyper::{Response, body::Bytes};
 use rand::RngExt;
 
 const RANDOM_PADDING_HEADER_MAX_WIRE_BYTES: usize = 2048;
@@ -9,7 +13,14 @@ const RANDOM_PADDING_HEADER_VALUE_MAX_LEN: usize = 64;
 const RANDOM_PADDING_HEADER_NAME_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
 const RANDOM_PADDING_HEADER_VALUE_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-pub(super) fn append_random_padding_headers(headers: &mut HeaderMap) {
+/// CONNECT 成功的 200 响应。随机 padding 避免每次建连时 TCP 数据长度特征过于固定。
+pub(super) fn connect_established() -> Response<BoxBody<Bytes, io::Error>> {
+    let mut response = Response::new(super::http::empty_body());
+    append_random_padding_headers(response.headers_mut());
+    response
+}
+
+fn append_random_padding_headers(headers: &mut HeaderMap) {
     let mut rng = rand::rng();
     let min_header_wire_bytes =
         random_padding_header_wire_bytes(RANDOM_PADDING_HEADER_NAME_SUFFIX_LEN, RANDOM_PADDING_HEADER_VALUE_MIN_LEN);

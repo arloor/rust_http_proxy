@@ -95,3 +95,31 @@ fn authority_addr(scheme_str: Option<&str>, authority: &Authority) -> Option<Add
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(uri: &str) -> Option<Address> {
+        host_addr(&uri.parse::<Uri>().ok()?)
+    }
+
+    #[test]
+    fn host_addr_fills_default_port_from_scheme() {
+        assert_eq!(addr("http://example.com/a").map(|a| a.to_string()), Some("example.com:80".to_owned()));
+        assert_eq!(addr("https://example.com/a").map(|a| a.to_string()), Some("example.com:443".to_owned()));
+        assert_eq!(addr("example.com:8443").map(|a| a.to_string()), Some("example.com:8443".to_owned()));
+        assert!(addr("ftp://example.com/").is_none());
+        assert!(addr("/relative").is_none());
+    }
+
+    #[test]
+    fn host_addr_parses_ip_literals() {
+        let v6 = addr("https://[::1]/").expect("ipv6 literal");
+        assert_eq!(v6.to_string(), "[::1]:443");
+        assert_eq!(v6.host(), "::1");
+        let v4 = addr("127.0.0.1:9").expect("ipv4 literal");
+        assert_eq!(v4.to_string(), "127.0.0.1:9");
+        assert_eq!(v4.host(), "127.0.0.1");
+    }
+}

@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt::{Display, Formatter},
     io::{self, ErrorKind},
@@ -24,7 +25,7 @@ pub(crate) struct SchemeHostPort {
 
 impl Display for SchemeHostPort {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let host = format_uri_host(&self.host);
+        let host = bracket_ipv6_host(&self.host);
         match self.port {
             Some(port) => write!(f, "{}://{}:{}", self.scheme, host, port),
             None => write!(f, "{}://{}", self.scheme, host),
@@ -32,11 +33,12 @@ impl Display for SchemeHostPort {
     }
 }
 
-fn format_uri_host(host: &str) -> String {
+/// URI authority 里的 IPv6 字面量必须带方括号；已带括号或非 IPv6 时原样返回。
+pub(crate) fn bracket_ipv6_host(host: &str) -> Cow<'_, str> {
     if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
-        format!("[{host}]")
+        Cow::Owned(format!("[{host}]"))
     } else {
-        host.to_owned()
+        Cow::Borrowed(host)
     }
 }
 
@@ -99,18 +101,20 @@ pub(super) fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
+/// X-Forwarded-For 中最左侧（最初客户端）的地址。
+pub(super) fn first_forwarded_for(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|forwarded_for| forwarded_for.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+}
+
 /// 获取客户端 IP 地址
 /// 优先从 x-forwarded-for 请求头获取（取第一个 IP），否则使用 socket 地址
 pub(super) fn get_client_ip(req: &Request<Incoming>, client_socket_addr: SocketAddr) -> String {
-    req.headers()
-        .get("x-forwarded-for")
-        .and_then(|forwarded_for| {
-            forwarded_for
-                .to_str()
-                .ok()
-                .and_then(|s| s.split(',').next())
-                .map(|s| s.trim().to_string())
-        })
+    first_forwarded_for(req.headers())
+        .map(str::to_owned)
         .unwrap_or_else(|| client_socket_addr.ip().to_canonical().to_string())
 }
 
@@ -135,20 +139,17 @@ pub(super) fn is_websocket_upgrade<B>(req: &Request<B>) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn origin_form(uri: &mut Uri) -> io::Result<()> {
-    let path = match uri.path_and_query() {
-        Some(path) if path.as_str() != "/" => {
+/// 把 absolute-form 改成 origin-form（只保留 path?query），没有路径时为 `/`。
+pub(crate) fn origin_form(uri: &mut Uri) {
+    *uri = uri
+        .path_and_query()
+        .cloned()
+        .and_then(|path| {
             let mut parts = ::http::uri::Parts::default();
-            parts.path_and_query = Some(path.clone());
-            Uri::from_parts(parts).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?
-        }
-        _none_or_just_slash => {
-            debug_assert!(Uri::default() == "/");
-            Uri::default()
-        }
-    };
-    *uri = path;
-    Ok(())
+            parts.path_and_query = Some(path);
+            Uri::from_parts(parts).ok()
+        })
+        .unwrap_or_else(|| Uri::from_static("/"));
 }
 
 pub(super) fn check_static_basic_auth(
@@ -189,7 +190,7 @@ pub(super) fn authorize_location(
     }
 }
 
-pub(super) fn boxed_io_body<B, E>(body: B) -> BoxBody<Bytes, io::Error>
+pub(crate) fn boxed_io_body<B, E>(body: B) -> BoxBody<Bytes, io::Error>
 where
     B: http_body::Body<Data = Bytes, Error = E> + Send + Sync + 'static,
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -214,6 +215,17 @@ pub(crate) fn build_authenticate_resp(for_proxy: bool) -> Response<BoxBody<Bytes
         *resp.status_mut() = http::StatusCode::UNAUTHORIZED;
     }
     resp
+}
+
+pub(super) fn text_response(status: http::StatusCode, body: &'static str) -> Response<BoxBody<Bytes, io::Error>> {
+    let mut resp = Response::new(full_body(body));
+    *resp.status_mut() = status;
+    resp
+}
+
+pub(super) fn invalid_connect_target(uri: &Uri) -> Response<BoxBody<Bytes, io::Error>> {
+    warn!("CONNECT host is not socket addr: {uri:?}");
+    text_response(http::StatusCode::BAD_REQUEST, "CONNECT must be to a socket address")
 }
 
 pub fn empty_body() -> BoxBody<Bytes, io::Error> {
@@ -249,6 +261,21 @@ mod tests {
             .body(())?;
 
         assert!(!is_websocket_upgrade(&req));
+        Ok(())
+    }
+
+    #[test]
+    fn origin_form_keeps_only_path_and_query() -> Result<(), crate::DynError> {
+        for (input, expected) in [
+            ("http://example.com/a/b?c=1", "/a/b?c=1"),
+            ("http://example.com", "/"),
+            ("http://example.com/", "/"),
+            ("/already?x", "/already?x"),
+        ] {
+            let mut uri = input.parse::<Uri>()?;
+            origin_form(&mut uri);
+            assert_eq!(uri.to_string(), expected, "input {input}");
+        }
         Ok(())
     }
 

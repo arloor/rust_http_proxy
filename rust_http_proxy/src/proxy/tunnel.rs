@@ -50,7 +50,16 @@ pub(super) async fn dial_timed_tunnel(target: &str, ipv6_first: Option<bool>) ->
     Ok(stream)
 }
 
-pub(super) fn log_tunnel_path(
+/// 直连 CONNECT 目标，流量按 `access_label` 计数。
+pub(super) async fn dial_direct_tunnel(
+    kind: &str, access_label: AccessLabel, client_socket_addr: SocketAddr, ipv6_first: Option<bool>,
+) -> io::Result<CounterIO<TcpStream, LabelImpl<AccessLabel>>> {
+    let target_stream = dial_timed_tunnel(&access_label.target, ipv6_first).await?;
+    log_tunnel_path(kind, &access_label, client_socket_addr, target_stream.peer_addr());
+    Ok(CounterIO::new(target_stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label)))
+}
+
+fn log_tunnel_path(
     kind: &str, access_label: &AccessLabel, client_socket_addr: SocketAddr, peer_addr: io::Result<SocketAddr>,
 ) {
     debug!(
@@ -108,9 +117,6 @@ where
     let mut client_io = client_io;
     let timed_target_io = TimeoutIO::new(target_io, crate::IDLE_TIMEOUT);
     pin!(timed_target_io);
-    // https://github.com/sfackler/tokio-io-timeout/issues/12
-    // timed_target_io.as_mut() // 一定要as_mut()，否则会move所有权
-    // ._set_timeout_pinned(Duration::from_secs(crate::IDLE_SECONDS));
     let (_from_client, _from_server) = tokio::io::copy_bidirectional(&mut client_io, &mut timed_target_io).await?;
     Ok(())
 }

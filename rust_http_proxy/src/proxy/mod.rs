@@ -18,8 +18,8 @@ pub use labels::{AccessLabel, ReqLabels, ReverseProxyReqLabel, TunnelHandshakeLa
 
 pub(crate) use connect::{
     EitherTlsStream, HttpClientStream, build_tls_connector_with_http_alpn, build_tls_connector_with_http1_alpn,
-    build_tls_connector_with_http2_alpn, bypass_endpoint, connect_with_preference, into_bypass_stream,
+    build_tls_connector_with_http2_alpn, connect_with_preference, tls_server_name, tls_server_name_for_authority,
 };
-pub(crate) use http::SchemeHostPort;
-pub(crate) use parent_connect::{ParentConnect, complete_parent_connect};
+pub(crate) use http::{SchemeHostPort, boxed_io_body, bracket_ipv6_host, origin_form};
+pub(crate) use parent_connect::open_parent_tunnel;
 pub(crate) use tunnel::promote_websocket_upgrade;

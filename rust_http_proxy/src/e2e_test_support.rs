@@ -1,8 +1,9 @@
+use std::collections::HashSet;
 use std::io::{self, ErrorKind};
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::Parser as _;
@@ -51,33 +52,59 @@ impl RunningProxy {
 }
 
 pub(crate) async fn start_proxy(extra_args: Vec<String>) -> Result<RunningProxy, DynError> {
-    let port = unused_dual_stack_port()?;
-    let mitm_db_path = std::env::temp_dir().join(format!(
-        "rust_http_proxy_e2e_mitm_{}_{}_{:x}.sqlite3",
-        std::process::id(),
-        port,
-        rand::random::<u64>()
-    ));
-    let mut args = vec![
-        "rust_http_proxy".to_owned(),
-        "--port".to_owned(),
-        port.to_string(),
-        "--ipv6-first".to_owned(),
-        "false".to_owned(),
-        "--mitm-db-file".to_owned(),
-        mitm_db_path.to_string_lossy().into_owned(),
-    ];
-    args.extend(extra_args);
-    let param = Param::parse_from(args);
-    let (future, shutdown_tx) = create_futures(param)?;
-    let task = tokio::spawn(future);
-    wait_for_tcp(("127.0.0.1", port)).await?;
-    Ok(RunningProxy {
-        port,
-        shutdown_tx,
-        task,
-        mitm_db_path,
-    })
+    // 端口在“探测空闲 → 代理绑定”之间可能被并行测试抢走；绑定失败时任务会立即结束，换端口重试。
+    for _ in 0..5 {
+        let port = reserve_port(unused_dual_stack_port)?;
+        let mitm_db_path = std::env::temp_dir().join(format!(
+            "rust_http_proxy_e2e_mitm_{}_{}_{:x}.sqlite3",
+            std::process::id(),
+            port,
+            rand::random::<u64>()
+        ));
+        let mut args = vec![
+            "rust_http_proxy".to_owned(),
+            "--port".to_owned(),
+            port.to_string(),
+            "--ipv6-first".to_owned(),
+            "false".to_owned(),
+            "--mitm-db-file".to_owned(),
+            mitm_db_path.to_string_lossy().into_owned(),
+        ];
+        args.extend(extra_args.iter().cloned());
+        let param = Param::parse_from(args);
+        let (future, shutdown_tx) = create_futures(param)?;
+        let task = tokio::spawn(future);
+        // 先确认绑定成功再探测，否则可能连到占用该端口的其他测试服务并吞掉它的唯一 accept。
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if task.is_finished() {
+            let _ = task.await;
+            continue;
+        }
+        wait_for_tcp(("127.0.0.1", port)).await?;
+        return Ok(RunningProxy {
+            port,
+            shutdown_tx,
+            task,
+            mitm_db_path,
+        });
+    }
+    Err(io::Error::new(ErrorKind::AddrInUse, "failed to bind test proxy after 5 attempts").into())
+}
+
+static RESERVED_PORTS: LazyLock<Mutex<HashSet<u16>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// 同一进程内不重复分配端口，避免两个并行测试拿到同一个刚释放的端口。
+fn reserve_port(probe: impl Fn() -> io::Result<u16>) -> io::Result<u16> {
+    for _ in 0..64 {
+        let port = probe()?;
+        let mut reserved = RESERVED_PORTS
+            .lock()
+            .map_err(|_| io::Error::other("reserved port set poisoned"))?;
+        if reserved.insert(port) {
+            return Ok(port);
+        }
+    }
+    Err(io::Error::new(ErrorKind::AddrInUse, "no unreserved local port available"))
 }
 
 pub(crate) struct TestServer {
@@ -630,6 +657,138 @@ where
     Ok(buf)
 }
 
+pub(crate) fn header_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case(name).then_some(value.trim())
+    })
+}
+
+/// 读完整响应：优先按 Content-Length，其次按 chunked，否则读到 EOF（最多等 200ms）。
+pub(crate) async fn read_response<T>(stream: &mut T) -> io::Result<(String, Vec<u8>)>
+where
+    T: AsyncRead + Unpin,
+{
+    let head = read_http_head(stream).await?;
+    let body = read_http_body(stream, &head).await?;
+    Ok((head, body))
+}
+
+async fn read_http_body<T>(stream: &mut T, head: &str) -> io::Result<Vec<u8>>
+where
+    T: AsyncRead + Unpin,
+{
+    let lower = head.to_ascii_lowercase();
+    if let Some(length) = header_value(&lower, "content-length").and_then(|value| value.parse::<usize>().ok()) {
+        return read_exact_bytes(stream, length).await;
+    }
+    if header_value(&lower, "transfer-encoding").is_some_and(|value| value.contains("chunked")) {
+        return read_chunked_body(stream).await;
+    }
+    let mut body = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_millis(200), stream.read_to_end(&mut body)).await;
+    Ok(body)
+}
+
+async fn read_chunked_body<T>(stream: &mut T) -> io::Result<Vec<u8>>
+where
+    T: AsyncRead + Unpin,
+{
+    let mut body = Vec::new();
+    loop {
+        let size_line = read_crlf_line(stream).await?;
+        let size_hex = size_line.trim().split(';').next().unwrap_or("0");
+        let size = usize::from_str_radix(size_hex, 16).map_err(|error| {
+            io::Error::new(ErrorKind::InvalidData, format!("bad chunk size {size_line:?}: {error}"))
+        })?;
+        if size == 0 {
+            loop {
+                let trailer = read_crlf_line(stream).await?;
+                if trailer.is_empty() {
+                    break;
+                }
+            }
+            return Ok(body);
+        }
+        body.extend(read_exact_bytes(stream, size).await?);
+        let crlf = read_crlf_line(stream).await?;
+        if !crlf.is_empty() {
+            return Err(io::Error::new(ErrorKind::InvalidData, format!("chunk missing CRLF, got {crlf:?}")));
+        }
+    }
+}
+
+async fn read_crlf_line<T>(stream: &mut T) -> io::Result<String>
+where
+    T: AsyncRead + Unpin,
+{
+    let mut line = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        stream.read_exact(&mut byte).await?;
+        if byte[0] == b'\n' {
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return String::from_utf8(line).map_err(|error| io::Error::new(ErrorKind::InvalidData, error));
+        }
+        line.push(byte[0]);
+        if line.len() > 8192 {
+            return Err(io::Error::new(ErrorKind::InvalidData, "HTTP line is too long"));
+        }
+    }
+}
+
+pub(crate) async fn recv_channel(
+    step: &'static str, receiver: &mut tokio::sync::mpsc::Receiver<String>,
+) -> io::Result<String> {
+    match tokio::time::timeout(Duration::from_secs(5), receiver.recv()).await {
+        Ok(Some(value)) => Ok(value),
+        Ok(None) => Err(io::Error::new(ErrorKind::BrokenPipe, format!("{step} channel closed"))),
+        Err(_) => Err(io::Error::new(ErrorKind::TimedOut, format!("{step} timed out"))),
+    }
+}
+
+/// 读取进程内 `proxy_traffic` 计数。代理和测试在同一进程，按目标端口区分即可避免并行测试串扰。
+pub(crate) fn proxy_traffic_bytes(target: &str, username: &str, relay_over_tls: Option<bool>) -> u64 {
+    crate::METRICS
+        .proxy_traffic
+        .get_or_create(&prom_label::LabelImpl::new(crate::proxy::AccessLabel {
+            client: "127.0.0.1".to_owned(),
+            relay_over_tls,
+            target: target.to_owned(),
+            username: username.to_owned(),
+        }))
+        .get()
+}
+
+/// 计数在转发路径上异步累加，读取前短暂轮询直到达到期望值。
+pub(crate) async fn wait_for_proxy_traffic(
+    target: &str, username: &str, relay_over_tls: Option<bool>, at_least: u64,
+) -> u64 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let bytes = proxy_traffic_bytes(target, username, relay_over_tls);
+        if bytes >= at_least || tokio::time::Instant::now() >= deadline {
+            return bytes;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// 已绑定但不 listen 的端口：连接会被拒绝，且持有期间不会被其他测试复用。
+pub(crate) struct ClosedPort {
+    pub(crate) port: u16,
+    _socket: tokio::net::TcpSocket,
+}
+
+pub(crate) fn closed_local_port() -> io::Result<ClosedPort> {
+    let socket = tokio::net::TcpSocket::new_v4()?;
+    socket.bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
+    let port = socket.local_addr()?.port();
+    Ok(ClosedPort { port, _socket: socket })
+}
+
 pub(crate) fn assert_ok(response_head: &str) -> io::Result<()> {
     if response_head.starts_with("HTTP/1.1 200 ") || response_head.starts_with("HTTP/1.0 200 ") {
         Ok(())
@@ -745,7 +904,7 @@ Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\
     Ok(())
 }
 
-fn test_server_tls_config() -> Result<ServerConfig, DynError> {
+pub(crate) fn test_server_tls_config() -> Result<ServerConfig, DynError> {
     let key_pair = KeyPair::generate()?;
     let mut params = CertificateParams::new(vec!["localhost".to_owned()])?;
     params.distinguished_name.push(DnType::CommonName, "localhost");

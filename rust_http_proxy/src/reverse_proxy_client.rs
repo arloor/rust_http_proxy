@@ -5,8 +5,8 @@ use hyper::{Request, Response, body};
 use log::{debug, trace};
 
 use crate::{
-    connection_pool::{IdlePool, MAX_IDLE_HTTP1_PER_KEY, MAX_IDLE_HTTP2_PER_KEY},
-    forward_proxy_client::{DirectConnectionKey, DirectProtocol, DirectSendError, HttpConnection, check_keep_alive},
+    connection_pool::IdlePool,
+    forward_proxy_client::{DirectConnectionKey, DirectSendError, HttpConnection},
     proxy::AccessLabel,
 };
 
@@ -36,30 +36,24 @@ where
         &self, req: Request<B>, connection_key: &DirectConnectionKey, access_label: &AccessLabel,
         ipv6_first: Option<bool>,
     ) -> io::Result<Response<body::Incoming>> {
-        if let Some(connection) = self.pool.take(connection_key).await {
-            return match self
-                .try_send_on_connection(req, connection_key, access_label, connection)
-                .await
-            {
-                Ok(response) => Ok(response),
-                Err(mut error) => match error.take_request() {
-                    Some(req) => {
-                        debug!("retrying request after a reused reverse proxy connection closed before sending");
-                        let connection = HttpConnection::connect_direct(
-                            connection_key,
-                            access_label,
-                            ipv6_first,
-                            Some(crate::IDLE_TIMEOUT),
-                        )
-                        .await?;
-                        self.try_send_on_connection(req, connection_key, access_label, connection)
-                            .await
-                            .map_err(DirectSendError::into_io_error)
-                    }
-                    None => Err(error.into_io_error()),
-                },
-            };
-        }
+        let req = match self.pool.take(connection_key).await {
+            Some(connection) => {
+                match self
+                    .try_send_on_connection(req, connection_key, access_label, connection)
+                    .await
+                {
+                    Ok(response) => return Ok(response),
+                    Err(mut error) => match error.take_request() {
+                        Some(req) => {
+                            debug!("retrying request after a reused reverse proxy connection closed before sending");
+                            req
+                        }
+                        None => return Err(error.into_io_error()),
+                    },
+                }
+            }
+            None => req,
+        };
 
         let connection =
             HttpConnection::connect_direct(connection_key, access_label, ipv6_first, Some(crate::IDLE_TIMEOUT)).await?;
@@ -82,37 +76,11 @@ where
         &self, req: Request<B>, connection_key: &DirectConnectionKey, access_label: &AccessLabel,
         mut connection: HttpConnection<B>,
     ) -> Result<Response<body::Incoming>, DirectSendError<B>> {
-        let uri = req.uri().clone();
-        trace!("reverse proxy request to {access_label}: {uri}");
-
-        if let Some(cacheable) = connection.clone_for_multiplexed_cache() {
-            self.cache_connection(connection_key.clone(), cacheable).await;
-        }
-
+        trace!("reverse proxy request to {access_label}: {}", req.uri());
+        self.pool.share_if_multiplexed(connection_key, &connection).await;
         let response = connection.try_send_direct_request(req, connection_key).await?;
-        if connection.is_multiplexed() {
-            return Ok(response);
-        }
-
-        if check_keep_alive(response.version(), response.headers(), false) {
-            let client = self.clone();
-            let connection_key = connection_key.clone();
-            tokio::spawn(async move {
-                if connection.ready().await.is_ok() {
-                    client.cache_connection(connection_key, connection).await;
-                } else {
-                    debug!("reverse proxy HTTP/1.1 connection was not reusable");
-                }
-            });
-        }
+        self.pool
+            .recycle_after_response(connection_key.clone(), connection, &response);
         Ok(response)
-    }
-
-    async fn cache_connection(&self, connection_key: DirectConnectionKey, connection: HttpConnection<B>) {
-        let max_idle = match connection_key.protocol {
-            DirectProtocol::Http1 => MAX_IDLE_HTTP1_PER_KEY,
-            DirectProtocol::Http2 => MAX_IDLE_HTTP2_PER_KEY,
-        };
-        self.pool.insert_oldest(connection_key, connection, max_idle).await;
     }
 }

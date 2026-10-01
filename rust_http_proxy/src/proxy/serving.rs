@@ -49,12 +49,7 @@ impl ProxyHandler {
             // Some(username) 表示该路径命中认证前缀且已通过认证，响应需要禁止缓存
             let auth_protected = username.is_some();
             let username = username.unwrap_or_else(|| "static_serving".to_owned());
-            let traffic_label = AccessLabel {
-                client: client_socket_addr.ip().to_canonical().to_string(),
-                target: static_dir.to_string(),
-                username,
-                relay_over_tls: None,
-            };
+            let traffic_label = AccessLabel::new(client_socket_addr, static_dir, username, None);
 
             #[allow(clippy::expect_used)]
             let path = request_path.strip_prefix(location).expect("should start with location");

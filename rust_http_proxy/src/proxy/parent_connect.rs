@@ -2,7 +2,13 @@ use std::io::{self, ErrorKind};
 use std::time::Duration;
 
 use base64::Engine as _;
+use log::debug;
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader};
+
+use crate::config::ForwardBypassConfig;
+
+use super::connect::{EitherTlsStream, bypass_endpoint, connect_with_preference, into_bypass_stream};
+use super::tunnel::dial_timed_tunnel;
 
 pub(crate) struct ParentConnect<'a> {
     pub(crate) target: &'a str,
@@ -11,19 +17,87 @@ pub(crate) struct ParentConnect<'a> {
     pub(crate) password: Option<&'a str>,
 }
 
+/// 只有用户名和密码都配置时才返回 `Basic ...` 凭据。
+pub(crate) fn basic_credentials(username: Option<&str>, password: Option<&str>) -> Option<String> {
+    let (username, password) = (username?, password?);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+    Some(format!("Basic {encoded}"))
+}
+
+impl ForwardBypassConfig {
+    pub(crate) fn proxy_authorization(&self) -> Option<String> {
+        basic_credentials(self.username.as_deref(), self.password.as_deref())
+    }
+}
+
 pub(crate) fn parent_connect_request(connect: ParentConnect<'_>) -> String {
     let mut request = format!(
         "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nX-Forwarded-For: {client_ip}\r\n",
         target = connect.target,
         client_ip = connect.client_ip,
     );
-    if let (Some(username), Some(password)) = (connect.username, connect.password) {
-        let credentials = format!("{username}:{password}");
-        let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
-        request.push_str(&format!("Proxy-Authorization: Basic {encoded}\r\n"));
+    if let Some(credentials) = basic_credentials(connect.username, connect.password) {
+        request.push_str(&format!("Proxy-Authorization: {credentials}\r\n"));
     }
     request.push_str("\r\n");
     request
+}
+
+/// 失败发生在哪一步。正向 CONNECT 需要据此区分 502 和直接报错。
+pub(crate) enum ParentTunnelError {
+    Dial(io::Error),
+    Tls(io::Error),
+    Handshake(io::Error),
+}
+
+impl From<ParentTunnelError> for io::Error {
+    fn from(error: ParentTunnelError) -> Self {
+        match error {
+            ParentTunnelError::Dial(error) | ParentTunnelError::Tls(error) | ParentTunnelError::Handshake(error) => {
+                error
+            }
+        }
+    }
+}
+
+/// 拨号父代理、按需握 TLS，再发 CONNECT。`wrap` 作用在 CONNECT 之前，
+/// 因此在 `wrap` 里套上流量计数就会把握手字节一起计入。
+/// `record_dial_duration` 控制是否记录 tunnel_bypass_setup_duration。
+pub(crate) async fn open_parent_tunnel<S>(
+    config: &ForwardBypassConfig, target: &str, client_ip: &str, record_dial_duration: bool,
+    wrap: impl FnOnce(EitherTlsStream) -> S,
+) -> Result<BufReader<S>, ParentTunnelError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let endpoint = bypass_endpoint(config);
+    let tcp_stream = if record_dial_duration {
+        dial_timed_tunnel(&endpoint, config.ipv6_first).await
+    } else {
+        connect_with_preference(&endpoint, config.ipv6_first).await
+    }
+    .map_err(ParentTunnelError::Dial)?;
+    debug!(
+        "[parent tunnel {client_ip} -> {target}], [true path: {endpoint} ({})]",
+        tcp_stream
+            .peer_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|_| "failed".to_owned())
+    );
+    let stream = into_bypass_stream(config, tcp_stream)
+        .await
+        .map_err(ParentTunnelError::Tls)?;
+    complete_parent_connect(
+        wrap(stream),
+        ParentConnect {
+            target,
+            client_ip,
+            username: config.username.as_deref(),
+            password: config.password.as_deref(),
+        },
+    )
+    .await
+    .map_err(ParentTunnelError::Handshake)
 }
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);

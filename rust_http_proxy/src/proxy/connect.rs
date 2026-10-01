@@ -338,6 +338,25 @@ pub(crate) fn bypass_endpoint(config: &ForwardBypassConfig) -> String {
     format!("{}:{}", config.host, config.port)
 }
 
+/// rustls 只接受不带方括号的 IP 字面量，`[::1]` 这类 URI 写法需要先去掉括号。
+pub(crate) fn tls_server_name(host: &str) -> io::Result<ServerName<'static>> {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    ServerName::try_from(host)
+        .map(|name| name.to_owned())
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid TLS server name {host:?}: {e}")))
+}
+
+/// 从 `host:port` 形式的连接目标取 SNI，支持 `[v6]:port`。
+pub(crate) fn tls_server_name_for_authority(authority: &str) -> io::Result<ServerName<'static>> {
+    let authority = authority
+        .parse::<http::uri::Authority>()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid authority {authority:?}: {e}")))?;
+    tls_server_name(authority.host())
+}
+
 /// 连上父代理后，明文保持 TCP，HTTPS 父代理再握一次 TLS。失败时返回错误，由调用方决定是 502 还是继续向上抛。
 pub(crate) async fn into_bypass_stream(
     config: &ForwardBypassConfig, tcp_stream: TcpStream,
@@ -346,9 +365,7 @@ pub(crate) async fn into_bypass_stream(
         return Ok(EitherTlsStream::Tcp { stream: tcp_stream });
     }
     let connector = build_tls_connector();
-    let server_name = ServerName::try_from(config.host.as_str())
-        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, format!("Invalid DNS name: {}", e)))?
-        .to_owned();
+    let server_name = tls_server_name(&config.host)?;
     match connector.connect(server_name, tcp_stream).await {
         Ok(stream) => Ok(EitherTlsStream::Tls { stream }),
         Err(error) => {
@@ -388,6 +405,25 @@ impl tokio::io::AsyncWrite for EitherTlsStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tls_server_name_accepts_dns_and_bracketed_ip_literals() -> io::Result<()> {
+        assert_eq!(tls_server_name_for_authority("example.com:443")?, ServerName::try_from("example.com").unwrap());
+        assert_eq!(
+            tls_server_name_for_authority("[::1]:8443")?,
+            ServerName::IpAddress(std::net::IpAddr::from(std::net::Ipv6Addr::LOCALHOST).into())
+        );
+        assert_eq!(
+            tls_server_name("[::1]")?,
+            ServerName::IpAddress(std::net::IpAddr::from(std::net::Ipv6Addr::LOCALHOST).into())
+        );
+        assert_eq!(
+            tls_server_name_for_authority("127.0.0.1:443")?,
+            ServerName::IpAddress(std::net::IpAddr::from(std::net::Ipv4Addr::LOCALHOST).into())
+        );
+        assert_eq!(tls_server_name("bad host").unwrap_err().kind(), ErrorKind::InvalidInput);
+        Ok(())
+    }
 
     #[test]
     fn unspecified_address_family_follows_first_dns_result() -> Result<(), std::net::AddrParseError> {

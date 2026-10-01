@@ -11,14 +11,13 @@ use hyper::{
     body::{Bytes, Incoming},
     header::HeaderValue,
 };
-use io_x::CounterIO;
 use log::{debug, info, warn};
 use prom_label::LabelImpl;
 
 use crate::{
     METRICS,
     config::ForwardBypassConfig,
-    forward_proxy_client::{DirectProtocol, ForwardProxyClient},
+    forward_proxy_client::{DirectProtocol, ForwardProxyClient, Route},
     hyper_x::CounterBody,
     ip_x::SocketAddrFormat,
     location::{BuiltUpstreamRequest, build_upstream_req},
@@ -26,7 +25,6 @@ use crate::{
     mitm_manager::{MitmManager, RecordMetadata, ResponseHead, headers_json, version_label},
     mitm_rules::{StubTrace, apply_headers},
     proxy::{
-        connect::HttpClientStream,
         http::{SchemeHostPort, full_body, get_client_ip, is_websocket_upgrade, origin_form},
         labels::AccessLabel,
         tunnel::promote_websocket_upgrade,
@@ -48,16 +46,22 @@ pub(super) struct MitmRequestContext {
     pub(super) manager: Arc<MitmManager>,
 }
 
+impl MitmRequestContext {
+    fn route<'a>(&'a self, client_ip: &'a str) -> Route<'a> {
+        match self.forward_bypass.as_ref() {
+            Some(config) => Route::ViaParent { config, client_ip },
+            None => Route::Direct {
+                ipv6_first: self.ipv6_first,
+            },
+        }
+    }
+}
+
 pub(super) async fn handle_mitm_request(
     mut req: Request<Incoming>, mitm_proxy_client: ForwardProxyClient<BoxBody<Bytes, io::Error>>,
     client_socket_addr: SocketAddr, target: String, username: String, context: MitmRequestContext,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
-    let access_label = AccessLabel {
-        client: client_socket_addr.ip().to_canonical().to_string(),
-        target,
-        username,
-        relay_over_tls: Some(true),
-    };
+    let access_label = AccessLabel::new(client_socket_addr, target, username, Some(true));
     let is_websocket = is_websocket_upgrade(&req);
     let request_authority = request_authority(&req, &access_label.target);
     mod_mitm_proxy_req(&mut req, &request_authority)?;
@@ -178,39 +182,10 @@ pub(super) async fn handle_mitm_request(
 
     let client_ip = get_client_ip(&req, client_socket_addr);
     let req = map_mitm_request_body(req, context.manager.clone(), record_id.clone());
-    let response_result = if let Some(forward_bypass) = context.forward_bypass.as_ref() {
-        mitm_proxy_client
-            .send_request_via_forward_bypass(
-                req,
-                &access_label,
-                forward_bypass,
-                &client_ip,
-                |stream: HttpClientStream, access_label: AccessLabel| {
-                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-                },
-            )
-            .await
-    } else {
-        mitm_proxy_client
-            .send_request(
-                req,
-                &access_label,
-                context.ipv6_first,
-                |stream: HttpClientStream, access_label: AccessLabel| {
-                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-                },
-            )
-            .await
-    };
-    let mut resp = match response_result {
-        Ok(response) => response,
-        Err(error) => {
-            if let Some(id) = record_id.as_ref() {
-                context.manager.record_error(id, error.to_string());
-            }
-            return Err(error);
-        }
-    };
+    let mut resp = mitm_proxy_client
+        .send_request(req, &access_label, context.route(&client_ip))
+        .await
+        .map_err(|error| record_mitm_error(&context.manager, record_id.as_deref(), error))?;
     if let Some(trace) = stub_trace.as_ref() {
         apply_headers(resp.headers_mut(), &trace.response_headers);
     }
@@ -364,39 +339,10 @@ async fn handle_mitm_websocket_upgrade(
     debug!("[mitm] WebSocket upgrade request to {}", access_label.target);
     let client_upgrade = hyper::upgrade::on(&mut req);
     let req = map_mitm_request_body(req, context.manager.clone(), record_id.clone());
-    let response_result = if let Some(forward_bypass) = context.forward_bypass.as_ref() {
-        mitm_proxy_client
-            .send_request_via_forward_bypass_http1_only(
-                req,
-                &access_label,
-                forward_bypass,
-                &client_ip,
-                |stream: HttpClientStream, access_label: AccessLabel| {
-                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-                },
-            )
-            .await
-    } else {
-        mitm_proxy_client
-            .send_request_http1_only(
-                req,
-                &access_label,
-                context.ipv6_first,
-                |stream: HttpClientStream, access_label: AccessLabel| {
-                    CounterIO::new(stream, METRICS.proxy_traffic.clone(), LabelImpl::new(access_label))
-                },
-            )
-            .await
-    };
-    let mut upstream_response = match response_result {
-        Ok(response) => response,
-        Err(error) => {
-            if let Some(id) = record_id.as_ref() {
-                context.manager.record_error(id, error.to_string());
-            }
-            return Err(error);
-        }
-    };
+    let mut upstream_response = mitm_proxy_client
+        .send_upgrade_request(req, &access_label, context.route(&client_ip))
+        .await
+        .map_err(|error| record_mitm_error(&context.manager, record_id.as_deref(), error))?;
     if let Some(trace) = trace {
         apply_headers(upstream_response.headers_mut(), &trace.response_headers);
     }
@@ -471,7 +417,7 @@ fn mod_mitm_proxy_req<B>(req: &mut Request<B>, request_authority: &str) -> io::R
         req.headers_mut().insert(HOST, host_header);
     }
     if req.uri().scheme().is_some() || req.uri().authority().is_some() {
-        origin_form(req.uri_mut())?;
+        origin_form(req.uri_mut());
     }
     Ok(())
 }

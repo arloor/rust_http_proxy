@@ -37,6 +37,20 @@ pub struct NetDirectionLabel {
     pub direction: &'static str,
 }
 
+impl AccessLabel {
+    pub(crate) fn new(
+        client: std::net::SocketAddr, target: impl Into<String>, username: impl Into<String>,
+        relay_over_tls: Option<bool>,
+    ) -> Self {
+        Self {
+            client: client.ip().to_canonical().to_string(),
+            relay_over_tls,
+            target: target.into(),
+            username: username.into(),
+        }
+    }
+}
+
 impl Display for AccessLabel {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} -> {}", self.client, self.target)

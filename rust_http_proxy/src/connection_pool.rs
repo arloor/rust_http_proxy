@@ -129,16 +129,6 @@ where
         }
         queue.push_back((connection, Instant::now()));
     }
-
-    /// 队列长度达到上限时，从队头丢掉最早的连接，不区分类别。
-    pub(crate) async fn insert_oldest(&self, key: K, connection: C, max_idle: usize) {
-        let mut cache = self.cache.lock().await;
-        let queue = cache.entry(key).or_insert_with(VecDeque::new);
-        while queue.len() >= max_idle {
-            queue.pop_front();
-        }
-        queue.push_back((connection, Instant::now()));
-    }
 }
 
 #[cfg(test)]
@@ -222,10 +212,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oldest_eviction_drops_the_front_of_the_queue() {
+    async fn same_class_eviction_drops_the_oldest_connection() {
         let pool = IdlePool::<String, FakeConn>::without_cleanup();
-        pool.insert_oldest("origin".to_owned(), conn(1), 1).await;
-        pool.insert_oldest("origin".to_owned(), conn(2), 1).await;
+        pool.insert_same_class("origin".to_owned(), conn(1), 1, |_| true).await;
+        pool.insert_same_class("origin".to_owned(), conn(2), 1, |_| true).await;
 
         let kept = pool.take(&"origin".to_owned()).await.expect("newest connection");
         assert_eq!(kept.class, 2);
@@ -235,7 +225,7 @@ mod tests {
     #[tokio::test]
     async fn take_skips_closed_or_unready_connections() {
         let pool = IdlePool::<String, FakeConn>::without_cleanup();
-        pool.insert_oldest(
+        pool.insert_same_class(
             "origin".to_owned(),
             FakeConn {
                 closed: true,
@@ -243,9 +233,10 @@ mod tests {
                 class: 1,
             },
             5,
+            |_| true,
         )
         .await;
-        pool.insert_oldest(
+        pool.insert_same_class(
             "origin".to_owned(),
             FakeConn {
                 closed: false,
@@ -253,9 +244,10 @@ mod tests {
                 class: 2,
             },
             5,
+            |_| true,
         )
         .await;
-        pool.insert_oldest("origin".to_owned(), conn(3), 5).await;
+        pool.insert_same_class("origin".to_owned(), conn(3), 5, |_| true).await;
 
         let usable = pool.take(&"origin".to_owned()).await.expect("ready connection");
         assert_eq!(usable.class, 3);

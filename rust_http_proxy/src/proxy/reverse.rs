@@ -5,8 +5,7 @@ use std::{
 };
 
 use axum::extract::Request;
-use http::{Uri, header::LOCATION};
-use http_body_util::BodyExt;
+use http::header::LOCATION;
 use hyper::{body::Incoming, http};
 use log::{info, warn};
 use prom_label::LabelImpl;
@@ -24,7 +23,7 @@ use crate::{
 
 use super::{
     handler::{InterceptResultAdapter, ProxyHandler},
-    http::{LocationAccess, SchemeHostPort, authorize_location, is_websocket_upgrade},
+    http::{LocationAccess, SchemeHostPort, authorize_location, boxed_io_body, is_websocket_upgrade},
     labels::{AccessLabel, ReverseProxyReqLabel},
 };
 
@@ -35,16 +34,6 @@ static ALL_REVERSE_PROXY_REQ: LazyLock<LabelImpl<ReverseProxyReqLabel>> = LazyLo
         upstream: "all".to_string(),
     })
 });
-
-#[allow(unused)]
-fn reverse_proxy_label_fn(uri: &Uri) -> LabelImpl<AccessLabel> {
-    LabelImpl::new(AccessLabel {
-        client: "reverse_proxy".to_owned(),
-        target: uri.authority().map(|a| a.to_string()).unwrap_or_default(),
-        username: "reverse_proxy".to_owned(),
-        relay_over_tls: None,
-    })
-}
 
 impl ProxyHandler {
     #[allow(clippy::too_many_arguments)]
@@ -71,12 +60,12 @@ impl ProxyHandler {
                 request.headers_mut().remove(http::header::AUTHORIZATION);
             }
             // 创建流量统计标签
-            let traffic_label = AccessLabel {
-                client: client_socket_addr.ip().to_canonical().to_string(),
-                target: upstream.url_base.clone(),
-                username: authenticated_username.unwrap_or_else(|| "reverse_proxy".to_owned()),
-                relay_over_tls: None,
-            };
+            let traffic_label = AccessLabel::new(
+                client_socket_addr,
+                upstream.url_base.clone(),
+                authenticated_username.unwrap_or_else(|| "reverse_proxy".to_owned()),
+                None,
+            );
 
             // 先检测是否是 WebSocket 升级请求（在 request 被消费之前）
             let is_websocket = is_websocket_upgrade(&request);
@@ -137,9 +126,11 @@ impl ProxyHandler {
                 &self.reverse_proxy_http1_client
             };
             let upstream_req = upstream_req.map(|body| {
-                CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label.clone()))
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
-                    .boxed()
+                boxed_io_body(CounterBody::new(
+                    body,
+                    METRICS.proxy_traffic.clone(),
+                    LabelImpl::new(traffic_label.clone()),
+                ))
             });
             let upstream_req_method = upstream_req.method().clone();
             let upstream_req_uri = upstream_req.uri().clone();
@@ -175,9 +166,11 @@ impl ProxyHandler {
                     );
 
                     Ok(resp.map(|body| {
-                        CounterBody::new(body, METRICS.proxy_traffic.clone(), LabelImpl::new(traffic_label))
-                            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
-                            .boxed()
+                        boxed_io_body(CounterBody::new(
+                            body,
+                            METRICS.proxy_traffic.clone(),
+                            LabelImpl::new(traffic_label),
+                        ))
                     }))
                 }
                 Err(e) => {
