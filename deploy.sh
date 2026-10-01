@@ -156,8 +156,6 @@ fi
 
 kubectl rollout restart ds/proxy
 kubectl rollout status ds/proxy
-kubectl --context ecs rollout restart ds/proxy
-kubectl --context ecs rollout status ds/proxy
 
 hosts=(
     bwg.arloor.dev
