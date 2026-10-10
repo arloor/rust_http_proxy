@@ -154,11 +154,18 @@ pub(crate) fn origin_form(uri: &mut Uri) {
 
 pub(super) fn check_static_basic_auth(
     headers: &HeaderMap, request_path: &str, basic_auth: &HashMap<String, String>, basic_auth_path_prefixes: &[String],
+    static_serving: bool,
 ) -> Result<Option<String>, io::Error> {
-    if basic_auth_path_prefixes
-        .iter()
-        .any(|path_prefix| request_path.starts_with(path_prefix))
-    {
+    let request_path = percent_encoding::percent_decode_str(request_path)
+        .decode_utf8()
+        .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
+    if basic_auth_path_prefixes.iter().any(|path_prefix| {
+        if static_serving {
+            crate::path_security::static_prefix_matches(&request_path, path_prefix)
+        } else {
+            request_path.starts_with(path_prefix)
+        }
+    }) {
         return axum_handler::check_auth(headers, http::header::AUTHORIZATION, basic_auth);
     }
 
@@ -176,7 +183,13 @@ pub(super) fn authorize_location(
     auth: &LocationAuth, scenario: &str,
 ) -> io::Result<LocationAccess> {
     allow_cidrs.check_serving_control(client_socket_addr)?;
-    match check_static_basic_auth(headers, request_path, &auth.basic_auth, &auth.basic_auth_path_prefixes) {
+    match check_static_basic_auth(
+        headers,
+        request_path,
+        &auth.basic_auth,
+        &auth.basic_auth_path_prefixes,
+        scenario == "static",
+    ) {
         Ok(username) => Ok(LocationAccess::Allowed(username)),
         Err(error) => {
             warn!(

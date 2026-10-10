@@ -102,8 +102,30 @@ impl ProxyHandler {
     }
 
     pub async fn handle(
-        &self, req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
+        &self, mut req: Request<hyper::body::Incoming>, client_socket_addr: SocketAddr,
     ) -> Result<InterceptResultAdapter, io::Error> {
+        let is_forward = req.method() == Method::CONNECT
+            || (matches!(req.version(), Version::HTTP_10 | Version::HTTP_11) && req.uri().host().is_some());
+        if !is_forward {
+            let path = match crate::path_security::normalize_path(req.uri().path()) {
+                Ok(path) => path,
+                Err(_) => {
+                    return Ok(InterceptResultAdapter::Return(super::http::text_response(
+                        http::StatusCode::BAD_REQUEST,
+                        "Invalid request path",
+                    )));
+                }
+            };
+            if let std::borrow::Cow::Owned(path) = path {
+                let path_and_query = match req.uri().query() {
+                    Some(query) => format!("{path}?{query}"),
+                    None => path,
+                };
+                let mut parts = req.uri().clone().into_parts();
+                parts.path_and_query = Some(path_and_query.parse().map_err(io::Error::other)?);
+                *req.uri_mut() = http::Uri::from_parts(parts).map_err(io::Error::other)?;
+            }
+        }
         // 确定服务类型
         let service_type = self.determine_service_type(&req)?;
 
@@ -138,9 +160,12 @@ impl ProxyHandler {
                     .get(DEFAULT_HOST));
 
                 match location_config_of_host.and_then(|locations| {
-                    locations
-                        .iter()
-                        .find(|&ele| req.uri().path().starts_with(ele.location()))
+                    locations.iter().find(|&ele| match ele {
+                        LocationConfig::Serving { .. } => {
+                            crate::path_security::static_prefix_matches(req.uri().path(), ele.location())
+                        }
+                        LocationConfig::ReverseProxy { .. } => req.uri().path().starts_with(ele.location()),
+                    })
                 }) {
                     Some(LocationConfig::ReverseProxy {
                         location,

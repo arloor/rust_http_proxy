@@ -31,12 +31,15 @@ mod mitm_rules;
 #[cfg(test)]
 mod mitm_stub_e2e_tests;
 mod mitm_web;
+mod path_security;
 mod proxy;
 #[cfg(test)]
 mod reuse_regression_e2e_tests;
 mod reverse_proxy_client;
 #[cfg(test)]
 mod reverse_proxy_e2e_tests;
+#[cfg(test)]
+mod security_regression_e2e_tests;
 mod static_serve;
 #[cfg(test)]
 mod traffic_regression_e2e_tests;

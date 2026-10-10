@@ -26,12 +26,11 @@ api.example.com:
 
 反向代理 location 的 `basic_auth_users` 和 `basic_auth_path_prefixes` 语义与[静态文件托管](static-file-serving.md)一致。认证使用客户端请求的 `Authorization: Basic ...`；对于命中受保护路径的请求，该请求头在认证后会被移除，不会透传给 upstream。未启用认证或未命中受保护路径时，保持原有请求头透传行为。
 
-反向代理到上游的请求url构建方式如下：
+路由和认证前会解码路径中的百分号编码非保留字符，例如 `/api/%70rivate` 按 `/api/private` 处理。`.`/`..` 路径段、重复分隔符、反斜线和编码后的分隔符等歧义路径返回 `400`，不会连接 upstream。查询参数保持原样。`/https://host/path` 便捷代理中的协议分隔符保留。
 
-```rust
-let remaining = path_and_query.get(location.len()..).ok_or("location 不匹配请求路径")?;
-let upstream_url = upstream.url_base.clone() + remaining;
-```
+配置的 `location` 应使用规范路径（例如 `/api/`，而非 `/%61pi/` 或 `/./api/`），保留的百分号编码统一使用大写十六进制，否则启动失败。请求路径中的小写十六进制编码会自动规范化。认证用户列表中任何格式错误的条目也会导致启动失败。
+
+上游 URL 通过替换 `url_base` 的路径构建：移除请求的 `location` 前缀，将剩余路径与查询参数追加到基础路径，必要时补齐开头的 `/`。请求后缀不会改变配置的主机、端口或 TLS SNI。例如 `/api/item?q=1` 配合 `location: /api/` 和 `url_base: https://backend.example/base/`，转发到 `https://backend.example/base/item?q=1`。
 
 ## upstream 配置项说明
 

@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     io::{self, ErrorKind},
     net::SocketAddr,
 };
@@ -34,12 +33,15 @@ impl ProxyHandler {
             let raw_path = req.uri().path();
             let request_path = percent_decode_str(raw_path)
                 .decode_utf8()
-                .unwrap_or(Cow::from(raw_path));
+                .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
+            if !crate::path_security::valid_static_path(&request_path) {
+                return static_serve::not_found().map_err(io::Error::other);
+            }
             let username = match authorize_location(
                 &config.allow_cidrs,
                 client_socket_addr,
                 req.headers(),
-                request_path.as_ref(),
+                raw_path,
                 auth,
                 "static",
             )? {
@@ -51,9 +53,11 @@ impl ProxyHandler {
             let username = username.unwrap_or_else(|| "static_serving".to_owned());
             let traffic_label = AccessLabel::new(client_socket_addr, static_dir, username, None);
 
-            #[allow(clippy::expect_used)]
-            let path = request_path.strip_prefix(location).expect("should start with location");
-            let path = "/".to_string() + path;
+            let path = raw_path
+                .get(location.len()..)
+                .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "invalid static location prefix"))?;
+            let path = percent_decode_str(path).decode_utf8().map_err(io::Error::other)?;
+            let path = "/".to_string() + &path;
             let resp =
                 static_serve::serve_http_request(&req, client_socket_addr, &path, static_dir, config, auth_protected)
                     .await

@@ -1,5 +1,9 @@
 # 命令行参数
 
+`--users`、`--mitm-users`、`--static-auth-users` 必须使用非空的 `username:password`；密码允许包含冒号。任意无效用户或 `--allow-serving-network` CIDR 都会导致启动失败，即使同一列表中存在其他有效条目。启动日志只记录认证用户数量，不记录密码或 Basic token。
+
+使用 `--forward-bypass-url` 时，发往父代理的请求会移除客户端的 `Proxy-Authorization`，只使用该父代理 URL 配置的凭据；未配置父代理凭据时不发送此头。
+
 `rust_http_proxy` 的全部命令行参数如下（`rust_http_proxy --help` 输出）：
 
 ```shell

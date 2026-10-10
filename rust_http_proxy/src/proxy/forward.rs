@@ -272,15 +272,10 @@ impl ProxyHandler {
 
 /// 交给父代理的普通请求：换上父代理凭据，Host 改为父代理地址。
 fn prepare_bypass_http_req<B>(req: &mut Request<B>, bypass: &ForwardBypassConfig) -> io::Result<()> {
+    req.headers_mut().remove(http::header::PROXY_AUTHORIZATION);
     if let Some(credentials) = bypass.proxy_authorization() {
         let value = HeaderValue::from_str(&credentials).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-        if req
-            .headers_mut()
-            .insert(http::header::PROXY_AUTHORIZATION, value)
-            .is_some()
-        {
-            info!("replace client Proxy-Authorization header with forward bypass credentials");
-        }
+        req.headers_mut().insert(http::header::PROXY_AUTHORIZATION, value);
     }
     let host_header =
         HeaderValue::from_str(&bypass_endpoint(bypass)).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
@@ -323,6 +318,42 @@ fn mod_http1_proxy_req<B>(req: &mut Request<B>) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn security_parent_requests_never_keep_client_proxy_credentials() -> Result<(), crate::DynError> {
+        for parent_user in [None, Some("parent-user".to_owned())] {
+            let bypass = ForwardBypassConfig {
+                host: "parent.example".to_owned(),
+                port: 3128,
+                is_https: false,
+                username: parent_user,
+                password: Some("parent-password".to_owned()),
+                ipv6_first: None,
+            };
+            let mut req = Request::builder()
+                .uri("http://origin.example/item?q=1")
+                .header(http::header::PROXY_AUTHORIZATION, "Basic client-secret")
+                .header(http::header::AUTHORIZATION, "Bearer origin-token")
+                .body(())?;
+            req.headers_mut()
+                .append(http::header::PROXY_AUTHORIZATION, HeaderValue::from_static("Basic second-secret"));
+            prepare_bypass_http_req(&mut req, &bypass)?;
+            let expected = bypass.proxy_authorization();
+            assert_eq!(
+                req.headers()
+                    .get(http::header::PROXY_AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok()),
+                expected.as_deref()
+            );
+            assert_eq!(
+                req.headers().get_all(http::header::PROXY_AUTHORIZATION).iter().count(),
+                usize::from(expected.is_some())
+            );
+            assert_eq!(req.headers().get(http::header::AUTHORIZATION).unwrap(), "Bearer origin-token");
+            assert_eq!(req.uri().to_string(), "http://origin.example/item?q=1");
+        }
+        Ok(())
+    }
 
     fn rewritten(uri: &str) -> Result<Request<()>, crate::DynError> {
         let mut req = Request::builder()

@@ -274,13 +274,14 @@ impl TryFrom<Param> for Config {
                 ipv6_first: param.ipv6_first,
             }
         });
-        let basic_auth = parse_basic_auth_users(param.users);
+        let basic_auth = parse_basic_auth_users(param.users).map_err(|e| format!("--users: {e}"))?;
         let mitm_basic_auth = if param.mitm_users.is_empty() {
             basic_auth.clone()
         } else {
-            parse_basic_auth_users(param.mitm_users)
+            parse_basic_auth_users(param.mitm_users).map_err(|e| format!("--mitm-users: {e}"))?
         };
-        let static_basic_auth = parse_basic_auth_users(param.static_auth_users.clone());
+        let static_basic_auth =
+            parse_basic_auth_users(param.static_auth_users.clone()).map_err(|e| format!("--static-auth-users: {e}"))?;
         if !param.static_auth_path_prefix.is_empty() && static_basic_auth.is_empty() {
             return Err(
                 "--static-auth-path-prefix requires at least one valid --static-auth-users username:password".into()
@@ -321,17 +322,11 @@ impl TryFrom<Param> for Config {
             .unwrap_or_else(|| PathBuf::from(&param.log_dir).join("mitm.sqlite3"));
 
         let mut allowed_networks = Vec::new();
-        if !param.allow_serving_network.is_empty() {
-            for network_str in &param.allow_serving_network {
-                match parse_ip_network(network_str) {
-                    Ok(network) => {
-                        allowed_networks.push(network);
-                    }
-                    Err(e) => {
-                        warn!("Invalid network CIDR format: {network_str} - {e}");
-                    }
-                }
-            }
+        for network_str in &param.allow_serving_network {
+            allowed_networks.push(
+                parse_ip_network(network_str)
+                    .map_err(|e| format!("--allow-serving-network: invalid CIDR {network_str:?}: {e}"))?,
+            );
         }
 
         Ok(Config {
@@ -360,38 +355,43 @@ impl TryFrom<Param> for Config {
     }
 }
 
-pub(crate) fn parse_basic_auth_users(raw_users: Vec<String>) -> HashMap<String, String> {
+pub(crate) fn parse_basic_auth_users(raw_users: Vec<String>) -> Result<HashMap<String, String>, &'static str> {
     let mut basic_auth = HashMap::new();
     for raw_user in raw_users {
-        let mut user = raw_user.split(':');
-        let username = user.next().unwrap_or("").to_string();
-        let password = user.next().unwrap_or("").to_string();
-        if !username.is_empty() && !password.is_empty() {
-            let base64 = general_purpose::STANDARD.encode(raw_user);
-            basic_auth.insert(format!("Basic {base64}"), username);
+        let Some((username, password)) = raw_user.split_once(':') else {
+            return Err("expected username:password with a non-empty username and password");
+        };
+        if username.is_empty() || password.is_empty() {
+            return Err("expected username:password with a non-empty username and password");
         }
+        let base64 = general_purpose::STANDARD.encode(&raw_user);
+        basic_auth.insert(format!("Basic {base64}"), username.to_owned());
     }
-    basic_auth
+    Ok(basic_auth)
 }
 
-pub(crate) fn normalize_static_auth_path_prefixes(path_prefixes: Vec<String>) -> Vec<String> {
+pub(crate) fn normalize_static_auth_path_prefixes(path_prefixes: Vec<String>) -> Result<Vec<String>, &'static str> {
     let mut normalized = Vec::new();
     for raw_path_prefix in path_prefixes {
         let raw_path_prefix = raw_path_prefix.trim();
         if raw_path_prefix.is_empty() {
-            warn!("skip empty static auth path prefix");
-            continue;
+            return Err("auth path prefix must not be empty");
         }
         let path_prefix = if raw_path_prefix.starts_with('/') {
             raw_path_prefix.to_string()
         } else {
             format!("/{raw_path_prefix}")
         };
+        let path_prefix = crate::path_security::normalize_path(&path_prefix)?;
+        let path_prefix = percent_encoding::percent_decode_str(&path_prefix)
+            .decode_utf8()
+            .map_err(|_| "invalid auth path prefix UTF-8")?
+            .into_owned();
         if !normalized.contains(&path_prefix) {
             normalized.push(path_prefix);
         }
     }
-    normalized
+    Ok(normalized)
 }
 
 /// Accept both `::1/128` and URL-style `[::1]/128`.
@@ -465,8 +465,8 @@ fn log_config(config: &Config) {
     if let Some(host) = config.host {
         info!("listen host is {host}");
     }
-    info!("basic auth is {:?}", config.basic_auth);
-    info!("mitm basic auth is {:?}", config.mitm_basic_auth);
+    info!("basic auth user count: {}", config.basic_auth.len());
+    info!("mitm basic auth user count: {}", config.mitm_basic_auth.len());
     if !config.location_specs.locations.is_empty() {
         info!("location configs: ");
     }
@@ -498,6 +498,93 @@ fn log_config(config: &Config) {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+
+    #[test]
+    fn security_auth_configuration_preserves_valid_passwords_and_paths() {
+        let auth = parse_basic_auth_users(vec!["alice:one:two".into()]).unwrap();
+        assert_eq!(
+            auth.get(&format!("Basic {}", general_purpose::STANDARD.encode("alice:one:two"))),
+            Some(&"alice".to_owned())
+        );
+        assert_eq!(
+            normalize_static_auth_path_prefixes(vec!["%70rivate".into(), "/中文".into()]).unwrap(),
+            ["/private", "/中文"]
+        );
+        for prefix in ["", "/./private", "//private", "/private%2fsecret"] {
+            assert!(normalize_static_auth_path_prefixes(vec![prefix.into()]).is_err(), "{prefix}");
+        }
+    }
+
+    #[test]
+    fn security_rejects_invalid_auth_users_without_disclosing_credentials() {
+        for option in ["--users", "--mitm-users", "--static-auth-users"] {
+            for invalid in ["missing-password", ":secret-fixture", "alice:"] {
+                let mut args = vec!["proxy", option, invalid];
+                if option == "--static-auth-users" {
+                    args.extend(["--web-content-path", "/unused"]);
+                }
+                let result = Config::try_from(Param::parse_from(args));
+                assert!(result.is_err(), "{option} must reject malformed credentials");
+                let error = result.err().unwrap().to_string();
+                assert!(!error.contains("secret-fixture"));
+            }
+        }
+    }
+
+    #[test]
+    fn security_rejects_mixed_valid_and_invalid_users() {
+        let param = Param::parse_from(["proxy", "--users", "alice:valid", "--users", "invalid"]);
+        assert!(Config::try_from(param).is_err());
+    }
+
+    #[test]
+    fn security_rejects_invalid_networks_even_alongside_valid_ones() {
+        for networks in [vec!["invalid-cidr"], vec!["127.0.0.1/32", "10.0.0.0/99"]] {
+            let mut args = vec!["proxy"];
+            for network in networks {
+                args.extend(["--allow-serving-network", network]);
+            }
+            assert!(Config::try_from(Param::parse_from(args)).is_err());
+        }
+    }
+
+    #[test]
+    fn security_startup_logs_do_not_contain_authentication_secrets() -> Result<(), crate::DynError> {
+        use std::cell::RefCell;
+        thread_local! {
+            static LOGS: RefCell<Option<String>> = const { RefCell::new(None) };
+        }
+        struct Capture;
+        impl log::Log for Capture {
+            fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+                true
+            }
+            fn log(&self, record: &log::Record<'_>) {
+                LOGS.with(|logs| {
+                    if let Some(output) = logs.borrow_mut().as_mut() {
+                        use std::fmt::Write;
+                        let _ = writeln!(output, "{}", record.args());
+                    }
+                });
+            }
+            fn flush(&self) {}
+        }
+        static LOGGER: Capture = Capture;
+        log::set_logger(&LOGGER)?;
+        log::set_max_level(log::LevelFilter::Info);
+        let credentials = ["review-user:proxy-secret-fixture", "review-admin:mitm-secret-fixture"];
+        let config =
+            Config::try_from(Param::parse_from(["proxy", "--users", credentials[0], "--mitm-users", credentials[1]]))?;
+        LOGS.with(|logs| *logs.borrow_mut() = Some(String::new()));
+        log_config(&config);
+        let output = LOGS.with(|logs| logs.borrow_mut().take().unwrap());
+        assert!(!output.is_empty(), "must exercise the real startup logger");
+        for credential in credentials {
+            assert!(!output.contains(credential), "plaintext credentials were logged");
+            assert!(!output.contains(&general_purpose::STANDARD.encode(credential)), "Basic token was logged");
+        }
+        Ok(())
+    }
 
     #[test]
     fn normalize_cidr_strips_ipv6_brackets() {

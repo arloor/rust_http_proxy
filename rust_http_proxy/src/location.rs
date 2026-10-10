@@ -128,18 +128,32 @@ pub(crate) fn build_upstream_req<B>(
         Some(path_and_query) => path_and_query.as_str(),
         None => "",
     };
-    let remaining_path = path_and_query.get(location.len()..).ok_or_else(|| {
+    let remaining_path = path_and_query.strip_prefix(location).ok_or_else(|| {
         io::Error::new(
             ErrorKind::InvalidInput,
             format!("request path {path_and_query:?} does not match location {location:?}"),
         )
     })?;
-    let upstream_url = upstream.url_base.clone() + remaining_path; // upstream.url_base + 原始url去除location的部分
-
-    // 先解析 URI 以提取 authority，然后再移动 upstream_url
-    let upstream_uri = upstream_url
+    // Only replace the path. Parsing a concatenated absolute URL lets the suffix
+    // extend the configured hostname or change its port.
+    let base_uri = upstream
+        .url_base
         .parse::<Uri>()
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    let base_path = if base_uri.path() == "/" && !upstream.url_base.ends_with('/') {
+        ""
+    } else {
+        base_uri.path()
+    };
+    let path = format!("{base_path}{remaining_path}");
+    let path = if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    };
+    let mut parts = base_uri.into_parts();
+    parts.path_and_query = Some(path.parse().map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?);
+    let upstream_uri = Uri::from_parts(parts).map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
     let upstream_scheme = upstream_uri
         .scheme_str()
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "upstream URI has no scheme"))?;
@@ -531,15 +545,18 @@ pub(crate) fn parse_location_specs(
             }
             // 验证并解析 location 级 Basic 认证。
             let location_path = location_config.location().to_owned();
-            let auth = location_config.auth_mut();
-            let parsed_basic_auth = parse_basic_auth_users(auth.basic_auth_users.clone());
-            let normalized_path_prefixes =
-                normalize_static_auth_path_prefixes(std::mem::take(&mut auth.basic_auth_path_prefixes));
-            if !auth.basic_auth_users.is_empty() && parsed_basic_auth.is_empty() {
-                return Err(
-                    format!("location {location_path} requires valid basic_auth_users username:password").into()
-                );
+            let normalized_location = crate::path_security::normalize_path(&location_path)
+                .map_err(|e| format!("location {location_path}: {e}"))?;
+            if normalized_location != location_path {
+                return Err(format!("location must use its normalized path: {normalized_location}").into());
             }
+            let auth_location = percent_encoding::percent_decode_str(&location_path).decode_utf8()?;
+            let auth = location_config.auth_mut();
+            let parsed_basic_auth = parse_basic_auth_users(auth.basic_auth_users.clone())
+                .map_err(|e| format!("location {location_path} basic_auth_users: {e}"))?;
+            let normalized_path_prefixes =
+                normalize_static_auth_path_prefixes(std::mem::take(&mut auth.basic_auth_path_prefixes))
+                    .map_err(|e| format!("location {location_path} basic_auth_path_prefixes: {e}"))?;
             if parsed_basic_auth.is_empty() && !normalized_path_prefixes.is_empty() {
                 return Err(
                     format!("location {location_path} basic_auth_path_prefixes requires basic_auth_users").into()
@@ -548,11 +565,11 @@ pub(crate) fn parse_location_specs(
             if !parsed_basic_auth.is_empty() {
                 auth.basic_auth = parsed_basic_auth;
                 if normalized_path_prefixes.is_empty() {
-                    auth.basic_auth_path_prefixes.push(location_path.clone());
+                    auth.basic_auth_path_prefixes.push(auth_location.to_string());
                 } else {
                     auth.basic_auth_path_prefixes = normalized_path_prefixes
                         .iter()
-                        .map(|path_prefix| join_location_auth_path_prefix(&location_path, path_prefix))
+                        .map(|path_prefix| join_location_auth_path_prefix(&auth_location, path_prefix))
                         .collect();
                 }
             }
@@ -669,6 +686,56 @@ mod tests {
     use base64::Engine;
     use base64::engine::general_purpose;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn security_request_suffix_cannot_change_upstream_authority() -> Result<(), crate::DynError> {
+        let original = SchemeHostPort {
+            scheme: "http".into(),
+            host: "proxy.example".into(),
+            port: None,
+        };
+        for suffix in [
+            ".attacker.example/item",
+            ":8080/item",
+            "@attacker.example/item",
+            "/normal?q=1",
+            "?q=1",
+        ] {
+            let upstream = Upstream {
+                url_base: "https://allowed.example".into(),
+                version: Version::H1,
+                connect_to: None,
+                tls_server_name: None,
+                authority: None,
+                headers: None,
+            };
+            let request = Request::builder()
+                .uri(format!("/https://allowed.example{suffix}"))
+                .body(())?;
+            if let Ok(built) = build_upstream_req("/https://allowed.example", &upstream, request, &original) {
+                assert_eq!(built.connection_key.connect_to, "allowed.example:443", "suffix {suffix}");
+                assert_eq!(built.connection_key.tls_server_name.as_deref(), Some("allowed.example"));
+                assert_eq!(built.connection_key.authority, "allowed.example");
+            } else {
+                assert!(!suffix.starts_with('/') && !suffix.starts_with('?'), "normal suffix must work");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn security_location_rejects_a_malformed_user_in_a_mixed_list() -> Result<(), crate::DynError> {
+        let path = temp_config_path("mixed-invalid-users.yaml");
+        std::fs::write(
+            &path,
+            "default_host:\n  - location: /\n    static_dir: /unused\n    basic_auth_users: [alice:valid, invalid]\n",
+        )?;
+        let result =
+            parse_location_specs(&Some(path.to_string_lossy().into_owned()), &None, vec![], vec![], &mut vec![], false);
+        std::fs::remove_file(path)?;
+        assert!(result.is_err());
+        Ok(())
+    }
 
     #[test]
     fn parses_serving_location_basic_auth() -> Result<(), crate::DynError> {

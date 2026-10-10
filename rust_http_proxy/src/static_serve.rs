@@ -22,7 +22,7 @@ use prometheus_client::metrics::family::Family;
 use regex::Regex;
 use std::io;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::Path;
 use std::pin;
 use std::sync::LazyLock;
 use std::time::SystemTime;
@@ -146,29 +146,19 @@ fn extract_search_engine_from_referer(referer: &str) -> Result<String, regex::Er
 async fn serve_path(
     static_dir: &str, url_path: &str, req: &Request<impl Body>, can_gzip: bool, need_body: bool, cache_control: &str,
 ) -> Result<Response<BoxBody<Bytes, io::Error>>, Error> {
-    if String::from(url_path).contains("/..") {
+    if !crate::path_security::valid_static_path(url_path) {
         return not_found();
     }
-    // 禁止访问.git目录
-    if String::from(url_path).starts_with("/.git") {
-        return not_found();
+    let mut path = Path::new(static_dir).join(&url_path[1..]);
+    if url_path.ends_with('/') {
+        path.push("index.html");
     }
-    let path = if String::from(url_path).ends_with('/') {
-        format!("{static_dir}{url_path}index.html")
-    } else {
-        format!("{static_dir}{url_path}")
-    };
-    let mut path = PathBuf::from(path);
-    let meta = match metadata(&path).await {
+    match metadata(&path).await {
         Ok(meta) => {
-            if meta.is_file() {
-                meta
-            } else {
-                path = PathBuf::from(format!("{static_dir}{url_path}/index.html"));
-                match metadata(&path).await {
-                    Ok(m) => m,
-                    Err(_) => return not_found(),
-                }
+            if meta.is_dir() {
+                path.push("index.html");
+            } else if !meta.is_file() {
+                return not_found();
             }
         }
         Err(_) => {
@@ -177,6 +167,34 @@ async fn serve_path(
             };
             return not_found();
         }
+    }
+    // Resolve both the root and the selected index/file before checking containment.
+    // The serving tree must not be writable by untrusted users during lookup/open.
+    let root = match tokio::fs::canonicalize(static_dir).await {
+        Ok(root) => root,
+        Err(_) => return not_found(),
+    };
+    let path = match tokio::fs::canonicalize(path).await {
+        Ok(path) if path.starts_with(&root) => path,
+        _ => return not_found(),
+    };
+    let relative = match path.strip_prefix(&root) {
+        Ok(relative) => relative,
+        Err(_) => return not_found(),
+    };
+    if relative
+        .components()
+        .any(|part| part.as_os_str().to_string_lossy().eq_ignore_ascii_case(".git"))
+    {
+        return not_found();
+    }
+    let mut file = match File::open(&path).await {
+        Ok(file) => file,
+        Err(_) => return not_found(),
+    };
+    let meta = match file.metadata().await {
+        Ok(meta) if meta.is_file() => meta,
+        _ => return not_found(),
     };
 
     let last_modified: SystemTime = match meta.modified() {
@@ -206,6 +224,7 @@ async fn serve_path(
     // 判断客户端是否支持gzip
     let content_type = content_type.as_str();
     let need_gzip = can_gzip
+        && file_len != 0
         && (content_type.starts_with("text/html")
             || content_type.starts_with("text/css")
             || content_type.starts_with("application/javascript")
@@ -218,13 +237,13 @@ async fn serve_path(
         builder = builder.header(CONTENT_ENCODING, GZIP)
     };
     if !need_body {
-        return builder.body(empty_body());
+        return builder
+            .header(http::header::CONTENT_LENGTH, file_len)
+            .body(empty_body());
     }
-
-    let mut file = match File::open(path).await {
-        Ok(file) => file,
-        Err(_) => return not_found(),
-    };
+    if file_len == 0 && !req.headers().contains_key(http::header::RANGE) {
+        return builder.header(http::header::CONTENT_LENGTH, 0).body(empty_body());
+    }
 
     let (start, end, builder) = match parse_range(req.headers().get(http::header::RANGE), file_len, builder) {
         Ok((start, end, builder)) => (start, end, builder),
@@ -232,6 +251,8 @@ async fn serve_path(
             return Response::builder()
                 .status(StatusCode::RANGE_NOT_SATISFIABLE)
                 .header(http::header::SERVER, SERVER_NAME)
+                .header(http::header::CONTENT_RANGE, format!("bytes */{file_len}"))
+                .header(http::header::CACHE_CONTROL, cache_control)
                 .body(full_body(e.to_string()));
         }
     };
@@ -325,7 +346,9 @@ fn parse_range(
     range_header: Option<&HeaderValue>, file_size: u64, mut builder: Builder,
 ) -> io::Result<(u64, u64, Builder)> {
     let mut start = 0;
-    let mut end = file_size - 1;
+    let mut end = file_size
+        .checked_sub(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty file has no byte ranges"))?;
     if let Some(range_value) = range_header {
         let range_value = range_value
             .to_str()
@@ -434,6 +457,179 @@ fn decompress_string(input: &[u8]) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn security_empty_file_get_and_range_have_valid_responses() -> Result<(), crate::DynError> {
+        use clap::Parser;
+        let dir = crate::e2e_test_support::unique_temp_dir("empty_static")?;
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("empty.txt"), [])?;
+        let config = Config::try_from(crate::config::Param::parse_from(["proxy"]))?;
+        let peer = "127.0.0.1:1234".parse()?;
+        let req = Request::builder().uri("/empty.txt").body(empty_body())?;
+        let response = serve_http_request(&req, peer, "/empty.txt", &dir.to_string_lossy(), &config, false).await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.into_body().collect().await?.to_bytes().is_empty());
+        let req = Request::builder()
+            .uri("/empty.txt")
+            .header(http::header::RANGE, "bytes=0-")
+            .body(empty_body())?;
+        let response = serve_http_request(&req, peer, "/empty.txt", &dir.to_string_lossy(), &config, false).await?;
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(response.headers().get(http::header::CONTENT_RANGE).unwrap(), "bytes */0");
+        for method in [Method::GET, Method::HEAD] {
+            let req = Request::builder()
+                .method(method)
+                .uri("/empty.txt")
+                .header(http::header::ACCEPT_ENCODING, "gzip")
+                .body(empty_body())?;
+            let response = serve_http_request(&req, peer, "/empty.txt", &dir.to_string_lossy(), &config, true).await?;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[http::header::CONTENT_LENGTH], "0");
+            assert_eq!(response.headers()[http::header::CACHE_CONTROL], "private, no-store");
+            assert!(!response.headers().contains_key(http::header::CONTENT_ENCODING));
+            assert!(response.into_body().collect().await?.to_bytes().is_empty());
+        }
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn static_files_keep_gzip_range_head_and_conditional_responses() -> Result<(), crate::DynError> {
+        use clap::Parser;
+        let dir = crate::e2e_test_support::unique_temp_dir("static_response_regression")?;
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("file.txt"), "hello-world")?;
+        let config = Config::try_from(crate::config::Param::parse_from(["proxy"]))?;
+        let peer = "127.0.0.1:1234".parse()?;
+        let req = Request::builder()
+            .uri("/file.txt")
+            .header(http::header::ACCEPT_ENCODING, "gzip")
+            .body(empty_body())?;
+        let response = serve_http_request(&req, peer, "/file.txt", &dir.to_string_lossy(), &config, false).await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[http::header::CONTENT_ENCODING], "gzip");
+        let etag = response.headers()[http::header::ETAG].clone();
+        let body = response.into_body().collect().await?.to_bytes();
+        assert_eq!(decompress_string(&body)?, "hello-world");
+        let req = Request::builder()
+            .uri("/file.txt")
+            .header(http::header::RANGE, "bytes=2-5")
+            .body(empty_body())?;
+        let response = serve_http_request(&req, peer, "/file.txt", &dir.to_string_lossy(), &config, false).await?;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[http::header::CONTENT_RANGE], "bytes 2-5/11");
+        assert_eq!(response.into_body().collect().await?.to_bytes().as_ref(), b"llo-");
+        let req = Request::builder()
+            .method(Method::HEAD)
+            .uri("/file.txt")
+            .body(empty_body())?;
+        let response = serve_http_request(&req, peer, "/file.txt", &dir.to_string_lossy(), &config, false).await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[http::header::CONTENT_LENGTH], "11");
+        assert!(response.into_body().collect().await?.to_bytes().is_empty());
+        let req = Request::builder()
+            .uri("/file.txt")
+            .header(http::header::IF_NONE_MATCH, etag)
+            .body(empty_body())?;
+        let response = serve_http_request(&req, peer, "/file.txt", &dir.to_string_lossy(), &config, true).await?;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()[http::header::CACHE_CONTROL], "private, no-store");
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn security_static_junction_cannot_escape_root() -> Result<(), crate::DynError> {
+        use clap::Parser;
+        let dir = crate::e2e_test_support::unique_temp_dir("static_junction")?;
+        let root = dir.join("www");
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(&root)?;
+        std::fs::create_dir_all(&outside)?;
+        std::fs::write(outside.join("index.html"), "outside-secret")?;
+        let link = root.join("link");
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()?;
+        assert!(output.status.success(), "junction creation failed: {:?}", output);
+        let config = Config::try_from(crate::config::Param::parse_from(["proxy"]))?;
+        for path in ["/link", "/link/", "/link/index.html"] {
+            let req = Request::builder().uri(path).body(empty_body())?;
+            let response =
+                serve_http_request(&req, "127.0.0.1:1234".parse()?, path, &root.to_string_lossy(), &config, false)
+                    .await?;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+        std::fs::remove_dir(link)?;
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn security_static_git_aliases_are_not_served() -> Result<(), crate::DynError> {
+        use clap::Parser;
+        let dir = crate::e2e_test_support::unique_temp_dir("static_git_aliases")?;
+        std::fs::create_dir_all(dir.join(".git"))?;
+        std::fs::write(dir.join(".git/config"), "git-secret")?;
+        let config = Config::try_from(crate::config::Param::parse_from(["proxy"]))?;
+        for path in ["/.git/config", "/./.git/config", "//.git/config"] {
+            let req = Request::builder().uri("/").body(empty_body())?;
+            let response =
+                serve_http_request(&req, "127.0.0.1:1234".parse()?, path, &dir.to_string_lossy(), &config, false)
+                    .await?;
+            assert!(response.status().is_client_error(), "path {path}");
+        }
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn security_windows_backslash_cannot_escape_static_root() -> Result<(), crate::DynError> {
+        use clap::Parser;
+        let dir = crate::e2e_test_support::unique_temp_dir("static_traversal")?;
+        let root = dir.join("www");
+        std::fs::create_dir_all(root.join("sub"))?;
+        std::fs::write(dir.join("outside.txt"), "outside-secret")?;
+        let config = Config::try_from(crate::config::Param::parse_from(["proxy"]))?;
+        let req = Request::builder().uri("/").body(empty_body())?;
+        let response = serve_http_request(
+            &req,
+            "127.0.0.1:1234".parse()?,
+            "/sub\\..\\..\\outside.txt",
+            &root.to_string_lossy(),
+            &config,
+            false,
+        )
+        .await?;
+        std::fs::remove_dir_all(dir)?;
+        assert!(response.status().is_client_error());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn security_static_symlink_cannot_escape_root() -> Result<(), crate::DynError> {
+        use clap::Parser;
+        let dir = crate::e2e_test_support::unique_temp_dir("static_symlink")?;
+        let root = dir.join("www");
+        std::fs::create_dir_all(&root)?;
+        std::fs::write(dir.join("outside.txt"), "outside-secret")?;
+        std::os::unix::fs::symlink(dir.join("outside.txt"), root.join("link.txt"))?;
+        let config = Config::try_from(crate::config::Param::parse_from(["proxy"]))?;
+        let req = Request::builder().uri("/link.txt").body(empty_body())?;
+        let response =
+            serve_http_request(&req, "127.0.0.1:1234".parse()?, "/link.txt", &root.to_string_lossy(), &config, false)
+                .await?;
+        std::fs::remove_dir_all(dir)?;
+        assert!(response.status().is_client_error());
+        Ok(())
+    }
+
     #[test]
     fn test_extract_domain_from_url() {
         assert_eq!(
