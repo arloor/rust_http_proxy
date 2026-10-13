@@ -11,11 +11,15 @@ use tokio::task::JoinHandle;
 
 use crate::DynError;
 use crate::e2e_test_support::{
-    SSH_BANNER, WS_PAYLOAD, assert_ok, closed_local_port, connect_to_mitm_target, header_value, read_exact_bytes,
-    read_http_head, read_response, recv_channel, recv_connect_target, remove_temp_dir, start_forward_bypass_proxy,
-    start_proxy, start_tcp_banner_server, start_tcp_echo_server, start_tls_http_server, timeout_step, unique_temp_dir,
+    SSH_BANNER, WS_PAYLOAD, assert_ok, connect_to_mitm_target, header_value, read_exact_bytes, read_http_head,
+    read_response, recv_channel, recv_connect_target, remove_temp_dir, start_forward_bypass_proxy, start_proxy,
+    start_tcp_banner_server, start_tcp_echo_server, start_tls_http_server, timeout_step, unique_temp_dir,
     wait_for_proxy_traffic, write_test_ca,
 };
+
+// 目标端口 0 触发真实 TCP 连接失败；bind(0) 只会分配其他端口，避免释放端口后的抢占竞态。
+// 不要求具体 OS 错误码：这些测试验证连接失败映射到 500/502，而非 ConnectionRefused 本身。
+const UNREACHABLE_TARGET: &str = "127.0.0.1:0";
 
 const ALICE: &str = "alice:secret";
 const PARENT_USER: &str = "proxyuser";
@@ -131,12 +135,11 @@ Connection: close\r\n\
 #[tokio::test]
 async fn forward_proxy_challenges_missing_proxy_auth() -> Result<(), DynError> {
     let proxy = start_proxy(vec!["--users".to_owned(), ALICE.to_owned()]).await?;
-    let closed = closed_local_port()?;
-    let port = closed.port;
+    let target = UNREACHABLE_TARGET;
 
     let (head, body) = send_raw(
         proxy.port,
-        &format!("GET http://127.0.0.1:{port}/item HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"),
+        &format!("GET http://{target}/item HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n"),
     )
     .await?;
     assert!(head.starts_with("HTTP/1.1 407 "), "{head}");
@@ -195,8 +198,7 @@ Connection: close\r\n\
 #[tokio::test]
 async fn forward_direct_http_to_unreachable_origin_is_server_error() -> Result<(), DynError> {
     let proxy = start_proxy(Vec::new()).await?;
-    let closed = closed_local_port()?;
-    let target = format!("127.0.0.1:{}", closed.port);
+    let target = UNREACHABLE_TARGET;
 
     let (head, _) = send_raw(
         proxy.port,
@@ -211,10 +213,9 @@ async fn forward_direct_http_to_unreachable_origin_is_server_error() -> Result<(
 
 #[tokio::test]
 async fn forward_bypass_http_to_unreachable_parent_is_server_error() -> Result<(), DynError> {
-    let closed = closed_local_port()?;
     let proxy = start_proxy(vec![
         "--forward-bypass-url".to_owned(),
-        format!("http://127.0.0.1:{}", closed.port),
+        format!("http://{UNREACHABLE_TARGET}"),
     ])
     .await?;
 
@@ -284,10 +285,9 @@ async fn bypass_connect_tunnel_counts_handshake_and_payload_bytes() -> Result<()
 
 #[tokio::test]
 async fn bypass_connect_to_unreachable_parent_is_bad_gateway() -> Result<(), DynError> {
-    let closed = closed_local_port()?;
     let proxy = start_proxy(vec![
         "--forward-bypass-url".to_owned(),
-        format!("http://127.0.0.1:{}", closed.port),
+        format!("http://{UNREACHABLE_TARGET}"),
     ])
     .await?;
 

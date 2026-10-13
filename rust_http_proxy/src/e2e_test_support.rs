@@ -776,19 +776,6 @@ pub(crate) async fn wait_for_proxy_traffic(
     }
 }
 
-/// 已绑定但不 listen 的端口：连接会被拒绝，且持有期间不会被其他测试复用。
-pub(crate) struct ClosedPort {
-    pub(crate) port: u16,
-    _socket: tokio::net::TcpSocket,
-}
-
-pub(crate) fn closed_local_port() -> io::Result<ClosedPort> {
-    let socket = tokio::net::TcpSocket::new_v4()?;
-    socket.bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
-    let port = socket.local_addr()?.port();
-    Ok(ClosedPort { port, _socket: socket })
-}
-
 pub(crate) fn assert_ok(response_head: &str) -> io::Result<()> {
     if response_head.starts_with("HTTP/1.1 200 ") || response_head.starts_with("HTTP/1.0 200 ") {
         Ok(())
