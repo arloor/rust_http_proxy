@@ -1,4 +1,4 @@
-//! Persisted UI rules supplement the immutable file rules. A match selects one whole rule.
+//! Persisted UI rules supplement the immutable file rules. Header rules accumulate in order; only one response source is selected.
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use hyper::body::Bytes;
 use serde::{Deserialize, Serialize};
@@ -215,6 +215,7 @@ impl UiStubRule {
                 source: "ui".to_owned(),
                 mode: self.mode,
                 rule_id: self.id.clone(),
+                rule_ids: vec![self.id.clone()],
                 request_headers: self
                     .request_headers
                     .iter()
@@ -238,6 +239,8 @@ pub(crate) struct StubTrace {
     pub source: String,
     pub mode: RuleMode,
     pub rule_id: String,
+    #[serde(default)]
+    pub rule_ids: Vec<String>,
     pub request_headers: Vec<HeaderEdit>,
     pub response_headers: Vec<HeaderEdit>,
     pub upstream: Option<String>,
@@ -382,6 +385,79 @@ mod tests {
         ] {
             assert!(reopened.find_ui_stub("api.example.com:443", "/users/12", url).is_none());
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn headers_accumulate_and_reordering_persists() -> Result<(), crate::DynError> {
+        use crate::mitm_manager::MitmManager;
+        let dir = crate::e2e_test_support::unique_temp_dir("ordered_headers")?;
+        let db = dir.join("rules.sqlite3");
+        let manager = MitmManager::open(db.clone(), true, &[], false, 100, 1024)?;
+        let common = manager.save_stub(
+            None,
+            serde_json::from_value(serde_json::json!({
+                "mode":"mod_header", "enabled":true, "url_pattern":"https://console.example.com/api/",
+                "request_headers":[{"enabled":false,"op":"set","name":"x-env","value":"disabled"}],
+                "response_headers":[{"op":"set","name":"x-order","value":"common"}]
+            }))?,
+        )?;
+        let response = manager.save_stub(
+            None,
+            serde_json::from_value(serde_json::json!({
+                "mode":"response", "enabled":true, "authority":"console.example.com:443", "path":"/api/region",
+                "body":"mock", "status":201,
+                "request_headers":[{"op":"set","name":"x-account","value":"mock"}]
+            }))?,
+        )?;
+        let region = manager.save_stub(None, serde_json::from_value(serde_json::json!({
+            "mode":"mod_header", "enabled":true, "url_pattern":"https://console.example.com/api/region",
+            "request_headers":[{"op":"set","name":"X-Account","value":"region"}],
+            "response_headers":[{"op":"set","name":"x-order","value":"region"},{"op":"add","name":"x-order","value":"extra"}]
+        }))?)?;
+        let matched = manager
+            .find_ui_stub("console.example.com:443", "/api/region", "https://console.example.com/api/region?q=1")
+            .ok_or("missing match")?;
+        assert!(matches!(matched.action, Some(MitmStubAction::Static(_))));
+        assert_eq!(matched.trace.rule_id, response.id);
+        assert_eq!(matched.trace.rule_ids, vec![common.id.clone(), response.id.clone(), region.id.clone()]);
+        let mut headers = HeaderMap::new();
+        apply_headers(&mut headers, &matched.trace.request_headers);
+        assert_eq!(headers["x-account"], "region");
+        assert!(!headers.contains_key("x-env"));
+        apply_headers(&mut headers, &matched.trace.response_headers);
+        assert_eq!(headers.get_all("x-order").iter().count(), 2);
+        assert_eq!(headers["x-order"], "region");
+        assert!(manager.reorder_stubs(vec![common.id.clone(); 3]).is_err());
+        assert!(
+            manager
+                .reorder_stubs(vec!["unknown".into(), response.id.clone(), region.id.clone()])
+                .is_err()
+        );
+        assert!(manager.reorder_stubs(vec![]).is_err());
+        assert_eq!(manager.list_stubs()["ui"][0]["id"], common.id);
+        manager.reorder_stubs(vec![region.id.clone(), response.id.clone(), common.id.clone()])?;
+        // Editing a rule must not undo its saved order.
+        manager.save_stub(Some(region.id.clone()), region.clone())?;
+        drop(manager);
+        let reopened = MitmManager::open(db, true, &[], false, 100, 1024)?;
+        assert_eq!(reopened.list_stubs()["ui"][0]["id"], region.id);
+        let matched = reopened
+            .find_ui_stub("console.example.com:443", "/api/region", "https://console.example.com/api/region")
+            .ok_or("missing reordered match")?;
+        let mut headers = HeaderMap::new();
+        apply_headers(&mut headers, &matched.trace.request_headers);
+        assert_eq!(headers["x-account"], "mock");
+        apply_headers(&mut headers, &matched.trace.response_headers);
+        assert_eq!(headers["x-order"], "common");
+        assert_eq!(headers.get_all("x-order").iter().count(), 1);
+        let mut disabled = region.clone();
+        disabled.enabled = false;
+        reopened.save_stub(Some(region.id), disabled)?;
+        let matched = reopened
+            .find_ui_stub("console.example.com:443", "/api/region", "https://console.example.com/api/region")
+            .ok_or("missing match")?;
+        assert_eq!(matched.trace.rule_ids.len(), 2);
         Ok(())
     }
 

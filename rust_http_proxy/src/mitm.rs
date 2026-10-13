@@ -261,6 +261,7 @@ impl MitmStubSpecs {
         use crate::mitm_rules::{HeaderEdit, HeaderOperation, MatchedStub, RuleMode, StubTrace};
         let action = self.find(authority, path)?;
         let mut trace = StubTrace {
+            rule_ids: Vec::new(),
             source: "file".to_owned(),
             mode: RuleMode::Response,
             rule_id: format!("{authority}{path}"),

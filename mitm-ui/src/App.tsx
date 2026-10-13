@@ -1213,7 +1213,7 @@ function Detail({
         <button className={tab === 'request' ? 'active' : ''} onClick={() => onTabChange('request')}>Request</button>
         <button className={tab === 'response' ? 'active' : ''} onClick={() => onTabChange('response')}>Response</button>
       </div>
-      {detail.stub && <div className="stub-origin-note"><b>mitm-stub · {detail.stub.source === 'file' ? '配置文件' : 'UI 规则'}{detail.stub.mode === 'mod_header' ? ' · mod-header' : ''}</b><span>{request
+      {detail.stub && <div className="stub-origin-note"><b>mitm-stub · {detail.stub.source === 'file' ? '配置文件' : 'UI 规则'}{detail.stub.mode === 'mod_header' ? ' · mod-header' : ''}{(detail.stub.rule_ids?.length ?? 0) > 1 ? ` · ${detail.stub.rule_ids!.length} 条规则累积` : ''}</b><span>{request
         ? `${detail.stub.mode === 'upstream' ? '请求转发至替代上游；' : detail.stub.mode === 'response' ? '直接返回配置响应，未发送到上游；' : ''}${edits.length ? '下方标记的请求头由规则修改。' : '请求内容来自客户端。'}`
         : detail.stub.mode === 'response' ? 'Body 与状态码来自 Stub 覆写。' : detail.stub.mode === 'upstream' ? 'Body 与状态码来自 Stub 上游。' : 'Body 与状态码来自原始服务。'}{!request && edits.length > 0 ? ' 标记的响应头由规则修改。' : ''}</span>{detail.stub.upstream && <code>{detail.stub.upstream}</code>}{edits.length > 0 && <div className="stub-applied-headers">{edits.map((edit, i) => <span key={i}>{headerOpLabel[edit.op]} {edit.name}</span>)}</div>}</div>}
       <h3>

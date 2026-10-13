@@ -600,21 +600,63 @@ impl MitmManager {
     pub(crate) fn find_ui_stub(
         &self, authority: &str, path: &str, url: &str,
     ) -> Option<crate::mitm_rules::MatchedStub> {
-        self.ui_stubs
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .find(|rule| {
-                rule.enabled
-                    && if rule.mode == crate::mitm_rules::RuleMode::ModHeader {
-                        rule.compiled_url_pattern
-                            .as_ref()
-                            .is_some_and(|pattern| pattern.is_match(url))
-                    } else {
-                        rule.authority.eq_ignore_ascii_case(authority) && rule.path == path
-                    }
-            })
-            .map(crate::mitm_rules::UiStubRule::matched)
+        let rules = self.ui_stubs.read().unwrap_or_else(|e| e.into_inner());
+        let mut result: Option<crate::mitm_rules::MatchedStub> = None;
+        for rule in rules.iter().filter(|rule| {
+            rule.enabled
+                && if rule.mode == crate::mitm_rules::RuleMode::ModHeader {
+                    rule.compiled_url_pattern
+                        .as_ref()
+                        .is_some_and(|pattern| pattern.is_match(url))
+                } else {
+                    rule.authority.eq_ignore_ascii_case(authority) && rule.path == path
+                }
+        }) {
+            // Only the first response/upstream action wins; header-only rules keep accumulating.
+            if result.as_ref().is_some_and(|matched| matched.action.is_some())
+                && matches!(rule.mode, crate::mitm_rules::RuleMode::Response | crate::mitm_rules::RuleMode::Upstream)
+            {
+                continue;
+            }
+            let next = rule.matched();
+            if let Some(matched) = result.as_mut() {
+                if next.action.is_some() {
+                    matched.action = next.action;
+                    matched.trace.mode = next.trace.mode;
+                    matched.trace.rule_id = next.trace.rule_id;
+                    matched.trace.upstream = next.trace.upstream;
+                }
+                matched.trace.rule_ids.extend(next.trace.rule_ids);
+                matched.trace.request_headers.extend(next.trace.request_headers);
+                matched.trace.response_headers.extend(next.trace.response_headers);
+            } else {
+                result = Some(next);
+            }
+        }
+        result
+    }
+
+    pub(crate) fn reorder_stubs(&self, ids: Vec<String>) -> Result<(), ManagerError> {
+        let mut rules = self.ui_stubs.write().unwrap_or_else(|e| e.into_inner());
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        if ids.len() != rules.len() || unique.len() != ids.len() || rules.iter().any(|rule| !unique.contains(&rule.id))
+        {
+            return Err(ManagerError::Conflict("规则列表已变化或排序无效，请刷新后重试".to_owned()));
+        }
+        let mut reordered = rules.clone();
+        reordered.sort_by_key(|rule| ids.iter().position(|id| id == &rule.id));
+        let mut connection = open_connection(&self.db_path)?;
+        let transaction = connection.transaction()?;
+        // Persist row order atomically using the existing rowid ordering, including for old databases.
+        transaction.execute("DELETE FROM stub_rules", [])?;
+        for rule in &reordered {
+            let json = serde_json::to_string(rule).map_err(|e| ManagerError::Database(e.to_string()))?;
+            transaction.execute("INSERT INTO stub_rules(id, rule_json) VALUES(?1, ?2)", params![rule.id, json])?;
+        }
+        transaction.commit()?;
+        *rules = reordered;
+        self.emit("stubs", None);
+        Ok(())
     }
 
     // Called on a blocking worker: commit and publish while holding one lock so concurrent edits stay ordered.

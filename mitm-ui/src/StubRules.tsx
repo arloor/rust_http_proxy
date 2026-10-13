@@ -59,6 +59,21 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
     } catch (e) { setError((e as Error).message); editor.current?.scrollTo({ top: 0 }) }
     finally { setBusy(false) }
   }
+  const move = async (id: string, offset: number) => {
+    if (busy || filter) return
+    const ids = rules.ui.map((rule) => rule.id)
+    const index = ids.indexOf(id)
+    const target = index + offset
+    if (index < 0 || target < 0 || target >= ids.length) return
+    ;[ids[index], ids[target]] = [ids[target], ids[index]]
+    setBusy(true); setError(''); setNotice('')
+    try {
+      await api('/stubs/order', { method: 'PUT', body: JSON.stringify(ids) })
+      await reload()
+      setNotice('顺序已保存，后续请求立即生效')
+    } catch (e) { setError((e as Error).message); await reload().catch(() => {}) }
+    finally { setBusy(false) }
+  }
   const shadowed = (rule: StubRule) => rule.mode !== 'mod_header' && rules.file.some((item) => item.authority === rule.authority.trim().toLowerCase() && item.path === rule.path)
   const visible = (rule: { authority: string; path: string; url_pattern?: string }) => `${rule.authority}${rule.path}${rule.url_pattern ?? ''}`.toLowerCase().includes(filter.toLowerCase())
   return <dialog className="stub-dialog" ref={dialog}
@@ -73,7 +88,7 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
     }}
     onCancel={(event) => { event.preventDefault(); if (draft || file) choose(null); else close() }} aria-labelledby="stub-title">
     <header className="stub-dialog-head"><div><span className="stub-eyebrow">MITM STUB</span><h2 id="stub-title">请求与响应规则</h2></div><button type="button" className="stub-close" aria-label="关闭规则配置" onClick={close}>×</button></header>
-    <div className="stub-policy"><b>文件优先</b><span>文件规则优先 → UI 按创建顺序首次命中 → 原始请求。mod-header 按完整 URL 正则匹配，其余模式精确匹配域名和路径。</span></div>
+    <div className="stub-policy"><b>文件优先</b><span>文件规则优先 → UI Header 按列表顺序累积；响应/上游取首次命中，否则使用原始上游。mod-header 按完整 URL 正则匹配，其余模式精确匹配域名和路径。</span></div>
     <div className="stub-layout">
       <section className="stub-table-panel" aria-label="已有规则" inert={Boolean(draft || file)}>
         <div className="stub-table-toolbar"><div><strong>已有规则</strong><span>{rules.file.length} 条文件规则 · {rules.ui.length} 条 UI 规则</span></div><input aria-label="筛选规则" placeholder="筛选网址或正则…" value={filter} onChange={(e) => setFilter(e.target.value)} /><button className="stub-primary" disabled={loading || busy} onClick={() => choose(emptyRule())}>＋ 新建规则</button></div>
@@ -82,11 +97,11 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
         <div className="stub-table-scroll">
           <table className="stub-rules-table" aria-label="规则列表"><colgroup><col className="rule-source-col" /><col className="rule-match-col" /><col /><col /><col className="rule-body-col" /><col className="rule-action-col" /></colgroup><thead><tr><th scope="col">来源 / 状态</th><th scope="col">匹配网址</th><th scope="col">请求头</th><th scope="col">响应头</th><th scope="col">Body 来源</th><th scope="col">操作</th></tr></thead><tbody>
             {rules.file.filter(visible).map((rule) => <RuleRow key={rule.id} rule={rule} selected={file?.id === rule.id} onSelect={() => choose(null, rule)} />)}
-            {rules.ui.filter(visible).map((rule) => <RuleRow key={rule.id} rule={rule} selected={draft?.id === rule.id} shadowed={shadowed(rule)} onSelect={() => choose(structuredClone(rule))} />)}
+            {rules.ui.filter(visible).map((rule) => <RuleRow key={rule.id} rule={rule} selected={draft?.id === rule.id} shadowed={shadowed(rule)} onSelect={() => choose(structuredClone(rule))} order={rules.ui.indexOf(rule) + 1} onMove={(offset) => void move(rule.id, offset)} moveUpDisabled={busy || Boolean(filter) || rules.ui[0].id === rule.id} moveDownDisabled={busy || Boolean(filter) || rules.ui.at(-1)?.id === rule.id} />)}
             {(loading || ![...rules.file, ...rules.ui].some(visible)) && <tr><td colSpan={6} className="stub-table-empty">{loading ? '正在加载规则…' : filter ? '没有匹配的规则，请调整筛选条件。' : '暂无规则，点击「新建规则」开始配置。'}</td></tr>}
           </tbody></table>
         </div>
-        <p className="stub-table-foot">文件规则优先，UI 规则按创建顺序匹配。列表展示已保存的配置；UI 规则重启后保留。</p>
+        <p className="stub-table-foot">文件规则优先，UI Header 按列表顺序累积，后面的覆盖操作优先。用上移/下移调整顺序（筛选时不可排序）；规则与顺序重启后保留。</p>
       </section>
       {(draft || file) && <>
       <button className="stub-editor-backdrop" aria-label="收起编辑面板" onClick={() => choose(null)} />
@@ -117,8 +132,9 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
   </dialog>
 }
 
-function RuleRow({ rule, selected, shadowed = false, onSelect }: {
+function RuleRow({ rule, selected, shadowed = false, onSelect, order, onMove, moveUpDisabled, moveDownDisabled }: {
   rule: StubRule | FileStubRule; selected: boolean; shadowed?: boolean; onSelect: () => void
+  order?: number; onMove?: (offset: number) => void; moveUpDisabled?: boolean; moveDownDisabled?: boolean
 }) {
   const ui = 'request_headers' in rule
   const regex = ui && rule.mode === 'mod_header'
@@ -128,12 +144,12 @@ function RuleRow({ rule, selected, shadowed = false, onSelect }: {
   const responseHeaders: HeaderEdit[] = ui ? rule.response_headers : rule.headers.map(([name, value]) => ({ enabled: true, op: 'set', name, value }))
   const staticResponse = rule.mode === 'response'
   return <tr className={selected ? 'selected' : ''}>
-    <td><div className="stub-card-values"><span className={`stub-badge ${!ui ? 'file' : ''}`}>{ui ? 'UI 规则' : '配置文件 · 只读'}</span>{ui && <span className={`stub-rule-state ${shadowed ? 'shadowed' : rule.enabled ? 'enabled' : ''}`}>{shadowed ? '被文件规则覆盖' : rule.enabled ? '已启用' : '已停用'}</span>}</div></td>
+    <td><div className="stub-card-values"><span className={`stub-badge ${!ui ? 'file' : ''}`}>{ui ? `UI 规则 ${order}` : '配置文件 · 只读'}</span>{ui && <span className={`stub-rule-state ${shadowed ? 'shadowed' : rule.enabled ? 'enabled' : ''}`}>{shadowed ? '被文件规则覆盖' : rule.enabled ? '已启用' : '已停用'}</span>}</div></td>
     <td><div className="stub-card-values"><span className="stub-match-kind">{regex ? '正则匹配' : '精确匹配'} · {modeLabel[rule.mode]}</span><code className="stub-table-url">{match}</code><span className="stub-card-muted">{regex ? '完整 URL · 含 query' : '域名 + 路径 · 忽略 query'} · 所有方法</span></div></td>
     <td><div className="stub-card-values"><HeaderSummary edits={requestHeaders} fallback="保留原始请求头" />{!ui && Boolean(rule.upstream?.authority) && <span className="stub-card-muted">Host：{String(rule.upstream?.authority)}</span>}{staticResponse && <span className="stub-card-muted">不发送上游{requestHeaders.some((edit) => edit.enabled) ? '，修改仅用于抓取' : ''}</span>}</div></td>
     <td><div className="stub-card-values"><HeaderSummary edits={responseHeaders} fallback={staticResponse ? 'Stub 自动生成' : '保留原始响应头'} />{staticResponse && <span className="stub-card-muted">状态码 {rule.status ?? 200} · 长度自动计算</span>}</div></td>
     <td><div className="stub-card-values"><span className="stub-card-muted">请求：客户端原文</span><span className={staticResponse || upstream ? 'stub-card-changed' : ''}>响应：{staticResponse ? ui ? 'UI 编写的正文' : '配置文件 body_file' : upstream ? '替代上游' : '原始上游（不覆写）'}</span>{upstream && <code className="stub-upstream-url">{upstream}</code>}</div></td>
-    <td><button type="button" className="stub-ghost-btn" aria-label={`${ui ? '编辑' : '查看'}规则 ${match}`} onClick={onSelect}>{ui ? '编辑' : '查看'}</button></td>
+    <td><button type="button" className="stub-ghost-btn" aria-label={`${ui ? '编辑' : '查看'}规则 ${match}`} onClick={onSelect}>{ui ? '编辑' : '查看'}</button>{onMove && <div className="stub-order-buttons"><button type="button" aria-label={`上移规则 ${match}`} disabled={moveUpDisabled} onClick={() => onMove(-1)}>上移</button><button type="button" aria-label={`下移规则 ${match}`} disabled={moveDownDisabled} onClick={() => onMove(1)}>下移</button></div>}</td>
   </tr>
 
 }

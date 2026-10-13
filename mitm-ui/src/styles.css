@@ -502,3 +502,5 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 
 .stub-rules-table button.stub-ghost-btn { white-space: nowrap; padding: 6px 14px; border-radius: 6px; font-size: 13px; color: #334155; border: 1px solid #cbd5e1; transition: all .15s; }
 .stub-rules-table button.stub-ghost-btn:hover { background: #f8fafc; border-color: #94a3b8; color: #0f172a; }
+
+.stub-order-buttons { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }

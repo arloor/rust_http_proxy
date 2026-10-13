@@ -393,10 +393,31 @@ async fn ui_stub_api_applies_headers_body_and_captures_historical_source() -> Re
     let mut saved = String::new();
     management.read_to_string(&mut saved).await?;
     assert!(saved.starts_with("HTTP/1.1 200"), "{saved}");
+    let response_rule: serde_json::Value =
+        serde_json::from_str(saved.split("\r\n\r\n").nth(1).ok_or("missing saved rule")?)?;
+    let header_rule = serde_json::json!({
+        "mode":"mod_header", "enabled":true, "url_pattern":"^https://localhost/ui",
+        "response_headers":[{"op":"set","name":"x-chain","value":"applied"}]
+    })
+    .to_string();
+    let mut management = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+    management.write_all(format!("POST /mitm/api/stubs HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic YWRtaW46dGVzdA==\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{header_rule}", header_rule.len()).as_bytes()).await?;
+    let mut saved_header = String::new();
+    management.read_to_string(&mut saved_header).await?;
+    assert!(saved_header.starts_with("HTTP/1.1 200"), "{saved_header}");
+    let header_rule: serde_json::Value =
+        serde_json::from_str(saved_header.split("\r\n\r\n").nth(1).ok_or("missing header rule")?)?;
+    let order = serde_json::json!([header_rule["id"], response_rule["id"]]).to_string();
+    let mut management = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+    management.write_all(format!("PUT /mitm/api/stubs/order HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic YWRtaW46dGVzdA==\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{order}", order.len()).as_bytes()).await?;
+    let mut reordered = String::new();
+    management.read_to_string(&mut reordered).await?;
+    assert!(reordered.starts_with("HTTP/1.1 204"), "{reordered}");
     for method in ["GET", "HEAD"] {
         let mut tls = connect_to_mitm_target(proxy.port, 443, ca.cert_der.clone()).await?;
         tls.write_all(format!("{method} /ui?ignored=1 HTTP/1.1\r\nHost: localhost:443\r\nX-Request: original\r\nX-Remove: original\r\nConnection: close\r\n\r\n").as_bytes()).await?;
         let head = timeout_step("UI stub response", read_http_head(&mut tls)).await?;
+        assert!(head.to_ascii_lowercase().contains("\r\nx-chain: applied\r\n"), "{head}");
         assert!(head.starts_with("HTTP/1.1 202"), "{head}");
         assert_eq!(head.to_ascii_lowercase().matches("\r\nx-response:").count(), 2, "{head}");
         if method == "GET" {

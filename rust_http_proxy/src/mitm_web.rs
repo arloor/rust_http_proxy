@@ -31,6 +31,7 @@ pub(crate) fn router(basic_auth: HashMap<String, String>) -> Router<Arc<AppState
         .route("/mitm", get(index))
         .route("/mitm/", get(index))
         .route("/mitm/api/stubs", get(get_stubs).post(add_stub))
+        .route("/mitm/api/stubs/order", axum::routing::put(reorder_stubs))
         .route("/mitm/api/stubs/{id}", axum::routing::put(update_stub).delete(delete_stub))
         .route("/mitm/api/settings", get(get_settings).patch(patch_settings))
         .route("/mitm/api/targets", get(get_targets).post(add_target))
@@ -173,6 +174,15 @@ async fn get_recent_requests(State(state): State<Arc<AppState>>) -> Json<Vec<cra
 
 async fn get_stubs(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(state.mitm_manager.list_stubs())
+}
+
+async fn reorder_stubs(
+    State(state): State<Arc<AppState>>, Json(ids): Json<Vec<String>>,
+) -> Result<StatusCode, ApiError> {
+    tokio::task::spawn_blocking(move || state.mitm_manager.reorder_stubs(ids))
+        .await
+        .map_err(|e| ManagerError::Database(e.to_string()))??;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn add_stub(

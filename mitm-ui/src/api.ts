@@ -90,6 +90,6 @@ export type FileStubRule = {
 }
 export type StubRules = { file: FileStubRule[]; ui: StubRule[] }
 export type StubTrace = {
-  source: 'file' | 'ui'; mode: StubMode; rule_id: string; upstream: string | null
+  source: 'file' | 'ui'; mode: StubMode; rule_id: string; rule_ids?: string[]; upstream: string | null
   request_headers: HeaderEdit[]; response_headers: HeaderEdit[]
 }
