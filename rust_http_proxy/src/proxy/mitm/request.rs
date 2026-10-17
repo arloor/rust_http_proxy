@@ -75,14 +75,12 @@ pub(super) async fn handle_mitm_request(
         request_authority.strip_suffix(":443").unwrap_or(&request_authority),
         req.uri().path_and_query().map(|value| value.as_str()).unwrap_or("/")
     );
-    let matched_stub = context
-        .stub_specs
-        .matched(&access_label.target, &request_path)
-        .or_else(|| {
-            context
-                .manager
-                .find_ui_stub(&access_label.target, &request_path, &request_url)
-        });
+    let matched_stub = context.manager.find_stub(
+        context.stub_specs.matched(&access_label.target, &request_path),
+        &access_label.target,
+        &request_path,
+        &request_url,
+    );
     let stub_trace = matched_stub.as_ref().map(|stub| stub.trace.clone());
     if let Some(stub) = matched_stub.as_ref() {
         if !matches!(stub.action, Some(MitmStubAction::Dynamic(_))) {
@@ -253,9 +251,13 @@ async fn forward_to_dynamic_mitm_stub(
     } = build_upstream_req("", &dynamic_stub.upstream, req, &original)
         .map_err(|error| record_mitm_error(&manager, record_id.as_deref(), error))?;
     if let Some(trace) = trace {
-        if trace.source == "ui" {
-            apply_headers(req.headers_mut(), &trace.request_headers);
-        }
+        apply_headers(
+            req.headers_mut(),
+            trace
+                .request_headers
+                .get(trace.preapplied_request_headers..)
+                .unwrap_or_default(),
+        );
         if let Some(id) = record_id.as_deref() {
             manager.record_stub(id, trace, req.headers());
         }

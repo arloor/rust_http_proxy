@@ -597,43 +597,55 @@ impl MitmManager {
         serde_json::json!({"file": file.file_rules(), "ui": *ui})
     }
 
-    pub(crate) fn find_ui_stub(
-        &self, authority: &str, path: &str, url: &str,
+    /// `file` is the config-file match for the same request; it heads the chain and UI rules continue after it.
+    pub(crate) fn find_stub(
+        &self, file: Option<crate::mitm_rules::MatchedStub>, authority: &str, path: &str, url: &str,
     ) -> Option<crate::mitm_rules::MatchedStub> {
         let rules = self.ui_stubs.read().unwrap_or_else(|e| e.into_inner());
-        let mut result: Option<crate::mitm_rules::MatchedStub> = None;
-        for rule in rules.iter().filter(|rule| {
-            rule.enabled
-                && if rule.mode == crate::mitm_rules::RuleMode::ModHeader {
-                    rule.compiled_url_pattern
-                        .as_ref()
-                        .is_some_and(|pattern| pattern.is_match(url))
-                } else {
-                    rule.authority.eq_ignore_ascii_case(authority) && rule.path == path
-                }
-        }) {
-            // Only the first response/upstream action wins; header-only rules keep accumulating.
-            if result.as_ref().is_some_and(|matched| matched.action.is_some())
-                && matches!(rule.mode, crate::mitm_rules::RuleMode::Response | crate::mitm_rules::RuleMode::Upstream)
-            {
-                continue;
-            }
-            let next = rule.matched();
-            if let Some(matched) = result.as_mut() {
-                if next.action.is_some() {
-                    matched.action = next.action;
-                    matched.trace.mode = next.trace.mode;
-                    matched.trace.rule_id = next.trace.rule_id;
-                    matched.trace.upstream = next.trace.upstream;
-                }
-                matched.trace.rule_ids.extend(next.trace.rule_ids);
-                matched.trace.request_headers.extend(next.trace.request_headers);
-                matched.trace.response_headers.extend(next.trace.response_headers);
-            } else {
-                result = Some(next);
-            }
-        }
-        result
+        crate::mitm_rules::resolve_stubs(file, &rules, authority, path, url, |_, _, _, _| {})
+    }
+
+    /// Explains, rule by rule, how a request to `url` would be handled by the current rules.
+    pub(crate) fn explain_stubs(&self, url: &str) -> Result<serde_json::Value, ManagerError> {
+        use crate::mitm_rules::Verdict;
+        let probe = crate::mitm_rules::StubProbe::parse(url).map_err(ManagerError::BadRequest)?;
+        let file = self.file_stubs.read().unwrap_or_else(|e| e.into_inner());
+        let file_match = file.matched(&probe.authority, &probe.path);
+        let file_id = file_match.as_ref().map(|matched| matched.trace.rule_id.clone());
+        let authority = crate::mitm::normalize_authority(&probe.authority);
+        let mut verdicts: Vec<serde_json::Value> = file
+            .file_rules()
+            .into_iter()
+            .map(|rule| {
+                let matched = rule["authority"] == authority.as_str() && rule["path"] == probe.path.as_str();
+                let (verdict, by) = match (&file_id, matched) {
+                    (Some(id), true) if rule["id"] == id.as_str() => (Verdict::Response, None),
+                    (Some(id), true) => (Verdict::Shadowed, Some(id.clone())),
+                    _ => (Verdict::Unmatched, None),
+                };
+                serde_json::json!({"id": rule["id"], "verdict": verdict, "matched": matched, "by": by})
+            })
+            .collect();
+        drop(file);
+        let rules = self.ui_stubs.read().unwrap_or_else(|e| e.into_inner());
+        let result = crate::mitm_rules::resolve_stubs(
+            file_match,
+            &rules,
+            &probe.authority,
+            &probe.path,
+            &probe.url,
+            |rule, verdict, matched, by| {
+                verdicts.push(serde_json::json!({"id": rule.id, "verdict": verdict, "matched": matched, "by": by}));
+            },
+        );
+        let decided_by = result
+            .as_ref()
+            .filter(|matched| matched.action.is_some())
+            .map(|matched| matched.trace.rule_id.clone());
+        Ok(serde_json::json!({
+            "authority": probe.authority, "path": probe.path, "url": probe.url,
+            "decided_by": decided_by, "verdicts": verdicts,
+        }))
     }
 
     pub(crate) fn reorder_stubs(&self, ids: Vec<String>) -> Result<(), ManagerError> {
@@ -670,16 +682,10 @@ impl MitmManager {
                 return Err(ManagerError::BadRequest("UI 规则不存在，文件规则只读".to_owned()));
             }
         }
-        if rules.iter().any(|existing| {
-            Some(&existing.id) != id.as_ref()
-                && if rule.mode == crate::mitm_rules::RuleMode::ModHeader {
-                    existing.mode == rule.mode && existing.url_pattern == rule.url_pattern
-                } else {
-                    existing.mode != crate::mitm_rules::RuleMode::ModHeader
-                        && existing.authority == rule.authority
-                        && existing.path == rule.path
-                }
-        }) {
+        if rules
+            .iter()
+            .any(|existing| Some(&existing.id) != id.as_ref() && existing.same_match(&rule))
+        {
             return Err(ManagerError::Conflict("该匹配条件已有 UI 规则，请编辑已有规则".to_owned()));
         }
         if id.is_none() && rules.len() >= 1000 {

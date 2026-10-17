@@ -1,167 +1,427 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { api, type FileStubRule, type HeaderEdit, type RecordDetail, type StubRule, type StubRules } from './api'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { api, fullUrl, type FileStubRule, type HeaderEdit, type RecordDetail, type StubMatchResult, type StubMatchType, type StubMode, type StubRule, type StubRules } from './api'
+import { exactRuleUrl, parseExactUrl, regexFromExactUrl } from './stubUrl'
+import { describeVerdict, ruleLabel, summarizeMatch } from './stubVerdict'
 
-const modeLabel = { response: '覆写响应', upstream: '转发上游', headers: '仅修改 Headers', mod_header: 'mod-header' }
 export const headerOpLabel = { add: '增加', set: '覆盖', remove: '删除' }
-const emptyRule = (record?: RecordDetail): StubRule => ({
-  id: '', authority: record ? (new URL(`https://${record.authority}`).port ? record.authority : `${record.host}:443`) : '',
-  path: record?.path ?? '/', enabled: true, mode: 'mod_header', status: 200,
-  body: '', upstream: '', url_pattern: '', request_headers: [], response_headers: [],
+
+const modes: { value: StubMode; label: string; hint: string }[] = [
+  { value: 'response', label: '静态响应', hint: '不访问上游，直接返回下方的状态码和 Body。' },
+  { value: 'upstream', label: '替代上游', hint: '转发到指定地址，原路径和 query 追加在其后，保留原 Host。' },
+  { value: 'headers', label: '原始服务', hint: '照常请求原服务，只应用下方的 Header 修改。' },
+]
+const modeLabel: Record<StubMode, string> = { response: '静态响应', upstream: '替代上游', headers: '原始服务' }
+const matchTypes: { value: StubMatchType; label: string }[] = [{ value: 'exact', label: 'URL' }, { value: 'regex', label: '正则' }]
+const NO_BODY_STATUS = [204, 205, 304]
+
+// `url` is the editable text of an exact match; it is split into authority + path on save.
+type Draft = StubRule & { url: string }
+
+const blankDraft = (): Draft => ({
+  id: '', enabled: true, mode: 'response', match_type: 'exact', authority: '', path: '', url_pattern: '', url: '',
+  body: '', status: 200, upstream: '', request_headers: [], response_headers: [],
 })
+
+const toDraft = (rule: StubRule): Draft => ({
+  ...structuredClone(rule), url: rule.match_type === 'exact' ? exactRuleUrl(rule.authority, rule.path) : '',
+})
+
+function draftFromRecord(record: RecordDetail): Draft {
+  const parsed = parseExactUrl(`https://${record.authority}${record.path}`)
+  const status = record.status && record.status >= 200 && record.status <= 599 ? record.status : 200
+  const reusableBody = !record.response_body_truncated && !record.response_body_image && record.response_body.length <= 1024 * 1024
+  const contentType = record.response_headers.find(([name]) => name.toLowerCase() === 'content-type')?.[1]
+  return {
+    ...blankDraft(),
+    url: 'error' in parsed ? '' : exactRuleUrl(parsed.authority, parsed.path),
+    status,
+    body: reusableBody && !NO_BODY_STATUS.includes(status) ? record.response_body : '',
+    response_headers: contentType ? [{ enabled: true, op: 'set', name: 'content-type', value: contentType }] : [],
+  }
+}
+
+function toPayload({ url, ...rule }: Draft): StubRule | { error: string } {
+  if (rule.match_type === 'regex') return { ...rule, authority: '', path: '' }
+  const parsed = parseExactUrl(url)
+  return 'error' in parsed ? parsed : { ...rule, authority: parsed.authority, path: parsed.path, url_pattern: '' }
+}
+
+const matchText = (rule: StubRule) => rule.match_type === 'regex' ? rule.url_pattern : exactRuleUrl(rule.authority, rule.path)
+const sameExactMatch = (a: Pick<StubRule, 'match_type' | 'authority' | 'path'>, b: StubRule | { error: string }) =>
+  !('error' in b) && a.match_type === 'exact' && b.match_type === 'exact' && a.authority === b.authority && a.path === b.path
 
 export function StubRulesDialog({ onClose, record }: { onClose: () => void; record?: RecordDetail }) {
   const dialog = useRef<HTMLDialogElement>(null)
-  const editor = useRef<HTMLElement>(null)
-  const editorTrigger = useRef<HTMLElement | null>(null)
   const [rules, setRules] = useState<StubRules>({ file: [], ui: [] })
   const [loading, setLoading] = useState(true)
-  const [draft, setDraft] = useState<StubRule | null>(record ? emptyRule(record) : null)
+  const [draft, setDraft] = useState<Draft | null>(record ? draftFromRecord(record) : null)
   const [file, setFile] = useState<FileStubRule | null>(null)
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [listBusy, setListBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [filter, setFilter] = useState('')
-  const [deleting, setDeleting] = useState(false)
-  const reload = async () => { setRules(await api<StubRules>('/stubs')); setLoading(false) }
+  const [probeUrl, setProbeUrl] = useState(record ? fullUrl(record) : '')
+  const [probe, setProbe] = useState<StubMatchResult | null>(null)
+  const [probeError, setProbeError] = useState('')
+  const [showHelp, setShowHelp] = useState(false)
+  const [onlyActive, setOnlyActive] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropId, setDropId] = useState<string | null>(null)
+
+  // Re-evaluate whenever the rules change; skip while a list mutation is still in flight.
+  useEffect(() => {
+    const url = probeUrl.trim()
+    if (!url) { setProbe(null); setProbeError(''); return }
+    if (loading || listBusy) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      api<StubMatchResult>(`/stubs/match?url=${encodeURIComponent(url)}`)
+        .then((result) => { if (!cancelled) { setProbe(result); setProbeError('') } })
+        .catch((e: Error) => { if (!cancelled) { setProbe(null); setProbeError(e.message) } })
+    }, 250)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [probeUrl, rules, loading, listBusy])
+
   useEffect(() => {
     dialog.current?.showModal()
-    void reload().catch((e: Error) => { setError(e.message); setLoading(false) })
-  }, [])
-  const canLeave = () => !busy && (!dirty || window.confirm('放弃尚未保存的规则修改？'))
+    api<StubRules>('/stubs').then((loaded) => {
+      setRules(loaded)
+      if (!record) return
+      // Reopen the rule that already covers this request instead of failing on save with a conflict.
+      const prefilled = toPayload(draftFromRecord(record))
+      const existing = loaded.ui.find((rule) => sameExactMatch(rule, prefilled))
+      if (existing) {
+        setDraft(toDraft(existing)); setDirty(false); setNotice('该地址已有 UI 规则，已为你打开')
+      }
+    }).catch((e: Error) => setError(e.message)).finally(() => setLoading(false))
+  }, [record])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 2500)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  const canLeave = () => !busy && (!dirty || window.confirm('放弃尚未保存的修改？'))
   const close = () => { if (canLeave()) onClose() }
-  const choose = (rule: StubRule | null, fileRule: FileStubRule | null = null) => {
+  const choose = (next: Draft | null, fileRule: FileStubRule | null = null) => {
     if (!canLeave()) return
-    if (rule || fileRule) editorTrigger.current = document.activeElement as HTMLElement
-    else requestAnimationFrame(() => editorTrigger.current?.focus())
-    setDraft(rule); setFile(fileRule); setDirty(false); setError(''); setNotice(''); setDeleting(false)
-    editor.current?.scrollTo({ top: 0 })
+    setDraft(next); setFile(fileRule); setDirty(false); setError(''); setConfirmDelete(false)
   }
-  const patch = (value: Partial<StubRule>) => { if (draft) { setDraft({ ...draft, ...value }); setDirty(true); setNotice('') } }
-  const save = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!draft) return
-    setBusy(true); setError(''); setNotice('')
+  const patch = (value: Partial<Draft>) => { if (draft) { setDraft({ ...draft, ...value }); setDirty(true); setConfirmDelete(false) } }
+
+  const setMatchType = (match_type: StubMatchType) => {
+    if (!draft || draft.match_type === match_type) return
+    patch(match_type === 'regex' && !draft.url_pattern ? { match_type, url_pattern: regexFromExactUrl(draft.url) } : { match_type })
+  }
+
+  const save = async (event?: FormEvent) => {
+    event?.preventDefault()
+    if (!draft || busy) return
+    const payload = toPayload(draft)
+    if ('error' in payload) { setError(payload.error); return }
+    setBusy(true); setError('')
     try {
-      const saved = await api<StubRule>(draft.id ? `/stubs/${draft.id}` : '/stubs', { method: draft.id ? 'PUT' : 'POST', body: JSON.stringify(draft) })
-      setDraft(saved); setDirty(false); setNotice(shadowed(saved) ? '已保存；文件规则优先，此 UI 规则暂不生效' : saved.enabled ? '已保存，后续匹配请求立即生效' : '已保存，规则已停用')
-      editor.current?.scrollTo({ top: 0 })
-      await reload()
-    } catch (e) { setError((e as Error).message); editor.current?.scrollTo({ top: 0 }) }
+      const saved = await api<StubRule>(draft.id ? `/stubs/${draft.id}` : '/stubs', { method: draft.id ? 'PUT' : 'POST', body: JSON.stringify(payload) })
+      setRules((current) => ({
+        ...current,
+        ui: current.ui.some((rule) => rule.id === saved.id) ? current.ui.map((rule) => rule.id === saved.id ? saved : rule) : [...current.ui, saved],
+      }))
+      setDraft(toDraft(saved)); setDirty(false); setNotice(draft.id ? '已保存，后续请求立即生效' : '已创建，后续请求立即生效')
+    } catch (e) { setError((e as Error).message) }
     finally { setBusy(false) }
   }
+
   const remove = async () => {
     if (!draft?.id) return
     setBusy(true); setError('')
     try {
       await api(`/stubs/${draft.id}`, { method: 'DELETE' })
-      setDraft(null); setDirty(false); setDeleting(false); setNotice('规则已删除'); await reload()
-    } catch (e) { setError((e as Error).message); editor.current?.scrollTo({ top: 0 }) }
+      setRules((current) => ({ ...current, ui: current.ui.filter((rule) => rule.id !== draft.id) }))
+      setDraft(null); setDirty(false); setConfirmDelete(false); setNotice('规则已删除')
+    } catch (e) { setError((e as Error).message) }
     finally { setBusy(false) }
   }
-  const move = async (id: string, offset: number) => {
-    if (busy || filter) return
+
+  const toggle = async (rule: StubRule) => {
+    setListBusy(true); setError('')
+    try {
+      const saved = await api<StubRule>(`/stubs/${rule.id}`, { method: 'PUT', body: JSON.stringify({ ...rule, enabled: !rule.enabled }) })
+      setRules((current) => ({ ...current, ui: current.ui.map((item) => item.id === saved.id ? saved : item) }))
+      // The switch persists immediately; keep any unsaved edits of the open rule in sync with it.
+      setDraft((current) => current?.id === saved.id ? { ...current, enabled: saved.enabled } : current)
+    } catch (e) { setError((e as Error).message) }
+    finally { setListBusy(false) }
+  }
+
+  const reorder = async (ids: string[]) => {
+    const previous = rules.ui
+    const byId = new Map(previous.map((rule) => [rule.id, rule]))
+    setRules((current) => ({ ...current, ui: ids.flatMap((id) => byId.get(id) ?? []) }))
+    setListBusy(true); setError('')
+    try { await api('/stubs/order', { method: 'PUT', body: JSON.stringify(ids) }) }
+    catch (e) { setError((e as Error).message); setRules((current) => ({ ...current, ui: previous })) }
+    finally { setListBusy(false) }
+  }
+  const moveTo = (id: string, target: number) => {
     const ids = rules.ui.map((rule) => rule.id)
     const index = ids.indexOf(id)
-    const target = index + offset
-    if (index < 0 || target < 0 || target >= ids.length) return
-    ;[ids[index], ids[target]] = [ids[target], ids[index]]
-    setBusy(true); setError(''); setNotice('')
-    try {
-      await api('/stubs/order', { method: 'PUT', body: JSON.stringify(ids) })
-      await reload()
-      setNotice('顺序已保存，后续请求立即生效')
-    } catch (e) { setError((e as Error).message); await reload().catch(() => {}) }
-    finally { setBusy(false) }
+    if (index < 0 || target < 0 || target >= ids.length || target === index) return
+    ids.splice(index, 1)
+    ids.splice(target, 0, id)
+    void reorder(ids)
   }
-  const shadowed = (rule: StubRule) => rule.mode !== 'mod_header' && rules.file.some((item) => item.authority === rule.authority.trim().toLowerCase() && item.path === rule.path)
-  const visible = (rule: { authority: string; path: string; url_pattern?: string }) => `${rule.authority}${rule.path}${rule.url_pattern ?? ''}`.toLowerCase().includes(filter.toLowerCase())
-  return <dialog className="stub-dialog" ref={dialog}
+
+  const onFormKeyDown = (event: KeyboardEvent) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault()
+      if (dirty) void save()
+    }
+  }
+
+  // Only rules that would decide the response are blocked by a file rule; header-only rules still stack on top.
+  const shadowedByFile = (rule: StubRule | { error: string }) =>
+    !('error' in rule) && rule.mode !== 'headers' && rules.file.some((item) => sameExactMatch({ ...item, match_type: 'exact' }, rule))
+  const probing = probeUrl.trim() !== ''
+  const reorderable = !listBusy && !probing
+  const uiIds = rules.ui.map((rule) => rule.id)
+  const labelOf = (id: string) => ruleLabel(id, uiIds)
+  const verdicts = new Map(probe?.verdicts.map((item) => [item.id, { ...describeVerdict(item, labelOf), kind: item.verdict }]))
+  const verdictTag = (id: string) => {
+    const verdict = verdicts.get(id)
+    return verdict && <span className={`stub-verdict ${verdict.kind}`}>{verdict.text}</span>
+  }
+  const dimmed = (id: string) => {
+    const verdict = verdicts.get(id)
+    return verdict ? (verdict.active ? 'hit' : 'dim') : ''
+  }
+  const hidden = (id: string) => onlyActive && verdicts.get(id)?.active === false
+  const visibleFile = rules.file.filter((rule) => !hidden(rule.id))
+  const visibleUiCount = rules.ui.filter((rule) => !hidden(rule.id)).length
+  const hiddenCount = rules.file.length - visibleFile.length + rules.ui.length - visibleUiCount
+  const parsedUrl = draft?.match_type === 'exact' && draft.url.trim() ? parseExactUrl(draft.url) : null
+  const editing = draft || file
+
+  return <dialog className="stub-dialog" ref={dialog} aria-labelledby="stub-title"
     onMouseDown={(event) => {
       if (event.target !== event.currentTarget || event.button !== 0) return
       // 原生 dialog 的遮罩事件也以 dialog 为目标，需用坐标排除内部空白区域。
       const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect()
-      if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) {
-        if (draft || file) choose(null)
-        else close()
-      }
+      if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) close()
     }}
-    onCancel={(event) => { event.preventDefault(); if (draft || file) choose(null); else close() }} aria-labelledby="stub-title">
-    <header className="stub-dialog-head"><div><span className="stub-eyebrow">MITM STUB</span><h2 id="stub-title">请求与响应规则</h2></div><button type="button" className="stub-close" aria-label="关闭规则配置" onClick={close}>×</button></header>
-    <div className="stub-policy"><b>文件优先</b><span>文件规则优先 → UI Header 按列表顺序累积；响应/上游取首次命中，否则使用原始上游。mod-header 按完整 URL 正则匹配，其余模式精确匹配域名和路径。</span></div>
+    onCancel={(event) => { event.preventDefault(); if (editing) choose(null); else close() }}>
+    <header className="stub-dialog-head">
+      <h2 id="stub-title">Stub 规则</h2>
+      <span>按顺序拦截 HTTPS 请求：返回静态响应、转发到替代上游，或修改 Header</span>
+      <button type="button" className={`stub-help-toggle ${showHelp ? 'active' : ''}`} aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}>执行顺序与短路规则</button>
+      <button type="button" className="stub-icon-btn" aria-label="关闭规则配置" onClick={close}>×</button>
+    </header>
+    {showHelp && <div className="stub-help-panel"><OrderHelp /></div>}
     <div className="stub-layout">
-      <section className="stub-table-panel" aria-label="已有规则" inert={Boolean(draft || file)}>
-        <div className="stub-table-toolbar"><div><strong>已有规则</strong><span>{rules.file.length} 条文件规则 · {rules.ui.length} 条 UI 规则</span></div><input aria-label="筛选规则" placeholder="筛选网址或正则…" value={filter} onChange={(e) => setFilter(e.target.value)} /><button className="stub-primary" disabled={loading || busy} onClick={() => choose(emptyRule())}>＋ 新建规则</button></div>
-        {!draft && !file && error && <div className="stub-error" role="alert">{error}</div>}
-        {!draft && !file && notice && <div className="stub-success" role="status">{notice}</div>}
-        <div className="stub-table-scroll">
-          <table className="stub-rules-table" aria-label="规则列表"><colgroup><col className="rule-source-col" /><col className="rule-match-col" /><col /><col /><col className="rule-body-col" /><col className="rule-action-col" /></colgroup><thead><tr><th scope="col">来源 / 状态</th><th scope="col">匹配网址</th><th scope="col">请求头</th><th scope="col">响应头</th><th scope="col">Body 来源</th><th scope="col">操作</th></tr></thead><tbody>
-            {rules.file.filter(visible).map((rule) => <RuleRow key={rule.id} rule={rule} selected={file?.id === rule.id} onSelect={() => choose(null, rule)} />)}
-            {rules.ui.filter(visible).map((rule) => <RuleRow key={rule.id} rule={rule} selected={draft?.id === rule.id} shadowed={shadowed(rule)} onSelect={() => choose(structuredClone(rule))} order={rules.ui.indexOf(rule) + 1} onMove={(offset) => void move(rule.id, offset)} moveUpDisabled={busy || Boolean(filter) || rules.ui[0].id === rule.id} moveDownDisabled={busy || Boolean(filter) || rules.ui.at(-1)?.id === rule.id} />)}
-            {(loading || ![...rules.file, ...rules.ui].some(visible)) && <tr><td colSpan={6} className="stub-table-empty">{loading ? '正在加载规则…' : filter ? '没有匹配的规则，请调整筛选条件。' : '暂无规则，点击「新建规则」开始配置。'}</td></tr>}
-          </tbody></table>
+      <aside className="stub-list-panel" aria-label="规则列表">
+        <div className="stub-list-toolbar">
+          <input type="search" aria-label="测试 URL" spellCheck={false} placeholder="输入 URL，查看哪些规则生效…" value={probeUrl} onChange={(e) => setProbeUrl(e.target.value)} />
+          <button type="button" className="stub-primary" disabled={loading} onClick={() => choose(blankDraft())}>＋ 新建</button>
         </div>
-        <p className="stub-table-foot">文件规则优先，UI Header 按列表顺序累积，后面的覆盖操作优先。用上移/下移调整顺序（筛选时不可排序）；规则与顺序重启后保留。</p>
-      </section>
-      {(draft || file) && <>
-      <button className="stub-editor-backdrop" aria-label="收起编辑面板" onClick={() => choose(null)} />
-      <section className="stub-editor" ref={editor} aria-label={file ? '文件规则详情' : '规则编辑面板'}>
-        <div className="stub-editor-toolbar"><strong>{file ? '查看文件规则' : draft?.id ? '编辑规则' : '新建规则'}</strong><button type="button" autoFocus aria-label="关闭编辑面板" onClick={() => choose(null)}>×</button></div>
-        {error && <div className="stub-error" role="alert">{error}</div>}
-        {notice && <div className="stub-success" role="status">{notice}</div>}
-        {file && <div className="stub-file-detail"><div className="stub-section-title"><h3>配置文件规则</h3><span className="stub-badge file">只读 · 优先匹配</span></div><p className="stub-muted">修改配置文件并重启代理后生效。UI 无法覆盖或删除文件规则。</p><dl><dt>域名</dt><dd>{file.authority}</dd><dt>路径</dt><dd>{file.path}</dd><dt>操作</dt><dd>{modeLabel[file.mode]}</dd>{file.status && <><dt>状态码</dt><dd>{file.status}</dd></>}</dl>{file.upstream && <><h3>上游配置</h3><pre>{JSON.stringify(file.upstream, null, 2)}</pre></>}{!!file.headers.length && <><h3>Response Headers</h3><pre>{file.headers.map(([name, value]) => `${name}: ${value}`).join('\n')}</pre></>}{file.body !== null && <><h3>Response Body <small>来自 body_file · 文本预览</small></h3><pre>{file.body || '(empty)'}</pre></>}</div>}
-        {draft && <form onSubmit={(event) => void save(event)} className="stub-form">
-          <div className="stub-section-title"><h3>{draft.id ? '编辑 UI 规则' : '新建 UI 规则'}</h3><label className="stub-enabled"><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={(e) => patch({ enabled: e.target.checked })} />启用规则</label></div>
-          {shadowed(draft) && <div className="stub-warning">被文件规则覆盖：保存后保留此 UI 规则，但相同域名与路径始终使用文件规则。</div>}
-          <fieldset disabled={busy}>
-            <label className="stub-mode-label">规则操作<select aria-label="规则操作" value={draft.mode} onChange={(e) => patch({ mode: e.target.value as StubRule['mode'] })}><option value="response">覆写响应 · 直接返回 Body</option><option value="upstream">转发上游 · 使用替代服务</option><option value="mod_header">mod-header · URL 正则修改请求/响应头</option>{draft.mode === 'headers' && <option value="headers">仅修改 Headers · 原有精确匹配</option>}</select></label>
-            {draft.mode === 'mod_header' ? <label className="stub-upstream">URL 正则<input required aria-label="URL 正则" maxLength={4096} spellCheck={false} placeholder={String.raw`^https://api\.example\.com/api/`} value={draft.url_pattern ?? ''} onChange={(e) => patch({ url_pattern: e.target.value })} /><small>匹配完整 HTTPS URL（含路径和 query；默认 :443 省略）。使用 Rust 正则语法，区分大小写，可用 (?i) 忽略大小写；^ 和 $ 限定匹配范围。</small><small>仅修改请求/响应头，保留原始上游、状态码和 Body。命中文件规则时仍以文件为准。</small></label> : <div className="stub-match-fields"><label>目标域名 <input required aria-label="目标域名" placeholder="api.example.com:443" value={draft.authority} onChange={(e) => patch({ authority: e.target.value })} /></label><label>请求路径 <input required aria-label="请求路径" placeholder="/api/profile" value={draft.path} onChange={(e) => patch({ path: e.target.value })} /></label></div>}
-            {draft.mode === 'response' && <section className="stub-body-editor"><div className="stub-section-title"><h3>Response Body</h3><label>状态码 <input type="number" min="200" max="599" required aria-label="响应状态码" value={draft.status ?? 200} onChange={(e) => patch({ status: Number(e.target.value) })} /></label></div><textarea aria-label="Response Body" spellCheck={false} placeholder={'直接编写响应正文，例如：\n{ "ok": true }'} value={draft.body} onChange={(e) => patch({ body: e.target.value })} /><p className="stub-muted">按原文返回，支持空 Body，最大 1 MiB。可在下方设置 Content-Type；Content-Length 自动计算。</p></section>}
-            {draft.mode === 'upstream' && <label className="stub-upstream">上游 URL<input type="url" required aria-label="上游 URL" placeholder="http://127.0.0.1:9010" value={draft.upstream ?? ''} onChange={(e) => patch({ upstream: e.target.value })} /><small>原始路径和 query 将追加到此 URL 后面；保留原请求虚拟主机。</small></label>}
-            <HeaderEditor title="Request Headers" edits={draft.request_headers} onChange={(request_headers) => patch({ request_headers })} />
-            {draft.mode === 'response' && <p className="stub-muted">静态响应不会发送到上游；请求头修改仅体现在抓取记录中。</p>}
-            <HeaderEditor title="Response Headers" edits={draft.response_headers} onChange={(response_headers) => patch({ response_headers })} />
-            <p className="stub-muted">增加：追加同名值；覆盖：替换全部同名值；删除：移除全部同名值。Host、连接和报文长度相关头由传输层管理。</p>
-          </fieldset>
-          <footer className="stub-form-footer"><span>{!draft.id ? '尚未保存的新规则' : dirty ? '有未保存的修改' : '已同步'}{!draft.enabled ? ' · 当前停用' : ''}</span><div>{draft.id && <button type="button" className="stub-danger" disabled={busy} onClick={() => setDeleting(true)}>删除规则</button>}<button className="stub-primary" disabled={busy || (Boolean(draft.id) && !dirty)}>{busy ? '保存中…' : '保存规则'}</button></div></footer>
-          {deleting && <div className="stub-warning stub-delete-confirm">删除此 UI 规则？后续请求将恢复默认行为。<button type="button" disabled={busy} onClick={() => setDeleting(false)}>取消</button><button type="button" className="stub-danger" disabled={busy} onClick={() => void remove()}>确认删除</button></div>}
+        {probing && <div className={`stub-probe-summary ${probeError ? 'error' : ''}`} role="status">
+          {probeError || (probe ? <>
+            <div className="stub-probe-line">
+              <b>{summarizeMatch(probe, labelOf)}</b>
+              <label className="stub-only-active"><Switch checked={onlyActive} label="只看生效的规则" onChange={setOnlyActive} />只看生效</label>
+            </div>
+            <code title="精确规则按域名 + 路径匹配，正则规则匹配此完整 URL">{probe.url}</code>
+          </> : '正在计算…')}
+        </div>}
+        <div className="stub-list-scroll">
+          {loading && <p className="stub-list-empty">正在加载…</p>}
+          {!loading && !rules.file.length && !rules.ui.length && <p className="stub-list-empty">还没有规则</p>}
+          {visibleFile.length > 0 && <>
+            <h3 className="stub-list-heading">配置文件 · 只读，优先级最高</h3>
+            <ul>{visibleFile.map((rule) => <li key={rule.id} className={`stub-row file ${file?.id === rule.id ? 'selected' : ''} ${dimmed(rule.id)}`}>
+              <span className="stub-row-order" title="配置文件规则">F</span>
+              <button type="button" className="stub-row-main" onClick={() => choose(null, rule)}>
+                <code>{exactRuleUrl(rule.authority, rule.path)}</code>
+                <span className="stub-row-meta">
+                  <ModeTag mode={rule.mode} status={rule.status} />{rule.headers.length > 0 && <span>响应头 {rule.headers.length}</span>}
+                </span>
+                {verdictTag(rule.id)}
+              </button>
+            </li>)}</ul>
+          </>}
+          {visibleUiCount > 0 && <>
+            <h3 className="stub-list-heading">UI 规则 · 自上而下执行，{probing ? '清空测试 URL 后可拖动排序' : '可拖动排序'}</h3>
+            <ul>{rules.ui.map((rule, index) => {
+              if (hidden(rule.id)) return null
+              const requestCount = rule.request_headers.filter((edit) => edit.enabled).length
+              const responseCount = rule.response_headers.filter((edit) => edit.enabled).length
+              return <li key={rule.id}
+                className={`stub-row ${draft?.id === rule.id ? 'selected' : ''} ${rule.enabled ? '' : 'off'} ${dimmed(rule.id)} ${dropId === rule.id && dragId !== rule.id ? 'drop-target' : ''} ${dragId === rule.id ? 'dragging' : ''}`}
+                draggable={reorderable}
+                onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', rule.id); setDragId(rule.id) }}
+                onDragOver={(event) => { if (dragId) { event.preventDefault(); setDropId(rule.id) } }}
+                onDragEnd={() => { setDragId(null); setDropId(null) }}
+                onDrop={(event) => { event.preventDefault(); if (dragId && reorderable) moveTo(dragId, index); setDragId(null); setDropId(null) }}>
+                <span className="stub-row-order">{index + 1}</span>
+                <button type="button" className="stub-row-main" onClick={() => choose(toDraft(rule))}>
+                  <code>{matchText(rule)}</code>
+                  <span className="stub-row-meta">
+                    <ModeTag mode={rule.mode} status={rule.status} />
+                    {rule.match_type === 'regex' && <span className="stub-tag">正则</span>}
+                    {requestCount > 0 && <span>请求头 {requestCount}</span>}
+                    {responseCount > 0 && <span>响应头 {responseCount}</span>}
+                    {!probe && shadowedByFile(rule) && <span className="stub-row-warn">被配置文件屏蔽</span>}
+                  </span>
+                  {verdictTag(rule.id)}
+                </button>
+                <Switch checked={rule.enabled} disabled={listBusy} label={`${rule.enabled ? '停用' : '启用'}规则 ${index + 1}`} onChange={() => void toggle(rule)} />
+              </li>
+            })}</ul>
+          </>}
+          {hiddenCount > 0 && <p className="stub-list-hidden">
+            {visibleFile.length + visibleUiCount === 0 ? '没有生效的规则，' : ''}已隐藏 {hiddenCount} 条未生效的规则
+            <button type="button" onClick={() => setOnlyActive(false)}>全部显示</button>
+          </p>}
+        </div>
+      </aside>
+
+      <section className="stub-editor" aria-label={file ? '配置文件规则详情' : '规则编辑'}>
+        {(error || notice) && <div className="stub-banners">
+          {error && <div className="stub-error" role="alert">{error}<button type="button" className="stub-icon-btn" aria-label="关闭错误" onClick={() => setError('')}>×</button></div>}
+          {notice && <div className="stub-success" role="status">{notice}</div>}
+        </div>}
+        {!editing && <EmptyEditor onCreate={() => choose(blankDraft())} disabled={loading} help={!showHelp} />}
+        {file && <FileRuleView rule={file} />}
+        {draft && <form className="stub-form" onSubmit={(event) => void save(event)} onKeyDown={onFormKeyDown}>
+          <div className="stub-editor-head">
+            <h3>{draft.id ? `规则 ${rules.ui.findIndex((rule) => rule.id === draft.id) + 1}` : '新建规则'}</h3>
+            {draft.id && !draft.enabled && <span className="stub-tag off">已停用</span>}
+            <span className="stub-editor-head-actions">
+              {draft.id && (confirmDelete
+                ? <><button type="button" className="stub-danger-solid" disabled={busy} onClick={() => void remove()}>确认删除</button><button type="button" disabled={busy} onClick={() => setConfirmDelete(false)}>取消</button></>
+                : <button type="button" className="stub-danger" disabled={busy} onClick={() => setConfirmDelete(true)}>删除</button>)}
+            </span>
+          </div>
+          <div className="stub-form-body"><fieldset disabled={busy}>
+            {shadowedByFile(toPayload(draft)) && <div className="stub-warning">配置文件中有相同地址的规则，它总是先决定响应，此规则（含 Header 修改）会被整条跳过。如只需修改 Header，请把响应来源改为「原始服务」。</div>}
+            <Field title="匹配请求" aside={<Segmented label="匹配方式" value={draft.match_type} options={matchTypes} onChange={setMatchType} />}>
+              {draft.match_type === 'exact'
+                ? <>
+                  <input required aria-label="请求 URL" spellCheck={false} className="mono" placeholder="https://api.example.com/api/profile" value={draft.url} onChange={(e) => patch({ url: e.target.value })} />
+                  <small>{parsedUrl && 'error' in parsedUrl ? <span className="stub-invalid">{parsedUrl.error}</span>
+                    : <>匹配该域名和路径的所有请求方法{parsedUrl?.ignoredQuery ? '；query 和 # 部分不参与匹配，已忽略' : '，忽略 query'}。</>}</small>
+                </>
+                : <>
+                  <input required aria-label="URL 正则" maxLength={4096} spellCheck={false} className="mono" placeholder={String.raw`^https://api\.example\.com/v1/`} value={draft.url_pattern} onChange={(e) => patch({ url_pattern: e.target.value })} />
+                  <small>匹配完整 URL（含 query，默认 :443 省略），Rust 正则语法；<code>(?i)</code> 忽略大小写，<code>^</code> / <code>$</code> 限定范围。</small>
+                </>}
+            </Field>
+            <Field title="响应来源" aside={<Segmented label="响应来源" value={draft.mode} options={modes} onChange={(mode) => patch({ mode })} />}>
+              <small>{modes.find((mode) => mode.value === draft.mode)?.hint}</small>
+              {draft.mode === 'response' && <div className="stub-response-fields">
+                <label>状态码<input type="number" min="200" max="599" required aria-label="响应状态码" value={draft.status ?? 200} onChange={(e) => patch({ status: Number(e.target.value) })} /></label>
+                <textarea aria-label="Response Body" spellCheck={false} placeholder={'响应正文，例如：\n{ "ok": true }'} value={draft.body} onChange={(e) => patch({ body: e.target.value })} />
+                <small>按原文返回，最大 1 MiB，Content-Length 自动计算；需要时在下方响应头设置 Content-Type。</small>
+              </div>}
+              {draft.mode === 'upstream' && <input type="url" required aria-label="替代上游 URL" spellCheck={false} className="mono" placeholder="http://127.0.0.1:9010" value={draft.upstream ?? ''} onChange={(e) => patch({ upstream: e.target.value })} />}
+            </Field>
+            <Field title="Header 修改" aside={<small>按行顺序执行</small>}>
+              <HeaderEditor key={`req-${draft.id}`} title="请求头" edits={draft.request_headers} onChange={(request_headers) => patch({ request_headers })}
+                note={draft.mode === 'response' && draft.request_headers.length > 0 ? '静态响应不访问上游，请求头修改只体现在抓取记录中。' : undefined} />
+              <HeaderEditor key={`res-${draft.id}`} title="响应头" edits={draft.response_headers} onChange={(response_headers) => patch({ response_headers })} />
+              <small>增加：追加同名值；覆盖：替换全部同名值；删除：移除全部同名值。Host、Content-Length 等传输层 Header 不可修改。</small>
+            </Field>
+          </fieldset></div>
+          <footer className="stub-form-footer">
+            <span>{!draft.id ? '未保存的新规则' : dirty ? '有未保存的修改' : '已保存'}</span>
+            {draft.id && dirty && <button type="button" disabled={busy} onClick={() => { const saved = rules.ui.find((rule) => rule.id === draft.id); if (saved) { setDraft(toDraft(saved)); setDirty(false); setError('') } }}>撤销修改</button>}
+            <button className="stub-primary" disabled={busy || (Boolean(draft.id) && !dirty)} title="Ctrl/⌘ + S">{busy ? '保存中…' : draft.id ? '保存' : '创建规则'}</button>
+          </footer>
         </form>}
       </section>
-      </>}
     </div>
   </dialog>
 }
 
-function RuleRow({ rule, selected, shadowed = false, onSelect, order, onMove, moveUpDisabled, moveDownDisabled }: {
-  rule: StubRule | FileStubRule; selected: boolean; shadowed?: boolean; onSelect: () => void
-  order?: number; onMove?: (offset: number) => void; moveUpDisabled?: boolean; moveDownDisabled?: boolean
-}) {
-  const ui = 'request_headers' in rule
-  const regex = ui && rule.mode === 'mod_header'
-  const match = regex ? rule.url_pattern : `https://${rule.authority}${rule.path}`
-  const upstream = ui ? rule.upstream : typeof rule.upstream?.url_base === 'string' ? rule.upstream.url_base : null
-  const requestHeaders: HeaderEdit[] = ui ? rule.request_headers : Object.entries(rule.upstream?.headers ?? {}).map(([name, value]) => ({ enabled: true, op: 'set', name, value: String(value) }))
-  const responseHeaders: HeaderEdit[] = ui ? rule.response_headers : rule.headers.map(([name, value]) => ({ enabled: true, op: 'set', name, value }))
-  const staticResponse = rule.mode === 'response'
-  return <tr className={selected ? 'selected' : ''}>
-    <td><div className="stub-card-values"><span className={`stub-badge ${!ui ? 'file' : ''}`}>{ui ? `UI 规则 ${order}` : '配置文件 · 只读'}</span>{ui && <span className={`stub-rule-state ${shadowed ? 'shadowed' : rule.enabled ? 'enabled' : ''}`}>{shadowed ? '被文件规则覆盖' : rule.enabled ? '已启用' : '已停用'}</span>}</div></td>
-    <td><div className="stub-card-values"><span className="stub-match-kind">{regex ? '正则匹配' : '精确匹配'} · {modeLabel[rule.mode]}</span><code className="stub-table-url">{match}</code><span className="stub-card-muted">{regex ? '完整 URL · 含 query' : '域名 + 路径 · 忽略 query'} · 所有方法</span></div></td>
-    <td><div className="stub-card-values"><HeaderSummary edits={requestHeaders} fallback="保留原始请求头" />{!ui && Boolean(rule.upstream?.authority) && <span className="stub-card-muted">Host：{String(rule.upstream?.authority)}</span>}{staticResponse && <span className="stub-card-muted">不发送上游{requestHeaders.some((edit) => edit.enabled) ? '，修改仅用于抓取' : ''}</span>}</div></td>
-    <td><div className="stub-card-values"><HeaderSummary edits={responseHeaders} fallback={staticResponse ? 'Stub 自动生成' : '保留原始响应头'} />{staticResponse && <span className="stub-card-muted">状态码 {rule.status ?? 200} · 长度自动计算</span>}</div></td>
-    <td><div className="stub-card-values"><span className="stub-card-muted">请求：客户端原文</span><span className={staticResponse || upstream ? 'stub-card-changed' : ''}>响应：{staticResponse ? ui ? 'UI 编写的正文' : '配置文件 body_file' : upstream ? '替代上游' : '原始上游（不覆写）'}</span>{upstream && <code className="stub-upstream-url">{upstream}</code>}</div></td>
-    <td><button type="button" className="stub-ghost-btn" aria-label={`${ui ? '编辑' : '查看'}规则 ${match}`} onClick={onSelect}>{ui ? '编辑' : '查看'}</button>{onMove && <div className="stub-order-buttons"><button type="button" aria-label={`上移规则 ${match}`} disabled={moveUpDisabled} onClick={() => onMove(-1)}>上移</button><button type="button" aria-label={`下移规则 ${match}`} disabled={moveDownDisabled} onClick={() => onMove(1)}>下移</button></div>}</td>
-  </tr>
-
+function EmptyEditor({ onCreate, disabled, help }: { onCreate: () => void; disabled: boolean; help: boolean }) {
+  return <div className="stub-empty">
+    <p>从左侧选择规则进行编辑，或</p>
+    <button type="button" className="stub-primary" disabled={disabled} onClick={onCreate}>＋ 新建规则</button>
+    {help && <div className="stub-empty-help"><OrderHelp /></div>}
+  </div>
 }
 
-function HeaderSummary({ edits, fallback }: { edits: HeaderEdit[]; fallback: string }) {
-  if (!edits.length) return <span className="stub-card-muted">{fallback}</span>
-  return <>{edits.map((edit, index) => <div className={`stub-card-header ${edit.enabled ? '' : 'off'}`} key={index}><em className={`stub-card-op ${edit.op}`}>{edit.enabled ? headerOpLabel[edit.op] : '停用'}</em><code className="stub-header-code">{edit.name}{edit.op !== 'remove' && <> = {edit.value || '(空值)'}</>}</code></div>)}</>
+function OrderHelp() {
+  return <>
+    <h4>执行顺序与短路规则</h4>
+    <ol>
+      <li><b>顺序</b>：先配置文件规则，再按列表自上而下执行 UI 规则；配置文件规则命中后，UI 规则仍会继续执行。</li>
+      <li><b>响应来源</b>：第一条命中的「静态响应 / 替代上游」规则决定响应，配置文件规则总是最先；都未命中则请求原始服务。</li>
+      <li><b>短路</b>：响应确定后，后面再命中的「静态响应 / 替代上游」规则整条跳过（包括它的 Header 修改），标记为被屏蔽。</li>
+      <li><b>叠加</b>：「原始服务」规则从不短路，命中即按列表顺序叠加 Header 修改，后执行的修改作用在前面的结果之上。</li>
+      <li><b>停用</b>：停用的规则或 Header 行直接跳过，不影响其他规则。</li>
+    </ol>
+    <small>静态响应不访问上游，请求头修改只体现在抓取记录中。左上角输入 URL 可查看每条规则对它是否生效。</small>
+  </>
 }
 
-function HeaderEditor({ title, edits, onChange }: { title: string; edits: HeaderEdit[]; onChange: (edits: HeaderEdit[]) => void }) {
+function FileRuleView({ rule }: { rule: FileStubRule }) {
+  const upstream = typeof rule.upstream?.url_base === 'string' ? rule.upstream.url_base : null
+  return <div className="stub-form">
+    <div className="stub-editor-head">
+      <h3>配置文件规则</h3><span className="stub-tag file">只读</span>
+    </div>
+    <div className="stub-form-body">
+      <Field title="匹配请求"><code className="stub-readonly">{exactRuleUrl(rule.authority, rule.path)}</code><small>精确匹配域名和路径，忽略 query。</small></Field>
+      <Field title="响应来源" aside={<ModeTag mode={rule.mode} status={rule.status} />}>
+        {upstream && <code className="stub-readonly">{upstream}</code>}
+        {rule.upstream && Object.keys(rule.upstream).length > 1 && <pre>{JSON.stringify(rule.upstream, null, 2)}</pre>}
+        {rule.body !== null && <pre>{rule.body || '(empty)'}</pre>}
+      </Field>
+      {rule.headers.length > 0 && <Field title="响应头"><pre>{rule.headers.map(([name, value]) => `${name}: ${value}`).join('\n')}</pre></Field>}
+      <small>修改 --mitm-stub-config-file 指定的 YAML 并重启代理后生效。</small>
+    </div>
+  </div>
+}
+
+function Field({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
+  return <section className="stub-field"><div className="stub-field-head"><h4>{title}</h4>{aside}</div>{children}</section>
+}
+
+function ModeTag({ mode, status }: { mode: StubMode; status: number | null }) {
+  return <span className={`stub-tag mode-${mode}`}>{modeLabel[mode]}{mode === 'response' ? ` ${status ?? 200}` : ''}</span>
+}
+
+function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
+  return <div className="stub-segmented" role="radiogroup" aria-label={label}>
+    {options.map((option) => <button type="button" role="radio" key={option.value} aria-checked={option.value === value}
+      className={option.value === value ? 'active' : ''} onClick={() => onChange(option.value)}>{option.label}</button>)}
+  </div>
+}
+
+function Switch({ checked, disabled, label, onChange }: { checked: boolean; disabled?: boolean; label: string; onChange: (checked: boolean) => void }) {
+  return <button type="button" role="switch" aria-checked={checked} aria-label={label} title={label} disabled={disabled}
+    className={`stub-switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}><i aria-hidden="true" /></button>
+}
+
+function HeaderEditor({ title, edits, onChange, note }: { title: string; edits: HeaderEdit[]; onChange: (edits: HeaderEdit[]) => void; note?: string }) {
+  const [focusNew, setFocusNew] = useState(false)
   const update = (index: number, patch: Partial<HeaderEdit>) => onChange(edits.map((edit, i) => i === index ? { ...edit, ...patch } : edit))
-  const enabledCount = edits.filter((edit) => edit.enabled).length
-  const countLabel = edits.length ? `${enabledCount}/${edits.length} 项启用` : '0 项操作'
-  return <section className="stub-headers"><div className="stub-section-title"><h3>{title} <small>{countLabel}</small></h3><button type="button" aria-label={`添加 ${title}`} onClick={() => onChange([...edits, { enabled: true, op: 'set', name: '', value: '' }])}>＋ 添加 Header</button></div>{!edits.length && <div className="stub-headers-empty">未配置 Header 修改</div>}{edits.map((edit, index) => <div className={`stub-header-edit ${edit.enabled ? '' : 'off'}`} key={index}><button type="button" role="switch" aria-checked={edit.enabled} className={`stub-header-toggle ${edit.enabled ? 'on' : ''}`} aria-label={`${edit.enabled ? '关闭' : '开启'} ${title} 操作 ${index + 1}`} title={edit.enabled ? '临时关闭此 Header 修改' : '开启此 Header 修改'} onClick={() => update(index, { enabled: !edit.enabled })}><i aria-hidden="true" /></button><select aria-label={`${title} 操作 ${index + 1}`} value={edit.op} onChange={(e) => update(index, { op: e.target.value as HeaderEdit['op'] })}><option value="add">增加</option><option value="set">覆盖</option><option value="remove">删除</option></select><input required aria-label={`${title} 名称 ${index + 1}`} placeholder="Header 名称" value={edit.name} onChange={(e) => update(index, { name: e.target.value })} /><input aria-label={`${title} 值 ${index + 1}`} placeholder={edit.op === 'remove' ? '移除全部同名值' : 'Header 值（可为空）'} disabled={edit.op === 'remove'} value={edit.op === 'remove' ? '' : edit.value} onChange={(e) => update(index, { value: e.target.value })} /><button type="button" className="stub-remove-header" aria-label={`移除 ${title} 操作 ${index + 1}`} onClick={() => onChange(edits.filter((_, i) => i !== index))}>×</button></div>)}</section>
+  return <div className="stub-headers">
+    <div className="stub-headers-head">
+      <span>{title}{edits.length > 0 && <small>{edits.filter((edit) => edit.enabled).length}/{edits.length}</small>}</span>
+      <button type="button" aria-label={`添加${title}`} onClick={() => { setFocusNew(true); onChange([...edits, { enabled: true, op: 'set', name: '', value: '' }]) }}>＋ 添加</button>
+    </div>
+    {edits.map((edit, index) => <div className={`stub-header-edit ${edit.enabled ? '' : 'off'}`} key={index}>
+      <Switch checked={edit.enabled} label={`${edit.enabled ? '停用' : '启用'}${title} ${index + 1}`} onChange={(enabled) => update(index, { enabled })} />
+      <select aria-label={`${title} ${index + 1} 操作`} value={edit.op} onChange={(e) => update(index, { op: e.target.value as HeaderEdit['op'] })}>
+        <option value="set">覆盖</option><option value="add">增加</option><option value="remove">删除</option>
+      </select>
+      <input required aria-label={`${title} ${index + 1} 名称`} placeholder="名称" spellCheck={false} autoFocus={focusNew && index === edits.length - 1} value={edit.name} onChange={(e) => update(index, { name: e.target.value })} />
+      <input aria-label={`${title} ${index + 1} 值`} placeholder={edit.op === 'remove' ? '移除全部同名值' : '值（可为空）'} spellCheck={false} disabled={edit.op === 'remove'} value={edit.op === 'remove' ? '' : edit.value} onChange={(e) => update(index, { value: e.target.value })} />
+      <button type="button" className="stub-icon-btn" aria-label={`移除${title} ${index + 1}`} onClick={() => onChange(edits.filter((_, i) => i !== index))}>×</button>
+    </div>)}
+    {note && <small className="stub-headers-note">{note}</small>}
+  </div>
 }

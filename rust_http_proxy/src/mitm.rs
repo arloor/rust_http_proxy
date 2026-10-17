@@ -250,7 +250,7 @@ impl MitmStubSpecs {
                         ("upstream", None, None, serde_json::to_value(&stub.upstream).unwrap_or_default(), Vec::new())
                     }
                 };
-                rules.push(serde_json::json!({"id": format!("file:{authority}:{index}"), "authority": authority, "path": rule.path, "mode": mode, "status": status, "body": body, "upstream": upstream, "headers": headers}));
+                rules.push(serde_json::json!({"id": file_rule_id(authority, index), "authority": authority, "path": rule.path, "mode": mode, "status": status, "body": body, "upstream": upstream, "headers": headers}));
             }
         }
         rules.sort_by_cached_key(|rule| rule["id"].as_str().unwrap_or_default().to_owned());
@@ -259,15 +259,24 @@ impl MitmStubSpecs {
 
     pub(crate) fn matched(&self, authority: &str, path: &str) -> Option<crate::mitm_rules::MatchedStub> {
         use crate::mitm_rules::{HeaderEdit, HeaderOperation, MatchedStub, RuleMode, StubTrace};
-        let action = self.find(authority, path)?;
+        let authority = normalize_authority(authority);
+        let (index, rule) = self
+            .stubs
+            .get(&authority)?
+            .iter()
+            .enumerate()
+            .find(|(_, rule)| rule.path == path)?;
+        let action = rule.action.clone();
+        let rule_id = file_rule_id(&authority, index);
         let mut trace = StubTrace {
-            rule_ids: Vec::new(),
+            rule_ids: vec![rule_id.clone()],
             source: "file".to_owned(),
             mode: RuleMode::Response,
-            rule_id: format!("{authority}{path}"),
+            rule_id,
             request_headers: Vec::new(),
             response_headers: Vec::new(),
             upstream: None,
+            preapplied_request_headers: 0,
         };
         match &action {
             MitmStubAction::Static(response) => {
@@ -297,6 +306,8 @@ impl MitmStubSpecs {
                         value: value.clone(),
                     })
                     .collect();
+                // build_upstream_req already applies the configured upstream headers.
+                trace.preapplied_request_headers = trace.request_headers.len();
             }
         }
         Some(MatchedStub {
@@ -309,6 +320,7 @@ impl MitmStubSpecs {
         self.stubs.is_empty()
     }
 
+    #[cfg(test)]
     pub(crate) fn find(&self, authority: &str, path: &str) -> Option<MitmStubAction> {
         self.stubs
             .get(&normalize_authority(authority))
@@ -390,7 +402,11 @@ pub(crate) fn parse_dynamic_stub_upstream(
     Ok(upstream)
 }
 
-fn normalize_authority(authority: &str) -> String {
+fn file_rule_id(authority: &str, index: usize) -> String {
+    format!("file:{authority}:{index}")
+}
+
+pub(crate) fn normalize_authority(authority: &str) -> String {
     authority.trim().trim_end_matches('.').to_ascii_lowercase()
 }
 

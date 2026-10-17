@@ -10,7 +10,7 @@
 ### 🚀 代理功能
 
 - **正向代理**：支持 HTTP/HTTPS 代理，可通过用户名密码认证
-- **HTTPS MITM**：可使用自定义 CA 动态签发目标域名证书并解密转发；管理面板支持 Stub 响应正文与请求/响应头编辑，mod-header 按 URL 正则仅修改头部，配置文件优先、UI 规则可排序并持久化、Header 规则顺序累积（详见 [HTTPS MITM](docs/mitm.md)）
+- **HTTPS MITM**：可使用自定义 CA 动态签发目标域名证书并解密转发；管理面板支持 Stub 规则：按 URL 或正则匹配，返回静态响应、转发到替代上游或仅修改请求/响应头，配置文件规则优先级最高、UI 规则可排序并持久化、Header 修改顺序累积，可输入 URL 查看各规则是否生效（详见 [HTTPS MITM](docs/mitm.md)）
 - **反向代理**：支持灵活配置反向代理路由规则（详见 [反向代理](docs/reverse-proxy.md)）
 - **链式代理**：通过 `--forward-bypass-url` 指定上游代理服务器。父代理 CONNECT 握手（发送请求及读取响应头）总超时为 30 秒，响应头（含状态行）上限为 32 KiB；隧道数据不计入此上限。
 - **websocket**: 正向代理和反向代理均支持websocket

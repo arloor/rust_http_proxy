@@ -77,19 +77,25 @@ export function fullUrl(record: Pick<RecordSummary, 'authority' | 'path' | 'quer
 }
 
 export type HeaderEdit = { enabled: boolean; op: 'add' | 'set' | 'remove'; name: string; value: string }
-export type StubMode = 'response' | 'upstream' | 'headers' | 'mod_header'
+export type StubMode = 'response' | 'upstream' | 'headers'
+export type StubMatchType = 'exact' | 'regex'
 export type StubRule = {
-  id: string; authority: string; path: string; enabled: boolean; mode: StubMode
-  url_pattern: string
+  id: string; enabled: boolean; mode: StubMode
+  match_type: StubMatchType; authority: string; path: string; url_pattern: string
   body: string; status: number | null; upstream: string | null
   request_headers: HeaderEdit[]; response_headers: HeaderEdit[]
 }
 export type FileStubRule = {
-  id: string; authority: string; path: string; mode: StubMode
+  id: string; authority: string; path: string; mode: Exclude<StubMode, 'headers'>
   status: number | null; body: string | null; upstream: Record<string, unknown> | null; headers: [string, string][]
 }
 export type StubRules = { file: FileStubRule[]; ui: StubRule[] }
+export type StubVerdict = 'response' | 'headers' | 'shadowed' | 'unmatched' | 'disabled'
+// `by` is the id of the rule that already decided the response (only for 'shadowed').
+export type StubRuleVerdict = { id: string; verdict: StubVerdict; matched: boolean; by: string | null }
+export type StubMatchResult = { authority: string; path: string; url: string; decided_by: string | null; verdicts: StubRuleVerdict[] }
 export type StubTrace = {
-  source: 'file' | 'ui'; mode: StubMode; rule_id: string; rule_ids?: string[]; upstream: string | null
+  // Records captured before match_type existed may still carry the legacy 'mod_header' mode.
+  source: 'file' | 'ui'; mode: StubMode | 'mod_header'; rule_id: string; rule_ids?: string[]; upstream: string | null
   request_headers: HeaderEdit[]; response_headers: HeaderEdit[]
 }

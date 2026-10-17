@@ -32,6 +32,7 @@ pub(crate) fn router(basic_auth: HashMap<String, String>) -> Router<Arc<AppState
         .route("/mitm/", get(index))
         .route("/mitm/api/stubs", get(get_stubs).post(add_stub))
         .route("/mitm/api/stubs/order", axum::routing::put(reorder_stubs))
+        .route("/mitm/api/stubs/match", get(match_stubs))
         .route("/mitm/api/stubs/{id}", axum::routing::put(update_stub).delete(delete_stub))
         .route("/mitm/api/settings", get(get_settings).patch(patch_settings))
         .route("/mitm/api/targets", get(get_targets).post(add_target))
@@ -174,6 +175,17 @@ async fn get_recent_requests(State(state): State<Arc<AppState>>) -> Json<Vec<cra
 
 async fn get_stubs(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(state.mitm_manager.list_stubs())
+}
+
+#[derive(serde::Deserialize)]
+struct StubMatchQuery {
+    url: String,
+}
+
+async fn match_stubs(
+    State(state): State<Arc<AppState>>, Query(query): Query<StubMatchQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(state.mitm_manager.explain_stubs(&query.url)?))
 }
 
 async fn reorder_stubs(
