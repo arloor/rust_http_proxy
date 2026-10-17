@@ -438,8 +438,8 @@ mod tests {
         fs::write(
             &config_path,
             r#"
-AdminMaxApi.KnowHub.Cloud:443:
-  - path: /access-tokens/validate
+Api.Example.Com:443:
+  - path: /v1/session/verify
     status: 201
     headers:
       content-type: application/json
@@ -448,7 +448,7 @@ AdminMaxApi.KnowHub.Cloud:443:
         )?;
 
         let specs = parse_mitm_stub_specs(&Some(config_path.to_string_lossy().into_owned()))?;
-        let response = match specs.find("adminmaxapi.knowhub.cloud:443.", "/access-tokens/validate") {
+        let response = match specs.find("api.example.com:443.", "/v1/session/verify") {
             Some(MitmStubAction::Static(response)) => response,
             Some(MitmStubAction::Dynamic(_)) => return Err("expected static MITM stub response".into()),
             None => return Err("expected MITM stub response".into()),
@@ -457,7 +457,7 @@ AdminMaxApi.KnowHub.Cloud:443:
         assert_eq!(response.status, StatusCode::CREATED);
         assert_eq!(response.body, Bytes::from_static(br#"{"ok":true}"#));
         assert_eq!(response.headers.len(), 1);
-        assert!(specs.find("adminmaxapi.knowhub.cloud:443", "/other").is_none());
+        assert!(specs.find("api.example.com:443", "/other").is_none());
 
         fs::remove_dir_all(base_dir)?;
         Ok(())

@@ -104,20 +104,20 @@ docker run --rm --net host \
 
 ```bash
 rust_http_proxy -p 7788 \
-  --mitm-domain-suffix knowhub.cloud \
+  --mitm-domain-suffix example.com \
   --mitm-ca-cert mitm-ca-cert.pem \
   --mitm-ca-key mitm-ca-key.pem \
   --mitm-stub-config-file mitm-stubs.yaml
 ```
 
 ```yaml
-adminmaxapi.knowhub.cloud:443:
+api.example.com:443:
   # 静态 stub
-  - path: /access-tokens/validate
+  - path: /v1/session/verify
     status: 200 # 可选，默认 200
     headers:
       content-type: application/json
-    body_file: responses/knowhub-validate.json
+    body_file: responses/session-verify.json
 
   # 动态 stub
   - path: /users/current
@@ -141,16 +141,13 @@ adminmaxapi.knowhub.cloud:443:
 
 命中后，程序把已卸载 TLS 的原请求（method、headers、body、path 和 query）发送给该 upstream，并把 upstream 的 status、headers 和流式 body 通过现有 MITM TLS 连接返回客户端。SSE (`text/event-stream`) 会逐事件流式返回；WebSocket 请求在 upstream 返回 `101 Switching Protocols` 后会建立双向隧道，且要求最终选择 H1。`upstream` 中的路径作为前缀，例如上面的 `/users/current?verbose=1` 会转发到 `http://127.0.0.1:9010/stub/users/current?verbose=1`。完整对象未配置 `authority` 时默认使用 `url_base` 的 authority；需要保留原请求虚拟主机时可显式设置 `authority: "#{host}"`。
 
-`responses/knowhub-validate.json`:
+`responses/session-verify.json`:
 
 ```json
 {
-  "ok": true,
-  "status": "enabled",
-  "owner": "mitm",
-  "expire_at": 0,
-  "user_ok": true,
-  "user_status": "free",
-  "user_expire_at": 0
+  "valid": true,
+  "user_id": "demo-user",
+  "plan": "free",
+  "expires_at": 0
 }
 ```

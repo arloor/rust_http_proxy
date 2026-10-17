@@ -24,7 +24,7 @@
         "--users=admin:admin123",
         "--mitm-dump",
         "--mitm-domain-suffix",
-        "adminmaxapi.knowhub.cloud",
+        "api.example.com",
         "--mitm-ca-cert",
         "/etc/mitm/mitm-ca-cert.pem",
         "--mitm-ca-key",
