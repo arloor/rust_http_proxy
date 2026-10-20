@@ -80,7 +80,7 @@ export type HeaderEdit = { enabled: boolean; op: 'add' | 'set' | 'remove'; name:
 export type StubMode = 'response' | 'upstream' | 'headers'
 export type StubMatchType = 'exact' | 'regex'
 export type StubRule = {
-  id: string; enabled: boolean; mode: StubMode
+  id: string; note: string; enabled: boolean; mode: StubMode
   match_type: StubMatchType; authority: string; path: string; url_pattern: string
   body: string; status: number | null; upstream: string | null
   request_headers: HeaderEdit[]; response_headers: HeaderEdit[]

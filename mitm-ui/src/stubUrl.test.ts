@@ -21,8 +21,8 @@ describe('exact stub URLs', () => {
     expect(exactRuleUrl('api.example.com:8443', '/x')).toBe('https://api.example.com:8443/x')
   })
 
-  it('derives an anchored, escaped regex prefix', () => {
-    expect(regexFromExactUrl('https://api.example.com/v1/users?q=1')).toBe(String.raw`^https://api\.example\.com/v1/users`)
+  it('seeds the regex with the plain URL, without anchors, escaping or query', () => {
+    expect(regexFromExactUrl('https://api.example.com/v1/users?q=1')).toBe('https://api.example.com/v1/users')
     expect(regexFromExactUrl('ftp://x')).toBe('')
   })
 })

@@ -24,12 +24,8 @@ export function parseExactUrl(input: string): ParsedExactUrl | { error: string }
   return { authority: hasPort ? host : `${host}:443`, path, ignoredQuery: pathEnd >= 0 && tail.length > pathEnd + 1 }
 }
 
-export function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/** Starting point when switching an exact rule to regex: anchored prefix of the same URL. */
+/** Starting point when switching an exact rule to regex: the same URL as plain text, without query. */
 export function regexFromExactUrl(input: string): string {
   const parsed = parseExactUrl(input)
-  return 'error' in parsed ? '' : `^${escapeRegex(exactRuleUrl(parsed.authority, parsed.path))}`
+  return 'error' in parsed ? '' : exactRuleUrl(parsed.authority, parsed.path)
 }

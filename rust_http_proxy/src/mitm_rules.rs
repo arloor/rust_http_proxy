@@ -111,6 +111,8 @@ pub(crate) struct UiStubRule {
     #[serde(default)]
     pub id: String,
     #[serde(default)]
+    pub note: String,
+    #[serde(default)]
     pub match_type: MatchType,
     #[serde(default)]
     pub authority: String,
@@ -135,6 +137,10 @@ pub(crate) struct UiStubRule {
 impl UiStubRule {
     pub(crate) fn validate(&mut self) -> Result<(), String> {
         self.compiled_url_pattern = None;
+        self.note = self.note.trim().to_owned();
+        if self.note.chars().count() > 200 {
+            return Err("备注不能超过 200 个字符".to_owned());
+        }
         if self.mode == RuleMode::ModHeader {
             self.mode = RuleMode::Headers;
             self.match_type = MatchType::Regex;
@@ -509,6 +515,22 @@ mod tests {
         let matched = rule.matched();
         assert_eq!(matched.trace.request_headers.len(), 1);
         assert_eq!(matched.trace.request_headers[0].name, "x-enabled");
+        Ok(())
+    }
+
+    #[test]
+    fn note_is_optional_trimmed_and_bounded() -> Result<(), crate::DynError> {
+        let mut rule: UiStubRule = serde_json::from_value(serde_json::json!({
+            "match_type":"regex", "mode":"headers", "enabled":true, "url_pattern":"example",
+            "request_headers":[{"op":"set", "name":"x-env", "value":"test"}]
+        }))?;
+        rule.validate()?;
+        assert_eq!(rule.note, "");
+        rule.note = "  测试环境  ".into();
+        rule.validate()?;
+        assert_eq!(rule.note, "测试环境");
+        rule.note = "备".repeat(201);
+        assert!(rule.validate().is_err());
         Ok(())
     }
 

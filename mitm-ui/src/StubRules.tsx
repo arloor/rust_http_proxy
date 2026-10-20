@@ -18,7 +18,7 @@ const NO_BODY_STATUS = [204, 205, 304]
 type Draft = StubRule & { url: string }
 
 const blankDraft = (): Draft => ({
-  id: '', enabled: true, mode: 'response', match_type: 'exact', authority: '', path: '', url_pattern: '', url: '',
+  id: '', note: '', enabled: true, mode: 'headers', match_type: 'regex', authority: '', path: '', url_pattern: '', url: '',
   body: '', status: 200, upstream: '', request_headers: [], response_headers: [],
 })
 
@@ -33,6 +33,8 @@ function draftFromRecord(record: RecordDetail): Draft {
   const contentType = record.response_headers.find(([name]) => name.toLowerCase() === 'content-type')?.[1]
   return {
     ...blankDraft(),
+    mode: 'response',
+    match_type: 'exact',
     url: 'error' in parsed ? '' : exactRuleUrl(parsed.authority, parsed.path),
     status,
     body: reusableBody && !NO_BODY_STATUS.includes(status) ? record.response_body : '',
@@ -272,6 +274,7 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
                     {requestCount > 0 && <span>请求头 {requestCount}</span>}
                     {responseCount > 0 && <span>响应头 {responseCount}</span>}
                     {!probe && shadowedByFile(rule) && <span className="stub-row-warn">被配置文件屏蔽</span>}
+                    {rule.note && <span className="stub-row-note" title={rule.note}>{rule.note}</span>}
                   </span>
                   {verdictTag(rule.id)}
                 </button>
@@ -297,6 +300,7 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
           <div className="stub-editor-head">
             <h3>{draft.id ? `规则 ${rules.ui.findIndex((rule) => rule.id === draft.id) + 1}` : '新建规则'}</h3>
             {draft.id && !draft.enabled && <span className="stub-tag off">已停用</span>}
+            <input className="stub-note-input" aria-label="规则备注" maxLength={200} placeholder="添加备注…" disabled={busy} value={draft.note} onChange={(e) => patch({ note: e.target.value })} />
             <span className="stub-editor-head-actions">
               {draft.id && (confirmDelete
                 ? <><button type="button" className="stub-danger-solid" disabled={busy} onClick={() => void remove()}>确认删除</button><button type="button" disabled={busy} onClick={() => setConfirmDelete(false)}>取消</button></>
