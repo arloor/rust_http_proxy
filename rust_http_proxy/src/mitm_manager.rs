@@ -1323,7 +1323,7 @@ fn flush_one(
         if let Some(body) = pending.get_mut(id) {
             body.dirty = false;
         }
-        emit(events, "record_updated", Some(id.to_owned()));
+        emit(events, "record_body_updated", Some(id.to_owned()));
     }
     if remove {
         pending.remove(id);
@@ -2140,6 +2140,7 @@ mod tests {
     async fn incremental_body_flushes_replace_full_snapshot() -> Result<(), DynError> {
         let path = test_db("incremental_body");
         let manager = MitmManager::open(path.clone(), true, &["example.com".to_owned()], true, 10_000, 65_536)?;
+        let mut events = manager.subscribe();
         let request_headers = HeaderMap::new();
         let id = manager
             .begin_record(RecordMetadata {
@@ -2156,7 +2157,7 @@ mod tests {
             })
             .ok_or("capture unexpectedly disabled")?;
         manager.body_chunk(&id, BodyDirection::Request, b"hello", 5, false);
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        wait_for_event(&mut events, "record_body_updated").await?;
         manager.body_chunk(&id, BodyDirection::Request, b" world", 11, false);
         manager.finish_body(&id, BodyDirection::Request, None, None);
         manager.finish_record(&id, "complete");

@@ -98,7 +98,7 @@ curl https://ip.im/info -U "username:password" -x https://localhost:7788 --proxy
 | ---- | ---- |
 | [命令行参数](docs/cli-options.md) | 全部命令行参数说明 |
 | [TLS/SSL 配置](docs/tls.md) | 证书生成与配置、`--over-tls` TLS 加密代理 |
-| [HTTPS MITM](docs/mitm.md) | MITM 配置、管理面板与实时明文查看、Stub 响应 |
+| [HTTPS MITM](docs/mitm.md) | MITM 配置、管理面板与实时明文查看（断线重连自动同步、历史浏览保留窗口）、Stub 响应 |
 | [静态文件托管](docs/static-file-serving.md) | 静态资源托管、Basic 认证、缓存控制、基于域名和路径的高级配置 |
 | [反向代理](docs/reverse-proxy.md) | 反向代理规则、upstream 配置项、GitHub 资源代理、快捷反向代理 |
 | [可观测性与监控](docs/observability.md) | Prometheus metrics、Grafana 大盘、实时网速监控 |

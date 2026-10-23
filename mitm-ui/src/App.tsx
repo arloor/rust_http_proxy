@@ -1,7 +1,9 @@
+import { createRefreshQueue } from './refreshQueue'
 import { StubRulesDialog, headerOpLabel } from './StubRules'
 import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
+  ApiError,
   fullUrl,
   type HostGroup,
   type RecentProxyRequest,
@@ -64,8 +66,11 @@ function App() {
   const [showRecentRequests, setShowRecentRequests] = useState(false)
   const [recentRequests, setRecentRequests] = useState<RecentProxyRequest[]>([])
   const [copied, setCopied] = useState('')
-  const refreshTimer = useRef<number | null>(null)
-  const recentRefreshTimer = useRef<number | null>(null)
+  const recordsRequestRef = useRef(0)
+  const recentRequestRef = useRef(0)
+  const metaRequestRef = useRef(0)
+  const groupsRequestRef = useRef(0)
+  const [historyDirty, setHistoryDirty] = useState(false)
   const selectedIdRef = useRef<string | null>(null)
   const loadedCountRef = useRef(0)
   const queryStringRef = useRef('')
@@ -222,6 +227,8 @@ function App() {
   }, [handleError, showCopied])
 
   const refreshMeta = useCallback(async () => {
+    const version = ++metaRequestRef.current
+    const groupVersion = ++groupsRequestRef.current
     try {
       const [nextSettings, nextTargets, nextGroups, nextTlsErrors] = await Promise.all([
         api<Settings>('/settings'),
@@ -229,9 +236,10 @@ function App() {
         api<HostGroup[]>('/groups'),
         api<TlsErrorGroup[]>('/tls-errors'),
       ])
+      if (version !== metaRequestRef.current) return
       setSettings(nextSettings)
       setTargets(nextTargets)
-      setGroups(nextGroups)
+      if (groupVersion === groupsRequestRef.current) setGroups(nextGroups)
       setTlsErrors(nextTlsErrors)
     } catch (value) {
       handleError(value)
@@ -240,7 +248,9 @@ function App() {
 
   const refreshGroups = useCallback(async () => {
     try {
-      setGroups(await api<HostGroup[]>('/groups'))
+      const version = ++groupsRequestRef.current
+      const groups = await api<HostGroup[]>('/groups')
+      if (version === groupsRequestRef.current) setGroups(groups)
     } catch (value) {
       handleError(value)
     }
@@ -248,42 +258,65 @@ function App() {
 
   const refreshRecentRequests = useCallback(async () => {
     try {
-      setRecentRequests(await api<RecentProxyRequest[]>('/recent-requests'))
+      const version = ++recentRequestRef.current
+      const requests = await api<RecentProxyRequest[]>('/recent-requests')
+      if (version === recentRequestRef.current) setRecentRequests(requests)
     } catch (value) {
       handleError(value)
     }
   }, [handleError])
 
-  const refreshRecords = useCallback(
-    async (includeDetail = false) => {
-      try {
-        const qs = queryStringRef.current
-        // 已经「加载更早记录」时按已加载条数拉取，避免刷新后列表缩回第一页导致跳动
-        const limit = Math.min(Math.max(loadedCountRef.current, 100), 1000)
-        const page = await api<RecordPage>(`/records?limit=${limit}&${qs}`)
-        loadedCountRef.current = page.records.length
-        setRecords(page.records)
-        setRecordsTotal(page.total)
-        nextBeforeRef.current = page.next_before
-        setNextBefore(page.next_before)
-        const id = selectedIdRef.current
-        if (includeDetail && id) {
-          const detail = await api<RecordDetail>(`/records/${id}`).catch(() => null)
-          if (detail === null) {
-            setSelected(null)
-          } else {
-            // 内容没变就不触发重渲染，避免详情面板闪烁
-            setSelected((current) =>
-              current && JSON.stringify(current) === JSON.stringify(detail) ? current : detail,
-            )
-          }
+  const refreshDetail = useCallback(async () => {
+    const id = activeRecordIdRef.current
+    if (!id) return
+    const version = ++detailRequestRef.current
+    try {
+      const detail = await api<RecordDetail>(`/records/${id}`)
+      if (version !== detailRequestRef.current || activeRecordIdRef.current !== id) return
+      setSelected(detail)
+      setDetailLoadingId(null)
+    } catch (value) {
+      if (version === detailRequestRef.current) {
+        setDetailLoadingId(null)
+        if (value instanceof ApiError && value.status === 404) {
+          activeRecordIdRef.current = null
+          setSelected(null)
+        } else {
+          handleError(value)
         }
-      } catch (value) {
-        handleError(value)
       }
-    },
-    [handleError],
-  )
+    }
+  }, [handleError])
+
+  const refreshRecords = useCallback(async () => {
+    if (!pinToLatestRef.current || loadingMoreRef.current) {
+      setHistoryDirty(true)
+      return
+    }
+    const version = ++recordsRequestRef.current
+    const qs = queryStringRef.current
+    try {
+      const count = Math.max(loadedCountRef.current, 100)
+      const records: RecordSummary[] = []
+      let page: RecordPage
+      let before: number | null = null
+      do {
+        page = await api<RecordPage>(`/records?limit=${Math.min(count - records.length, 500)}&${qs}${before === null ? '' : `&before=${before}`}`)
+        if (version !== recordsRequestRef.current || qs !== queryStringRef.current) return
+        if (!pinToLatestRef.current) { setHistoryDirty(true); return }
+        records.push(...page.records)
+        before = page.next_before
+      } while (records.length < count && before !== null)
+      loadedCountRef.current = records.length
+      setRecords(records)
+      setRecordsTotal(page.total)
+      nextBeforeRef.current = before
+      setNextBefore(before)
+      setHistoryDirty(false)
+    } catch (value) {
+      if (version === recordsRequestRef.current) handleError(value)
+    }
+  }, [handleError])
 
   useEffect(() => {
     void refreshMeta()
@@ -299,71 +332,84 @@ function App() {
     loadedCountRef.current = 0
     pinToLatestRef.current = true
     setPinToLatest(true)
-    void refreshRecords(true)
+    recordsRequestRef.current++
+    loadingMoreRef.current = false
+    setLoadingMore(false)
+    nextBeforeRef.current = null
+    setNextBefore(null)
+    setRecords([])
+    void refreshRecords()
   }, [queryString, refreshRecords])
 
   useEffect(() => {
     const source = new EventSource('/mitm/api/events')
-    let needRecords = false
-    let needMeta = false
-    let needGroups = false
-    let includeDetail = false
-    const schedule = () => {
-      if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
-      refreshTimer.current = window.setTimeout(() => {
-        const pending = needRecords ? refreshRecords(includeDetail) : Promise.resolve()
-        void pending.then(() => {
-          if (needMeta) return refreshMeta()
-          if (needGroups) return refreshGroups()
-          return undefined
-        })
-        needRecords = needMeta = needGroups = includeDetail = false
-      }, 250)
-    }
+    const queue = createRefreshQueue<string>(250, async (dirty) => {
+      await Promise.all([
+        dirty.has('records') ? refreshRecords() : undefined,
+        dirty.has('detail') ? refreshDetail() : undefined,
+        dirty.has('meta') ? refreshMeta() : dirty.has('groups') ? refreshGroups() : undefined,
+      ])
+    })
+    const recentQueue = createRefreshQueue<string>(200, async () => {
+      if (showRecentRequestsRef.current) await refreshRecentRequests()
+    })
     const onRecordEvent = (event: MessageEvent) => {
-      needRecords = true
-      if (event.type === 'record_created') needGroups = true
+      if (event.type !== 'record_body_updated') queue.add('records')
+      if (event.type === 'record_created') queue.add('groups')
       try {
         const data = JSON.parse(event.data) as { record_id?: string }
-        if (data.record_id && data.record_id === selectedIdRef.current) includeDetail = true
+        if (data.record_id === activeRecordIdRef.current) queue.add('detail')
       } catch {
-        includeDetail = true
+        queue.add('detail')
       }
-      schedule()
     }
-    const onMetaEvent = () => {
-      needMeta = true
-      schedule()
-    }
+    const onMetaEvent = () => queue.add('meta')
     const onFullEvent = () => {
-      needRecords = needMeta = needGroups = includeDetail = true
-      schedule()
+      queue.add('records', 'meta', 'detail')
+      recentQueue.add('recent')
     }
     source.addEventListener('open', () => {
       setLive(true)
       setError('')
+      onFullEvent()
     })
     source.addEventListener('record_created', onRecordEvent)
     source.addEventListener('record_updated', onRecordEvent)
+    source.addEventListener('record_body_updated', onRecordEvent)
     source.addEventListener('settings', onMetaEvent)
     source.addEventListener('targets', onMetaEvent)
     source.addEventListener('recent_requests', () => {
-      if (!showRecentRequestsRef.current || recentRefreshTimer.current !== null) return
-      recentRefreshTimer.current = window.setTimeout(() => {
-        recentRefreshTimer.current = null
-        void refreshRecentRequests()
-      }, 200)
+      if (showRecentRequestsRef.current) recentQueue.add('recent')
     })
     source.addEventListener('tls_errors', onMetaEvent)
-    source.addEventListener('records_cleared', onFullEvent)
+    source.addEventListener('records_cleared', () => {
+      recordsRequestRef.current++
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+      pinToLatestRef.current = true
+      setPinToLatest(true)
+      loadedCountRef.current = 0
+      nextBeforeRef.current = null
+      setNextBefore(null)
+      setRecords([])
+      setRecordsTotal(0)
+      detailRequestRef.current++
+      activeRecordIdRef.current = null
+      setSelected(null)
+      setDetailLoadingId(null)
+      onFullEvent()
+    })
     source.addEventListener('resync', onFullEvent)
     source.onerror = () => setLive(false)
     return () => {
       source.close()
-      if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
-      if (recentRefreshTimer.current !== null) window.clearTimeout(recentRefreshTimer.current)
+      queue.dispose()
+      recentQueue.dispose()
+      recordsRequestRef.current++
+      detailRequestRef.current++
+      recentRequestRef.current++
     }
-  }, [refreshGroups, refreshMeta, refreshRecentRequests, refreshRecords])
+  }, [refreshDetail, refreshGroups, refreshMeta, refreshRecentRequests, refreshRecords])
 
   async function updateSettings(patch: Partial<Settings>) {
     try {
@@ -405,6 +451,7 @@ function App() {
   }
 
   function openRecentRequests() {
+    showRecentRequestsRef.current = true
     setShowRecentRequests(true)
     void refreshRecentRequests()
   }
@@ -437,20 +484,30 @@ function App() {
   const loadMore = useCallback(async () => {
     const before = nextBeforeRef.current
     if (before === null || loadingMoreRef.current) return
+    const version = ++recordsRequestRef.current
+    const qs = queryStringRef.current
+    pinToLatestRef.current = false
+    setPinToLatest(false)
     loadingMoreRef.current = true
     setLoadingMore(true)
     try {
-      const page = await api<RecordPage>(`/records?limit=100&${queryStringRef.current}&before=${before}`)
+      const page = await api<RecordPage>(`/records?limit=100&${qs}&before=${before}`)
+      if (version !== recordsRequestRef.current || qs !== queryStringRef.current) return
       loadedCountRef.current += page.records.length
       nextBeforeRef.current = page.next_before
-      setRecords((current) => [...current, ...page.records])
+      setRecords((current) => {
+        const ids = new Set(current.map((record) => record.id))
+        return [...current, ...page.records.filter((record) => !ids.has(record.id))]
+      })
       setRecordsTotal(page.total)
       setNextBefore(page.next_before)
     } catch (value) {
-      handleError(value)
+      if (version === recordsRequestRef.current && qs === queryStringRef.current) handleError(value)
     } finally {
-      loadingMoreRef.current = false
-      setLoadingMore(false)
+      if (version === recordsRequestRef.current) {
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      }
     }
   }, [handleError])
 
@@ -458,6 +515,13 @@ function App() {
     if (!window.confirm('确定清空所有 MITM 明文记录吗？此操作不可撤销。')) return
     try {
       await api<void>('/records', { method: 'DELETE' })
+      recordsRequestRef.current++
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+      closeDetail()
+      pinToLatestRef.current = true
+      setPinToLatest(true)
+      setHistoryDirty(false)
       loadedCountRef.current = 0
       nextBeforeRef.current = null
       setRecords([])
@@ -491,15 +555,21 @@ function App() {
     if (nearTop !== pinToLatestRef.current) {
       pinToLatestRef.current = nearTop
       setPinToLatest(nearTop)
+      if (nearTop && historyDirty) void refreshRecords()
     }
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 80
     if (nearBottom) void loadMore()
   }
 
   function jumpToLatest() {
+    recordsRequestRef.current++
+    loadingMoreRef.current = false
+    setLoadingMore(false)
+    loadedCountRef.current = 0
     pinToLatestRef.current = true
     setPinToLatest(true)
     tableWrapRef.current?.scrollTo({ top: 0 })
+    void refreshRecords()
   }
 
   const moveSelection = useCallback((delta: number) => {
@@ -796,7 +866,7 @@ function App() {
             {!records.length && <div className="empty-table"><span>◎</span><p>{emptyHint}</p><small>{emptySub}</small></div>}
           </div>
           <div className="table-footer">
-            {!pinToLatest && <button className="jump-latest" onClick={jumpToLatest}>回到最新</button>}
+            {!pinToLatest && <button className="jump-latest" onClick={jumpToLatest}>{historyDirty ? '请求有更新，回到最新' : '回到最新'}</button>}
             {loadingMore && <span className="loading-more">正在加载更早记录…</span>}
             {!loadingMore && nextBefore === null && records.length > 0 && !pinToLatest && (
               <span className="loading-more">已到最早记录</span>

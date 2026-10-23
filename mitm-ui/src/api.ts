@@ -59,6 +59,12 @@ export type PathGroup = { path: string; count: number; last_seen_ms: number }
 export type HostGroup = { host: string; count: number; last_seen_ms: number; paths: PathGroup[] }
 export type TlsErrorGroup = { authority: string; client_ip: string; count: number; last_seen_ms: number }
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message)
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/mitm/api${path}`, {
     ...init,
@@ -66,7 +72,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ error: response.statusText }))
-    throw new Error(payload.error || response.statusText)
+    throw new ApiError(payload.error || response.statusText, response.status)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
