@@ -13,6 +13,8 @@ pub(crate) struct HeaderEdit {
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub op: HeaderOperation,
+    #[serde(default)]
+    pub note: String,
     pub name: String,
     #[serde(default)]
     pub value: String,
@@ -178,6 +180,10 @@ impl UiStubRule {
             return Err("每条规则最多 100 个 Header 操作".to_owned());
         }
         for edit in self.request_headers.iter_mut().chain(&mut self.response_headers) {
+            edit.note = edit.note.trim().to_owned();
+            if edit.note.chars().count() > 200 {
+                return Err("Header 注释不能超过 200 个字符".to_owned());
+            }
             edit.validate()?;
             if edit.op == HeaderOperation::Remove {
                 edit.value.clear();
@@ -434,18 +440,21 @@ mod tests {
             HeaderEdit {
                 enabled: true,
                 op: HeaderOperation::Add,
+                note: "保留原值并追加".into(),
                 name: "X-Test".into(),
                 value: "extra".into(),
             },
             HeaderEdit {
                 enabled: false,
                 op: HeaderOperation::Set,
+                note: String::new(),
                 name: "X-Test".into(),
                 value: "disabled".into(),
             },
             HeaderEdit {
                 enabled: true,
                 op: HeaderOperation::Remove,
+                note: String::new(),
                 name: "X-Delete".into(),
                 value: String::new(),
             },
@@ -461,6 +470,7 @@ mod tests {
             &[HeaderEdit {
                 enabled: true,
                 op: HeaderOperation::Set,
+                note: String::new(),
                 name: "x-test".into(),
                 value: "replacement".into(),
             }],
@@ -478,6 +488,7 @@ mod tests {
                 HeaderEdit {
                     enabled: true,
                     op: HeaderOperation::Set,
+                    note: String::new(),
                     name: name.into(),
                     value: "x".into()
                 }
@@ -489,6 +500,7 @@ mod tests {
             HeaderEdit {
                 enabled: true,
                 op: HeaderOperation::Add,
+                note: String::new(),
                 name: "x-test".into(),
                 value: "a\r\nb".into()
             }
@@ -503,6 +515,7 @@ mod tests {
         let edit: HeaderEdit =
             serde_json::from_value(serde_json::json!({"op":"set", "name":"x-legacy", "value":"yes"}))?;
         assert!(edit.enabled);
+        assert!(edit.note.is_empty());
 
         let mut rule: UiStubRule = serde_json::from_value(serde_json::json!({
             "mode":"mod_header", "enabled":true, "url_pattern":"example",
@@ -530,6 +543,20 @@ mod tests {
         rule.validate()?;
         assert_eq!(rule.note, "测试环境");
         rule.note = "备".repeat(201);
+        assert!(rule.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn header_edit_note_is_optional_trimmed_and_bounded() -> Result<(), crate::DynError> {
+        let mut rule: UiStubRule = serde_json::from_value(serde_json::json!({
+            "match_type":"regex", "mode":"headers", "enabled":true, "url_pattern":"example",
+            "request_headers":[{"op":"set", "note":"  灰度环境标记  ", "name":"x-env", "value":"test"}]
+        }))?;
+        rule.validate()?;
+        assert_eq!(rule.request_headers[0].note, "灰度环境标记");
+
+        rule.request_headers[0].note = "注".repeat(201);
         assert!(rule.validate().is_err());
         Ok(())
     }
@@ -620,6 +647,7 @@ mod tests {
         same_url_other_mode.response_headers = vec![HeaderEdit {
             enabled: true,
             op: HeaderOperation::Set,
+            note: String::new(),
             name: "x-test".into(),
             value: "1".into(),
         }];

@@ -82,7 +82,7 @@ export function fullUrl(record: Pick<RecordSummary, 'authority' | 'path' | 'quer
   return `https://${record.authority}${record.path}${record.query ? `?${record.query}` : ''}`
 }
 
-export type HeaderEdit = { enabled: boolean; op: 'add' | 'set' | 'remove'; name: string; value: string }
+export type HeaderEdit = { enabled: boolean; op: 'add' | 'set' | 'remove'; note: string; name: string; value: string }
 export type StubMode = 'response' | 'upstream' | 'headers'
 export type StubMatchType = 'exact' | 'regex'
 export type StubRule = {
