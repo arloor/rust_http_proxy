@@ -422,9 +422,9 @@ function HeaderEditor({ title, edits, onChange, note }: { title: string; edits: 
       <select aria-label={`${title} ${index + 1} 操作`} value={edit.op} onChange={(e) => update(index, { op: e.target.value as HeaderEdit['op'] })}>
         <option value="set">覆盖</option><option value="add">增加</option><option value="remove">删除</option>
       </select>
-      <input className="stub-header-note" maxLength={200} aria-label={`${title} ${index + 1} 注释`} placeholder="注释（可选）" value={edit.note ?? ''} onChange={(e) => update(index, { note: e.target.value })} />
       <input required aria-label={`${title} ${index + 1} 名称`} placeholder="名称" spellCheck={false} autoFocus={focusNew && index === edits.length - 1} value={edit.name} onChange={(e) => update(index, { name: e.target.value })} />
       <input aria-label={`${title} ${index + 1} 值`} placeholder={edit.op === 'remove' ? '移除全部同名值' : '值（可为空）'} spellCheck={false} disabled={edit.op === 'remove'} value={edit.op === 'remove' ? '' : edit.value} onChange={(e) => update(index, { value: e.target.value })} />
+      <input className="stub-header-note" maxLength={200} aria-label={`${title} ${index + 1} 注释`} placeholder="注释（可选）" value={edit.note ?? ''} onChange={(e) => update(index, { note: e.target.value })} />
       <button type="button" className="stub-icon-btn" aria-label={`移除${title} ${index + 1}`} onClick={() => onChange(edits.filter((_, i) => i !== index))}>×</button>
     </div>)}
     {note && <small className="stub-headers-note">{note}</small>}

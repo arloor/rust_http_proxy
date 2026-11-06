@@ -468,7 +468,7 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 .stub-headers-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--text-2); }
 .stub-headers-head small { display: inline; margin-left: 6px; font-weight: 400; }
 .stub-dialog .stub-headers-head button { padding: 3px 10px; font-size: 11px; }
-.stub-header-edit { display: grid; grid-template-columns: 30px 72px minmax(100px, .9fr) minmax(100px, 1fr) minmax(100px, 1.3fr) 26px; align-items: center; gap: 6px; }
+.stub-header-edit { display: grid; grid-template-columns: 30px 72px minmax(100px, 1fr) minmax(100px, 1.3fr) minmax(80px, .65fr) 26px; align-items: center; gap: 6px; }
 .stub-dialog .stub-header-edit :is(input, select) { padding: 5px 8px; font-size: 12px; }
 .stub-dialog .stub-header-edit input { font-family: var(--font-mono); }
 .stub-dialog .stub-header-edit .stub-header-note { font-family: var(--font-sans); }
