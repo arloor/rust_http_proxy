@@ -1,3 +1,5 @@
+import { managementEvents } from './events'
+import { downloadCa, isExtension } from './connection'
 import { createRefreshQueue } from './refreshQueue'
 import { StubRulesDialog, headerOpLabel } from './StubRules'
 import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -342,7 +344,7 @@ function App() {
   }, [queryString, refreshRecords])
 
   useEffect(() => {
-    const source = new EventSource('/mitm/api/events')
+    const source = managementEvents()
     const queue = createRefreshQueue<string>(250, async (dirty) => {
       await Promise.all([
         dirty.has('records') ? refreshRecords() : undefined,
@@ -662,6 +664,7 @@ function App() {
             <a
               className="ca-pill online"
               href="/mitm/ca.crt"
+              onClick={isExtension ? (event) => { event.preventDefault(); void downloadCa().catch(handleError) } : undefined}
               download="mitm-ca.crt"
               title="下载 MITM CA 证书"
             >

@@ -19,8 +19,9 @@ const mitmDevProxy = {
   headers: basicAuthHeader(env.MITM_DEV_PROXY_USER),
 }
 
-export default defineConfig({
-  base: '/mitm/',
+export default defineConfig(({ mode }) => ({
+  base: mode === 'extension' ? './' : '/mitm/',
+  publicDir: mode === 'extension' ? 'extension' : false,
   plugins: [react()],
   server: {
     proxy: {
@@ -29,7 +30,8 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: mode === 'extension' ? 'dist-extension' : 'dist',
+    rollupOptions: mode === 'extension' ? { input: { index: 'index.html', popup: 'popup.html' } } : undefined,
     emptyOutDir: true,
   },
-})
+}))

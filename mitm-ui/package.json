@@ -6,16 +6,19 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:extension": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build --mode extension",
+    "package:extension": "npm run build:extension && python3 scripts/package-extension.py"
   },
   "dependencies": {
     "react": "latest",
     "react-dom": "latest"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "latest",
+    "@types/chrome": "^0.3.7",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest"

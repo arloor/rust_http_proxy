@@ -127,3 +127,39 @@ curl https://ip.im/info -U "username:password" -x https://localhost:7788 --proxy
 ---
 
 ⭐ 如果这个项目对你有帮助，请给一个 Star！
+
+### Chrome / Edge 扩展
+
+MITM UI 支持“小弹窗 + 完整标签页”：弹窗配置服务连接、查看连接状态和开关明文抓取；完整标签页查看请求详情和编辑 Stub 规则。Web 管理页继续保留。
+
+```sh
+cd mitm-ui
+npm ci
+npm run build:extension
+```
+
+在 `edge://extensions` 或 `chrome://extensions` 开启开发者模式，选择“加载解压缩的扩展”，加载 `mitm-ui/dist-extension` 目录。固定扩展图标后点击它，填写服务地址（例如 `https://127.0.0.1:444`）以及服务端 Basic Auth 用户名和密码，点击“保存并连接”，按浏览器提示授予该服务地址访问权限，再点击“打开完整管理页”。
+
+- 需要 Chrome / Edge 116 或以上版本；两者使用同一份构建产物。
+- 地址填写服务的 origin，不包含 `/mitm/` 路径。扩展按需请求所选服务主机的访问权限，浏览器的主机授权不区分端口。
+- 地址和用户名保存在本机；密码只保存在浏览器会话内存中，重启浏览器、重载或更新扩展后需重新输入。切换服务或认证信息后，请关闭旧管理页并重新打开。
+- 扩展仍需连接运行中的 Rust 代理服务；它不自动修改浏览器代理设置，也不安装 CA。请按 [HTTPS MITM](docs/mitm.md) 配置流量代理及证书信任。服务端 HTTPS 证书须被浏览器信任，扩展不能使用 Vite 的 `secure: false` 跳过校验。
+- “明文抓取”开关修改服务端共享设置；由 `--mitm-dump` 锁定时不可切换。关闭弹窗或管理页不会停止服务端抓包。
+- 扩展构建输出与 Web 构建分离；`npm run build` 仍生成原来的 `mitm-ui/dist`。
+
+#### 扩展发行包
+
+Release 流程会独立构建并上传 `rust-http-proxy-mitm-extension-v<版本号>.zip`，Chrome 和 Edge 共用。ZIP 内的 `manifest.json` 位于根目录，其版本号取自 `rust_http_proxy/Cargo.toml`。下载后先解压，再在浏览器扩展管理页选择“加载解压缩的扩展”，指向解压目录；这不是商店自动安装包。
+
+本地生成同样的发行包（需要 Python 3.9+）：
+
+```sh
+cd mitm-ui
+npm ci
+npm run package:extension
+# 输出：mitm-ui/release/rust-http-proxy-mitm-extension-v<版本号>.zip
+```
+
+PR 构建也会验证并上传扩展工件；推送 `release` 或 `release/*` 分支时，ZIP 会和三个 Rust 二进制一起附加到 GitHub Release。开发构建的版本号保留在源 manifest 中，打包时仅覆盖 ZIP 内的版本号。
+
+扩展工具栏、管理列表、弹窗和标签页使用统一的青绿色 M / 连接节点图标。图标位于 `mitm-ui/extension/icons/`，含 16、32、48、128 像素 PNG；修改图标生成脚本后，可使用安装了 Pillow 的 Python 执行 `python3 mitm-ui/scripts/generate-extension-icons.py` 重新生成。CI 直接使用已提交的 PNG，无需安装图形依赖。

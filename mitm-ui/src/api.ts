@@ -1,3 +1,5 @@
+import { managementFetch } from './connection'
+
 export type Settings = {
   capture_enabled: boolean
   capture_cli_managed: boolean
@@ -66,7 +68,7 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/mitm/api${path}`, {
+  const response = await managementFetch(`/mitm/api${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })

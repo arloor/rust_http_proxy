@@ -179,9 +179,35 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.build-type }}
           cache-to: type=gha,scope=${{ matrix.build-type }},mode=max
 
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: mitm-ui/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Test and package Chrome / Edge extension
+        working-directory: mitm-ui
+        run: |
+          npm ci
+          npm test
+          npm run package:extension
+      - name: Upload extension package
+        uses: actions/upload-artifact@v7
+        with:
+          name: mitm-browser-extension
+          path: mitm-ui/release/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
   # 创建GitHub Release
   release:
-    needs: build
+    needs: [build, extension]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
     steps:
@@ -210,11 +236,17 @@ jobs:
           name: rust_http_proxy_bpf_static
           path: release_binaries
 
+      - name: Download Chrome / Edge extension
+        uses: actions/download-artifact@v8
+        with:
+          name: mitm-browser-extension
+          path: release_binaries
+
       # 列出所有下载的文件
       - name: List binaries
         run: find release_binaries -type f -ls
 
-      # 创建master分支release（包含三个二进制文件）
+      # 创建master分支release（包含三个二进制文件和浏览器扩展）
       - name: Create Master Release
         if: github.ref == 'refs/heads/release'
         env:
@@ -227,9 +259,9 @@ jobs:
           fi
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
-          gh release create ${version} release_binaries/* -n "最新构建包含三个版本：标准版、动态链接BPF版和静态链接BPF版" --latest -t "${version}"
+          gh release create ${version} release_binaries/* -n "最新构建包含三个版本：标准版、动态链接BPF版和静态链接BPF版；另附 Chrome / Edge MITM 扩展 ZIP，解压后在扩展管理页加载" --latest -t "${version}"
 
-      # 创建版本release（同样包含三个二进制文件）
+      # 创建版本release（同样包含三个二进制文件和浏览器扩展）
       - name: Create Version Release
         if: startsWith(github.ref, 'refs/heads/release/')
         env:
@@ -245,4 +277,4 @@ jobs:
           fi
           git config --local user.email "admin@arloor.com"
           git config --local user.name "arloor"
-          gh release create ${version} release_binaries/* -n "${version} 包含三个版本：标准版、动态链接BPF版和静态链接BPF版" -t "${version}"
+          gh release create ${version} release_binaries/* -n "${version} 包含三个版本：标准版、动态链接BPF版和静态链接BPF版；另附 Chrome / Edge MITM 扩展 ZIP，解压后在扩展管理页加载" -t "${version}"

@@ -1,0 +1,20 @@
+:root { font: 13px/1.5 system-ui, sans-serif; color: #183047; background: #f6f8fb; }
+body { margin: 0; width: 360px; }
+main { padding: 20px; }
+header { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; }
+h1 { font-size: 18px; margin: 0; }
+small, footer { color: #63758a; font-size: 12px; }
+.logo { display: block; flex: none; }
+.connection, .capture { background: white; border: 1px solid #dce3ea; border-radius: 10px; padding: 12px; }
+.connection span, .capture small { display: block; overflow-wrap: anywhere; }
+.online { color: #0f766e; }
+.error { color: #b42318; overflow-wrap: anywhere; }
+.capture { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0; }
+button { cursor: pointer; background: white; color: #183047; border: 1px solid #ccd6e0; border-radius: 7px; padding: 8px 12px; font: inherit; }
+button:disabled { cursor: default; opacity: .5; }
+.primary { width: 100%; background: #0f766e; color: white; border-color: #0f766e; }
+.text { border: 0; background: none; width: 100%; margin-top: 8px; }
+form { display: grid; gap: 10px; margin-top: 10px; }
+label { display: grid; gap: 4px; }
+input { font: inherit; padding: 8px; border: 1px solid #ccd6e0; border-radius: 6px; min-width: 0; }
+footer { margin-top: 16px; }

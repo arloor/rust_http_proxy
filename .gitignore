@@ -9,3 +9,6 @@ vmlinux.h
 .pi-subagents
 mitm-ui/node_modules/
 .tmp/
+
+mitm-ui/dist-extension/
+mitm-ui/release/
