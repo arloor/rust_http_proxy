@@ -724,7 +724,7 @@ function App() {
         }}
       >
         <aside className="sidebar">
-          <div className="panel-title"><span>目标域名后缀</span><b>{targets.length}</b></div>
+          <div className="panel-title"><span>解密域名后缀</span><b>{targets.length}</b></div>
           <form className="target-form" onSubmit={addTarget}>
             <ClearableInput aria-label="新目标后缀" placeholder="example.com" value={newTarget} onChange={setNewTarget} />
             <button type="submit">添加</button>

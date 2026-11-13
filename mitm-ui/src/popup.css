@@ -20,3 +20,14 @@
 .popup-connection small { grid-column: 1 / -1; color: var(--text-3); font-size: 11px; }
 .popup-connection button:disabled { opacity: .5; cursor: default; }
 .popup-empty { margin: auto; color: var(--text-3); }
+.popup-targets { flex: none; border-bottom: 1px solid var(--line); }
+.popup-targets-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; }
+.popup-targets-head button { flex: none; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.popup-targets-head > span { flex: 1; color: var(--text-3); font-size: 11px; }
+.popup-targets-body { padding: 4px 12px 8px; max-height: 190px; overflow-y: auto; }
+.popup-targets-hint { margin: 6px 0; color: var(--text-3); font-size: 11px; line-height: 1.5; }
+.popup-targets .target-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; }
+.popup-targets .target { margin: 0; min-width: 0; }
+.popup-targets .target-main { cursor: default; }
+.popup-targets .target-main span { white-space: nowrap; }
+.popup-targets button:disabled { opacity: .5; cursor: default; }
