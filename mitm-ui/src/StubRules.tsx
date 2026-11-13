@@ -52,7 +52,7 @@ const matchText = (rule: StubRule) => rule.match_type === 'regex' ? rule.url_pat
 const sameExactMatch = (a: Pick<StubRule, 'match_type' | 'authority' | 'path'>, b: StubRule | { error: string }) =>
   !('error' in b) && a.match_type === 'exact' && b.match_type === 'exact' && a.authority === b.authority && a.path === b.path
 
-export function StubRulesDialog({ onClose, record }: { onClose: () => void; record?: RecordDetail }) {
+export function StubRulesDialog({ onClose, record, standalone = false }: { onClose: () => void; record?: RecordDetail; standalone?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const [rules, setRules] = useState<StubRules>({ file: [], ui: [] })
   const [loading, setLoading] = useState(true)
@@ -87,7 +87,7 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
   }, [probeUrl, rules, loading, listBusy])
 
   useEffect(() => {
-    dialog.current?.showModal()
+    if (!standalone) dialog.current?.showModal()
     api<StubRules>('/stubs').then((loaded) => {
       setRules(loaded)
       if (!record) return
@@ -98,7 +98,7 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
         setDraft(toDraft(existing)); setDirty(false); setNotice('该地址已有 UI 规则，已为你打开')
       }
     }).catch((e: Error) => setError(e.message)).finally(() => setLoading(false))
-  }, [record])
+  }, [record, standalone])
 
   useEffect(() => {
     if (!notice) return
@@ -206,7 +206,7 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
   const parsedUrl = draft?.match_type === 'exact' && draft.url.trim() ? parseExactUrl(draft.url) : null
   const editing = draft || file
 
-  return <dialog className="stub-dialog" ref={dialog} aria-labelledby="stub-title"
+  return <dialog className={`stub-dialog${standalone ? ' stub-standalone' : ''}`} ref={dialog} open={standalone ? true : undefined} aria-labelledby="stub-title"
     onMouseDown={(event) => {
       if (event.target !== event.currentTarget || event.button !== 0) return
       // 原生 dialog 的遮罩事件也以 dialog 为目标，需用坐标排除内部空白区域。
@@ -218,7 +218,7 @@ export function StubRulesDialog({ onClose, record }: { onClose: () => void; reco
       <h2 id="stub-title">Stub 规则</h2>
       <span>按顺序拦截 HTTPS 请求：返回静态响应、转发到替代上游，或修改 Header</span>
       <button type="button" className={`stub-help-toggle ${showHelp ? 'active' : ''}`} aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}>执行顺序与短路规则</button>
-      <button type="button" className="stub-icon-btn" aria-label="关闭规则配置" onClick={close}>×</button>
+      {!standalone && <button type="button" className="stub-icon-btn" aria-label="关闭规则配置" onClick={close}>×</button>}
     </header>
     {showHelp && <div className="stub-help-panel"><OrderHelp /></div>}
     <div className="stub-layout">

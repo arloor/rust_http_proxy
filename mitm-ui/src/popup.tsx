@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { api, ApiError, type Settings } from './api'
-import { connection, hostPermission, loadConnection, normalizeOrigin, saveConnection } from './connection'
+import { connection, downloadCa, hostPermission, loadConnection, normalizeOrigin, saveConnection } from './connection'
+import { StubRulesDialog } from './StubRules'
+import './styles.css'
 import './popup.css'
 
 function Popup() {
@@ -10,13 +12,16 @@ function Popup() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [status, setStatus] = useState('正在连接…')
   const [busy, setBusy] = useState(false)
+  const [networkError, setNetworkError] = useState(false)
+  const [caBusy, setCaBusy] = useState(false)
+  const [caError, setCaError] = useState('')
   const [editing, setEditing] = useState(!connection.username || !connection.password)
-  const error = (value: unknown) => { setSettings(null); setStatus(value instanceof ApiError && value.status === 401 ? '认证失败，请检查用户名和密码' : value instanceof TypeError ? '连接失败，请检查服务地址、访问权限及 HTTPS 证书信任' : value instanceof Error ? value.message : String(value)) }
+  const error = (value: unknown) => { setNetworkError(value instanceof TypeError); setSettings(null); setStatus(value instanceof ApiError && value.status === 401 ? '认证失败，请检查用户名和密码' : value instanceof TypeError ? '连接失败，请检查服务地址、访问权限及 HTTPS 证书信任' : value instanceof Error ? value.message : String(value)) }
   async function refresh() {
     const version = ++requestVersion.current
     try {
       const value = await api<Settings>('/settings', { signal: AbortSignal.timeout(8000) })
-      if (version === requestVersion.current) { setSettings(value); setStatus('已连接') }
+      if (version === requestVersion.current) { setSettings(value); setStatus('已连接'); setNetworkError(false) }
     } catch (value) { if (version === requestVersion.current) error(value) }
   }
   useEffect(() => { void refresh() }, [])
@@ -26,6 +31,8 @@ function Popup() {
     requestVersion.current++
     setSettings(null)
     setStatus('正在连接…')
+    setNetworkError(false)
+    setCaError('')
     try {
       const origin = normalizeOrigin(draft.origin)
       if (draft.username.includes(':')) throw new Error('用户名不能包含冒号')
@@ -35,27 +42,43 @@ function Popup() {
       await refresh()
     } catch (value) { error(value) } finally { setBusy(false) }
   }
-  async function toggle() {
-    if (!settings) return
-    setBusy(true)
-    try { setSettings(await api<Settings>('/settings', { method: 'PATCH', body: JSON.stringify({ capture_enabled: !settings.capture_enabled }), signal: AbortSignal.timeout(8000) })) } catch (value) { error(value) } finally { setBusy(false) }
+  async function downloadCertificate() {
+    setCaBusy(true)
+    setCaError('')
+    try { await downloadCa() } catch (value) {
+      setCaError(value instanceof TypeError
+        ? 'CA 下载失败：请检查网络、访问权限及服务端 HTTPS 证书信任。服务证书未受信任时，扩展也无法下载 CA，请先在浏览器中检查服务地址。'
+        : value instanceof Error ? value.message : String(value))
+    } finally { setCaBusy(false) }
   }
-  return <main>
-    <header><img className="logo" src="icons/icon-48.png" width="48" height="48" alt="MITM" /><div><h1>MITM 控制台</h1><small>rust_http_proxy</small></div></header>
-    <section className="connection"><strong className={settings ? 'online' : ''}>{settings ? '● 已连接' : '○ 未连接'}</strong><span>{connection.origin}</span></section>
-    <p role="status" className={settings ? 'hint' : 'error'}>{status}</p>
-    <div className="capture"><div><b>明文抓取</b><small>{settings?.capture_cli_managed ? '由启动参数锁定' : '控制服务端请求记录'}</small></div><button disabled={!settings || busy || settings.capture_cli_managed} onClick={() => void toggle()}>{settings?.capture_enabled ? '关闭抓取' : '开启抓取'}</button></div>
-    <button className="primary" onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('index.html') }).then(() => window.close()).catch(error)}>打开完整管理页 ↗</button>
-    <button className="text" onClick={() => setEditing(!editing)}>{editing ? '收起连接设置' : '连接设置 / 切换服务'}</button>
-    {editing && <form onSubmit={event => void connect(event)}>
+  return <main className="popup-shell">
+    <header className="popup-header">
+      <img src="icons/icon-48.png" width="28" height="28" alt="MITM" />
+      <strong>MITM · Stub 规则</strong>
+      <span role="status" className={`popup-status ${settings ? 'online' : 'offline'}`} title={status}>{settings ? '● 已连接' : status === '正在连接…' ? '连接中…' : '○ 未连接'}</span>
+      <span className="popup-origin" title={connection.origin}>{connection.origin}</span>
+      <button disabled={caBusy || busy || !connection.username || settings?.ca_available === false} title={settings?.ca_available === false ? '服务端未提供 CA 证书' : '下载 MITM CA 证书'} onClick={() => void downloadCertificate()}>{caBusy ? '下载中…' : '下载 CA 证书'}</button>
+      <button aria-expanded={editing} onClick={() => setEditing(!editing)}>{editing ? '收起连接设置' : '连接设置'}</button>
+    </header>
+    {!settings && status !== '正在连接…' && <div role="alert" className="popup-error">
+      <div>{status}</div>
+      {networkError && connection.origin.startsWith('https:') && <div>
+        HTTPS 证书未受信任也会导致此错误，扩展无法区分证书、网络或权限问题。
+        请先打开服务地址检查证书信任；MITM CA 下载后需导入系统并信任，服务端 HTTPS 证书也需单独确认。
+        <button onClick={() => void chrome.tabs.create({ url: connection.origin }).catch(error)}>检查服务证书 ↗</button>
+      </div>}
+    </div>}
+    {caError && <div role="alert" className="popup-error">{caError}</div>}
+    {editing && <form className="popup-connection" onSubmit={event => void connect(event)}>
       <label>服务地址<input required type="url" value={draft.origin} onChange={event => setDraft({ ...draft, origin: event.target.value })} placeholder="https://127.0.0.1:444" /></label>
       <label>用户名<input required autoComplete="username" value={draft.username} onChange={event => setDraft({ ...draft, username: event.target.value })} /></label>
       <label>密码<input type="password" autoComplete="current-password" value={draft.password} onChange={event => setDraft({ ...draft, password: event.target.value })} /></label>
-      <small>密码仅保留在本次浏览器会话中。切换服务后请重新打开管理页。</small>
       <button disabled={busy} type="submit">{busy ? '连接中…' : '保存并连接'}</button>
+      <small>密码仅保留在本次浏览器会话中。重新连接会重载规则，请先保存编辑。</small>
     </form>}
-    <footer>需先运行 Rust 代理服务并信任其 HTTPS 证书。</footer>
+    {settings && !busy ? <StubRulesDialog standalone onClose={() => {}} /> : <div className="popup-empty">{busy ? '正在连接服务…' : '请在连接设置中配置服务地址和认证信息。'}</div>}
   </main>
 }
 
+document.documentElement.classList.add('stub-popup')
 void loadConnection().then(() => createRoot(document.getElementById('root')!).render(<Popup />))

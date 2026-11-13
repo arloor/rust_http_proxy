@@ -373,6 +373,19 @@ tbody tr.selected .client-addr:hover { background: #99f6e4; }
 /* Stub rules dialog: ordered rule list on the left, editor for the selected rule on the right. */
 .stub-dialog { width: min(1180px, calc(100vw - 48px)); height: min(820px, calc(100vh - 48px)); padding: 0; border: 1px solid var(--line); border-radius: 14px; color: var(--text); background: var(--panel); box-shadow: 0 24px 90px #0f172a40; overflow: hidden; }
 .stub-dialog[open] { display: flex; flex-direction: column; }
+.stub-dialog.stub-standalone { position: static; flex: 1; min-height: 0; width: 100%; max-width: none; max-height: none; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+html.stub-popup { width: 800px; height: 600px; }
+.stub-popup body { min-width: 0; width: 800px; height: 600px; }
+.stub-popup .stub-dialog-head { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+.stub-popup .stub-dialog-head > span { flex-basis: 100%; order: 1; }
+.stub-popup .stub-dialog-head .stub-help-toggle { margin-left: auto; }
+.stub-popup .stub-dialog-head .stub-icon-btn { font-size: 13px; }
+.stub-popup .stub-layout { grid-template-columns: 270px minmax(0, 1fr); }
+.stub-popup .stub-editor-head, .stub-popup .stub-form-footer { flex-wrap: wrap; padding: 10px 12px; }
+.stub-popup .stub-form-body { padding: 12px; }
+.stub-popup .stub-header-edit { grid-template-columns: 30px 72px minmax(0, 1fr) 26px; }
+.stub-popup .stub-header-edit > input { grid-column: 3; }
+.stub-popup .stub-header-edit > .stub-icon-btn { grid-column: 4; grid-row: 1; }
 .stub-dialog::backdrop { background: #0f172a70; backdrop-filter: blur(3px); }
 .stub-dialog button { cursor: pointer; border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; background: white; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .stub-dialog button:disabled { opacity: .5; cursor: default; }
