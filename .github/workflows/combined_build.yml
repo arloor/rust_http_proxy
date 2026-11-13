@@ -80,6 +80,8 @@ jobs:
           npm test
           npm run build
       - name: Verify committed MITM UI dist is current
+        # Releases embed the freshly built UI even if committed dist is stale.
+        if: github.event_name == 'pull_request'
         run: git diff --exit-code -- mitm-ui/dist
       - name: Set outputs
         id: vars

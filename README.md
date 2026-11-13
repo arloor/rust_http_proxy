@@ -148,6 +148,8 @@ npm run build:extension
 - “明文抓取”开关修改服务端共享设置；由 `--mitm-dump` 锁定时不可切换。关闭弹窗或管理页不会停止服务端抓包。
 - 扩展构建输出与 Web 构建分离；`npm run build` 仍生成原来的 `mitm-ui/dist`。
 
+CI 会先测试并重新构建 Web UI，再将生成的 `mitm-ui/dist` 嵌入 Rust 二进制。推送 `release` 或 `release/*` 分支时，即使仓库中的 dist 未同步更新，也会使用当次构建产物继续发布；UI 测试或构建失败仍会中止发布。PR 构建保留 dist 一致性检查，前端变更请同时提交 `npm run build` 生成的产物。
+
 #### 扩展发行包
 
 Release 流程会独立构建并上传 `rust-http-proxy-mitm-extension-v<版本号>.zip`，Chrome 和 Edge 共用。ZIP 内的 `manifest.json` 位于根目录，其版本号取自 `rust_http_proxy/Cargo.toml`。下载后先解压，再在浏览器扩展管理页选择“加载解压缩的扩展”，指向解压目录；这不是商店自动安装包。
