@@ -2,6 +2,7 @@ import { managementEvents } from './events'
 import { downloadCa, isExtension } from './connection'
 import { createRefreshQueue } from './refreshQueue'
 import { StubRulesDialog, headerOpLabel } from './StubRules'
+import { TargetDeleteButton } from './TargetDeleteButton'
 import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
@@ -753,11 +754,8 @@ function App() {
                   onClick={() => void setTargetEnabled(target, !target.enabled)}
                 ><i /></button>
                 {!target.cli_managed && (
-                  <button
-                    className="target-remove"
-                    aria-label={`删除 ${target.suffix}`}
-                    onClick={() => void api<void>(`/targets/${target.id}`, { method: 'DELETE' }).then(refreshMeta).catch(handleError)}
-                  >×</button>
+                  <TargetDeleteButton suffix={target.suffix}
+                    onDelete={() => api<void>(`/targets/${target.id}`, { method: 'DELETE' }).then(refreshMeta)} />
                 )}
               </div>
             ))}

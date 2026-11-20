@@ -3,13 +3,13 @@ import { createRoot } from 'react-dom/client'
 import { api, ApiError, type Settings, type Target } from './api'
 import { connection, downloadCa, hostPermission, loadConnection, normalizeOrigin, saveConnection } from './connection'
 import { StubRulesDialog } from './StubRules'
+import { TargetDeleteButton } from './TargetDeleteButton'
 import './styles.css'
 import './popup.css'
 
-function TargetSettings({ caAvailable }: { caAvailable: boolean }) {
+function TargetSettings({ caAvailable, expanded }: { caAvailable: boolean; expanded: boolean }) {
   const [targets, setTargets] = useState<Target[] | null>(null)
   const [suffix, setSuffix] = useState('')
-  const [expanded, setExpanded] = useState(false)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
 
@@ -17,7 +17,6 @@ function TargetSettings({ caAvailable }: { caAvailable: boolean }) {
     const controller = new AbortController()
     api<Target[]>('/targets', { signal: controller.signal }).then(value => {
       setTargets(value)
-      setExpanded(!value.some(target => target.enabled))
     }).catch(value => {
       if (!controller.signal.aborted) setError(value instanceof Error ? value.message : String(value))
     }).finally(() => {
@@ -34,13 +33,13 @@ function TargetSettings({ caAvailable }: { caAvailable: boolean }) {
     finally { setBusy(false) }
   }
 
-  async function update(method: 'POST' | 'PATCH' | 'DELETE', target?: Target) {
+  async function update(method: 'POST' | 'PATCH', target?: Target) {
     setBusy(true)
     setError('')
     try {
       const value = await api<Target | undefined>(target ? `/targets/${target.id}` : '/targets', {
         method,
-        body: method === 'DELETE' ? undefined : JSON.stringify(target ? { enabled: !target.enabled } : { suffix: suffix.trim() }),
+        body: JSON.stringify(target ? { enabled: !target.enabled } : { suffix: suffix.trim() }),
       })
       setTargets(current => {
         const remaining = (current ?? []).filter(item => item.id !== (target?.id ?? value?.id) && item.suffix !== value?.suffix)
@@ -52,17 +51,15 @@ function TargetSettings({ caAvailable }: { caAvailable: boolean }) {
   }
 
   const enabled = targets?.filter(target => target.enabled).length ?? 0
-  return <section className="popup-targets" aria-label="MITM 解密域名后缀管理">
+  return <section id="popup-targets" className="popup-targets" aria-label="MITM 解密域名后缀管理" hidden={!expanded}>
     <div className="popup-targets-head">
-      <button aria-expanded={expanded} aria-controls="popup-targets-body" onClick={() => setExpanded(!expanded)}>
-        {expanded ? '▾' : '▸'} 解密域名后缀{targets !== null ? ` · ${enabled}/${targets.length} 已启用` : ''}
-      </button>
+      <strong>{targets !== null ? `${enabled}/${targets.length} 已启用` : '解密域名后缀'}</strong>
       <span>{targets === null ? '加载目标后缀后可管理' : enabled ? 'Stub 仅对已启用后缀覆盖的域名生效' : '尚无已启用后缀，Stub 不会对新连接生效'}</span>
       <button disabled={busy} onClick={() => void refresh()}>{busy ? '处理中…' : '刷新'}</button>
     </div>
     {!caAvailable && <div role="alert" className="popup-error">服务端 CA 不可用，请先配置 MITM CA；仅添加域名后缀无法启用 Stub。</div>}
     {error && <div role="alert" className="popup-error">{error}</div>}
-    <div id="popup-targets-body" className="popup-targets-body" hidden={!expanded}>
+    <div className="popup-targets-body">
       <form className="target-form" onSubmit={event => { event.preventDefault(); if (suffix.trim() && !busy) void update('POST') }}>
         <input required aria-label="新目标后缀" placeholder="example.com" disabled={busy || targets === null} value={suffix} onChange={event => setSuffix(event.target.value)} />
         <button type="submit" disabled={busy || targets === null || !suffix.trim()}>添加后缀</button>
@@ -74,8 +71,10 @@ function TargetSettings({ caAvailable }: { caAvailable: boolean }) {
           <button className={`target-toggle ${target.enabled ? 'on' : ''}`} role="switch" aria-checked={target.enabled}
             aria-label={`${target.enabled ? '停用' : '启用'} ${target.suffix}`} disabled={busy}
             onClick={() => void update('PATCH', target)}><i /></button>
-          {!target.cli_managed && <button className="target-remove" aria-label={`删除 ${target.suffix}`} disabled={busy}
-            onClick={() => void update('DELETE', target)}>×</button>}
+          {!target.cli_managed && <TargetDeleteButton suffix={target.suffix} disabled={busy} onDelete={async () => {
+            await api<void>(`/targets/${target.id}`, { method: 'DELETE' })
+            setTargets(current => current?.filter(item => item.id !== target.id) ?? null)
+          }} />}
         </div>)}
         {targets?.length === 0 && <p className="popup-targets-hint">尚未配置目标后缀，请添加 Stub 请求对应的域名。</p>}
       </div>
@@ -93,6 +92,7 @@ function Popup() {
   const [caBusy, setCaBusy] = useState(false)
   const [caError, setCaError] = useState('')
   const [editing, setEditing] = useState(!connection.username || !connection.password)
+  const [targetsExpanded, setTargetsExpanded] = useState(false)
   const error = (value: unknown) => { setNetworkError(value instanceof TypeError); setSettings(null); setStatus(value instanceof ApiError && value.status === 401 ? '认证失败，请检查用户名和密码' : value instanceof TypeError ? '连接失败，请检查服务地址、访问权限及 HTTPS 证书信任' : value instanceof Error ? value.message : String(value)) }
   async function refresh() {
     const version = ++requestVersion.current
@@ -110,6 +110,7 @@ function Popup() {
     setStatus('正在连接…')
     setNetworkError(false)
     setCaError('')
+    setTargetsExpanded(false)
     try {
       const origin = normalizeOrigin(draft.origin)
       if (draft.username.includes(':')) throw new Error('用户名不能包含冒号')
@@ -134,6 +135,7 @@ function Popup() {
       <strong>MITM · Stub 规则</strong>
       <span role="status" className={`popup-status ${settings ? 'online' : 'offline'}`} title={status}>{settings ? '● 已连接' : status === '正在连接…' ? '连接中…' : '○ 未连接'}</span>
       <span className="popup-origin" title={connection.origin}>{connection.origin}</span>
+      <button disabled={!settings || busy} aria-expanded={targetsExpanded} aria-controls="popup-targets" onClick={() => setTargetsExpanded(!targetsExpanded)}>{targetsExpanded ? '▾' : '▸'} 解密域名后缀</button>
       <button disabled={caBusy || busy || !connection.username || settings?.ca_available === false} title={settings?.ca_available === false ? '服务端未提供 CA 证书' : '下载 MITM CA 证书'} onClick={() => void downloadCertificate()}>{caBusy ? '下载中…' : '下载 CA 证书'}</button>
       <button aria-expanded={editing} onClick={() => setEditing(!editing)}>{editing ? '收起连接设置' : '连接设置'}</button>
     </header>
@@ -154,7 +156,7 @@ function Popup() {
       <small>密码仅保留在本次浏览器会话中。重新连接会重载规则，请先保存编辑。</small>
     </form>}
     {settings && !busy ? <>
-      <TargetSettings caAvailable={settings.ca_available} />
+      <TargetSettings caAvailable={settings.ca_available} expanded={targetsExpanded} />
       <StubRulesDialog standalone onClose={() => {}} />
     </> : <div className="popup-empty">{busy ? '正在连接服务…' : '请在连接设置中配置服务地址和认证信息。'}</div>}
   </main>
