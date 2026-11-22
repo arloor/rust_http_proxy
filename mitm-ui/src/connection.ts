@@ -30,6 +30,17 @@ export async function saveConnection(value: Connection) {
   connection = value
 }
 
+export function onConnectionChange(listener: () => void): () => void {
+  if (!isExtension || !chrome.storage?.onChanged?.addListener) return () => {}
+  const handler = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+    if ((area === 'local' && 'connection' in changes) || (area === 'session' && 'credential' in changes)) {
+      void loadConnection().then(listener)
+    }
+  }
+  chrome.storage.onChanged.addListener(handler)
+  return () => chrome.storage.onChanged.removeListener(handler)
+}
+
 export async function managementFetch(path: string, init: RequestInit = {}) {
   if (!isExtension) return fetch(path, init)
   if (!connection.username) throw new Error('请先点击扩展图标，配置服务地址和认证信息')

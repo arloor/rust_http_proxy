@@ -43,4 +43,33 @@ describe('management connection', () => {
     expect(init.redirect).toBe('error')
     expect(init.credentials).toBe('omit')
   })
+
+  it('reloads connection and notifies subscribers when extension storage changes', async () => {
+    let storageListener: ((changes: Record<string, unknown>, area: string) => void) | undefined
+    const addListener = vi.fn((fn: (changes: Record<string, unknown>, area: string) => void) => { storageListener = fn })
+    const removeListener = vi.fn()
+    let origin = 'https://first.local:444'
+    let password = 'p1'
+    vi.stubGlobal('chrome', {
+      runtime: { id: 'test' },
+      storage: {
+        local: { get: async () => ({ connection: { origin, username: 'admin' } }), set: vi.fn() },
+        session: { get: async () => ({ credential: { origin, username: 'admin', password } }), set: vi.fn() },
+        onChanged: { addListener, removeListener },
+      },
+    })
+    const module = await import('./connection')
+    await module.loadConnection()
+    expect(module.connection.origin).toBe('https://first.local:444')
+    const notified = vi.fn()
+    const unsubscribe = module.onConnectionChange(notified)
+    origin = 'https://second.local:8443'
+    password = 'p2'
+    storageListener?.({ connection: { newValue: { origin, username: 'admin' } } }, 'local')
+    await vi.waitFor(() => expect(notified).toHaveBeenCalledOnce())
+    expect(module.connection.origin).toBe('https://second.local:8443')
+    expect(module.connection.password).toBe('p2')
+    unsubscribe()
+    expect(removeListener).toHaveBeenCalledOnce()
+  })
 })

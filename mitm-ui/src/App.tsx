@@ -1,9 +1,10 @@
 import { managementEvents } from './events'
-import { downloadCa, isExtension } from './connection'
+import { connection, downloadCa, isExtension, onConnectionChange } from './connection'
+import { ConfirmDialog } from './ConfirmDialog'
 import { createRefreshQueue } from './refreshQueue'
 import { StubRulesDialog, headerOpLabel } from './StubRules'
 import { TargetDeleteButton } from './TargetDeleteButton'
-import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   ApiError,
@@ -62,13 +63,19 @@ function App() {
   const [search, setSearch] = useState('')
   const [groupFilter, setGroupFilter] = useState('')
   const [sidebarWidth, setSidebarWidth] = useState(250)
-  const [detailWidth, setDetailWidth] = useState(800)
+  const [detailWidth, setDetailWidth] = useState(520)
   const [newTarget, setNewTarget] = useState('')
   const [error, setError] = useState('')
   const [live, setLive] = useState(false)
   const [showRecentRequests, setShowRecentRequests] = useState(false)
   const [recentRequests, setRecentRequests] = useState<RecentProxyRequest[]>([])
   const [copied, setCopied] = useState('')
+  const [extensionOrigin, setExtensionOrigin] = useState(connection.origin)
+  const [connectionEpoch, setConnectionEpoch] = useState(0)
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false)
+  const [clearingRecords, setClearingRecords] = useState(false)
+  const [clearError, setClearError] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const recordsRequestRef = useRef(0)
   const recentRequestRef = useRef(0)
   const metaRequestRef = useRef(0)
@@ -174,17 +181,21 @@ function App() {
     [],
   )
 
-  // 窗口尺寸变化（或详情开合）时夹取列宽，保证三栏不超出视口
+  // 窗口尺寸变化（或详情开合）时夹取列宽，优先保留侧栏合理宽度再收缩详情栏
   useEffect(() => {
     const clampColumns = () => {
       const el = workspaceRef.current
       if (!el) return
       const available = el.clientWidth - (showDetail ? 12 : 6) - (showDetail ? 360 : 470)
-      const maxSidebar = Math.max(180, Math.min(480, available - (showDetail ? detailWidth : 0)))
-      if (sidebarWidth > maxSidebar) setSidebarWidth(maxSidebar)
       if (showDetail) {
-        const maxDetail = Math.max(320, Math.min(800, available - Math.min(sidebarWidth, maxSidebar)))
-        if (detailWidth > maxDetail) setDetailWidth(maxDetail)
+        const maxDetail = Math.max(320, Math.min(800, available - Math.min(sidebarWidth, 240)))
+        const nextDetail = Math.min(detailWidth, maxDetail)
+        if (nextDetail !== detailWidth) setDetailWidth(nextDetail)
+        const maxSidebar = Math.max(180, Math.min(480, available - nextDetail))
+        if (sidebarWidth > maxSidebar) setSidebarWidth(maxSidebar)
+      } else {
+        const maxSidebar = Math.max(180, Math.min(480, available))
+        if (sidebarWidth > maxSidebar) setSidebarWidth(maxSidebar)
       }
     }
     clampColumns()
@@ -322,8 +333,17 @@ function App() {
   }, [handleError])
 
   useEffect(() => {
+    return onConnectionChange(() => {
+      setExtensionOrigin(connection.origin)
+      document.title = `MITM · ${connection.origin}`
+      setError('')
+      setConnectionEpoch((epoch) => epoch + 1)
+    })
+  }, [])
+
+  useEffect(() => {
     void refreshMeta()
-  }, [refreshMeta])
+  }, [refreshMeta, connectionEpoch])
 
   // DB 大小、prune 后过期的 URL 分类计数等没有事件驱动，周期性兜底刷新
   useEffect(() => {
@@ -342,7 +362,7 @@ function App() {
     setNextBefore(null)
     setRecords([])
     void refreshRecords()
-  }, [queryString, refreshRecords])
+  }, [queryString, refreshRecords, connectionEpoch])
 
   useEffect(() => {
     const source = managementEvents()
@@ -412,7 +432,7 @@ function App() {
       detailRequestRef.current++
       recentRequestRef.current++
     }
-  }, [refreshDetail, refreshGroups, refreshMeta, refreshRecentRequests, refreshRecords])
+  }, [refreshDetail, refreshGroups, refreshMeta, refreshRecentRequests, refreshRecords, connectionEpoch])
 
   async function updateSettings(patch: Partial<Settings>) {
     try {
@@ -515,7 +535,8 @@ function App() {
   }, [handleError])
 
   async function clearRecords() {
-    if (!window.confirm('确定清空所有 MITM 明文记录吗？此操作不可撤销。')) return
+    setClearingRecords(true)
+    setClearError('')
     try {
       await api<void>('/records', { method: 'DELETE' })
       recordsRequestRef.current++
@@ -531,9 +552,12 @@ function App() {
       setRecordsTotal(0)
       setNextBefore(null)
       setSelected(null)
+      setConfirmClearOpen(false)
       await refreshMeta()
     } catch (value) {
-      handleError(value)
+      setClearError(value instanceof Error ? value.message : String(value))
+    } finally {
+      setClearingRecords(false)
     }
   }
 
@@ -579,8 +603,13 @@ function App() {
     const list = recordsRef.current
     if (!list.length) return
     const index = list.findIndex((record) => record.id === activeRecordIdRef.current)
-    const next = list[Math.min(list.length - 1, Math.max(0, (index < 0 ? 0 : index) + delta))]
-    if (next) void selectRecord(next.id)
+    const nextIndex = Math.min(list.length - 1, Math.max(0, (index < 0 ? 0 : index) + delta))
+    const next = list[nextIndex]
+    if (next) {
+      void selectRecord(next.id)
+      const row = tableWrapRef.current?.querySelector<HTMLElement>(`tbody tr[data-record-id="${CSS.escape(next.id)}"]`)
+      row?.scrollIntoView({ block: 'nearest' })
+    }
   }, [])
 
   useEffect(() => {
@@ -599,6 +628,12 @@ function App() {
         closeDetail()
         return
       }
+      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+        return
+      }
       if (event.key === 'ArrowDown' || event.key === 'j') {
         event.preventDefault()
         moveSelection(1)
@@ -613,6 +648,7 @@ function App() {
 
   const hasFilters = Boolean(host || path || method || status || clientIp || search)
   const tlsErrorTotal = tlsErrors.reduce((total, group) => total + group.count, 0)
+  const enabledTargetsCount = targets.filter((target) => target.enabled).length
   const emptyHint = hasFilters ? '没有匹配的记录' : '等待 MITM 流量'
   const emptySub = hasFilters ? '试试放宽筛选条件' : '命中目标的 HTTPS 请求会实时出现在这里'
 
@@ -623,6 +659,7 @@ function App() {
     [groups, groupQuery, targetSuffixFilter],
   )
   const groupListFiltered = Boolean(groupQuery || targetSuffixFilter)
+  const showTableFooter = !pinToLatest || loadingMore
 
   return (
     <main>
@@ -630,37 +667,47 @@ function App() {
       {copied && <div className="copy-toast" role="status">{copied} 已复制</div>}
 
       <section className="control-strip">
-        <Toggle
-          label={settings?.capture_cli_managed ? '明文抓取（启动参数）' : '明文抓取'}
-          checked={settings?.capture_enabled ?? false}
-          disabled={settings?.capture_cli_managed ?? false}
-          title={settings?.capture_cli_managed ? '由 --mitm-dump 启动参数锁定，需修改启动命令并重启' : undefined}
-          onChange={(checked) => void updateSettings({ capture_enabled: checked })}
-        />
-        <MaxRecordsControl
-          value={settings?.max_records ?? 1000}
-          onCommit={(max_records) => updateSettings({ max_records })}
-        />
-        <label className="number-control">Body 上限
-          <select
-            aria-label="Body 上限"
-            value={settings?.body_limit_bytes ?? 1048576}
-            onChange={(event) => void updateSettings({ body_limit_bytes: Number(event.target.value) })}
-          >
-            <option value={16384}>16 KiB</option><option value={65536}>64 KiB</option>
-            <option value={262144}>256 KiB</option><option value={1048576}>1 MiB</option>
-            <option value={4194304}>4 MiB</option><option value={10485760}>10 MiB</option>
-          </select>
-        </label>
-        <button className="recent-requests-trigger" onClick={openRecentRequests}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-          最近请求
-        </button>
-        <button className="recent-requests-trigger" onClick={() => setStubEditor({})}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>
-          Stub 规则
-        </button>
+        <div className="control-group">
+          <Toggle
+            label={settings?.capture_cli_managed ? '明文抓取（启动参数）' : '明文抓取'}
+            checked={settings?.capture_enabled ?? false}
+            disabled={settings?.capture_cli_managed ?? false}
+            title={settings?.capture_cli_managed ? '由 --mitm-dump 启动参数锁定，需修改启动命令并重启' : undefined}
+            onChange={(checked) => void updateSettings({ capture_enabled: checked })}
+          />
+          <MaxRecordsControl
+            value={settings?.max_records ?? 1000}
+            onCommit={(max_records) => updateSettings({ max_records })}
+          />
+          <label className="number-control">Body 上限
+            <select
+              aria-label="Body 上限"
+              value={settings?.body_limit_bytes ?? 1048576}
+              onChange={(event) => void updateSettings({ body_limit_bytes: Number(event.target.value) })}
+            >
+              <option value={16384}>16 KiB</option><option value={65536}>64 KiB</option>
+              <option value={262144}>256 KiB</option><option value={1048576}>1 MiB</option>
+              <option value={4194304}>4 MiB</option><option value={10485760}>10 MiB</option>
+            </select>
+          </label>
+        </div>
+        <span className="control-divider" aria-hidden="true" />
+        <div className="control-group control-actions">
+          <button className="recent-requests-trigger" onClick={openRecentRequests}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            最近请求
+          </button>
+          <button className="recent-requests-trigger" onClick={() => setStubEditor({})}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>
+            Stub 规则
+          </button>
+        </div>
         <div className="status-line">
+          {isExtension && (
+            <span className="origin-pill" title={`扩展当前连接的服务：${extensionOrigin}`}>
+              {extensionOrigin}
+            </span>
+          )}
           {settings?.ca_available ? (
             <a
               className="ca-pill online"
@@ -670,12 +717,12 @@ function App() {
               title="下载 MITM CA 证书"
             >
               <span className="dot online" />
-              下载CA
+              下载 CA
             </a>
           ) : (
             <span className="ca-pill offline" title="未配置 MITM CA">
               <span className="dot offline" />
-              下载CA
+              未配置 CA
             </span>
           )}
           {tlsErrorTotal > 0 && (
@@ -686,13 +733,16 @@ function App() {
             >⚠ CA 未信任 {tlsErrorTotal}</button>
           )}
           <span className={`live-pill ${live ? 'on' : 'off'}`}>{live ? '● 实时' : '○ 重连中'}</span>
-          <span className="record-count" title="数据库中的记录总条数">{recordsTotal} 条记录</span>
-          <span className="record-count" title="mitm.sqlite3 主库 + WAL + SHM 总大小；下调留存并应用后会压缩。每 10 秒刷新">{formatBytes(settings?.db_bytes ?? 0)}</span>
+          <span className="stats-pill" title="数据库记录总条数 · mitm.sqlite3 主库 + WAL + SHM 总大小（每 10 秒刷新）">
+            <b>{recordsTotal}</b> 条
+            <i aria-hidden="true" />
+            <b>{formatBytes(settings?.db_bytes ?? 0)}</b>
+          </span>
           <button
             className="danger"
             disabled={recordsTotal === 0}
             title="清空数据库中的全部 MITM 明文记录，不可撤销"
-            onClick={() => void clearRecords()}
+            onClick={() => { setClearError(''); setConfirmClearOpen(true) }}
           >清空记录</button>
         </div>
         {showTlsErrors && tlsErrorTotal > 0 && (
@@ -725,7 +775,12 @@ function App() {
         }}
       >
         <aside className="sidebar">
-          <div className="panel-title"><span>解密域名后缀</span><b>{targets.length}</b></div>
+          <div className="panel-title">
+            <span>解密域名后缀</span>
+            <b title={`已启用 ${enabledTargetsCount} / 共 ${targets.length} 条`}>
+              {targets.length > 0 && enabledTargetsCount < targets.length ? `${enabledTargetsCount}/${targets.length}` : targets.length}
+            </b>
+          </div>
           <form className="target-form" onSubmit={addTarget}>
             <ClearableInput aria-label="新目标后缀" placeholder="example.com" value={newTarget} onChange={setNewTarget} />
             <button type="submit">添加</button>
@@ -762,6 +817,17 @@ function App() {
             {!targets.length && <p className="empty">尚未配置目标后缀</p>}
           </div>
           <div className="panel-title group-title"><span>URL 分类</span><b>{groupListFiltered ? `${filteredGroups.length}/${groups.length}` : groups.length}</b></div>
+          {targetSuffixFilter && (
+            <button
+              type="button"
+              className="suffix-filter-banner"
+              title="点击取消域名后缀筛选"
+              onClick={() => setTargetSuffixFilter('')}
+            >
+              <span>仅看后缀 <code>{targetSuffixFilter}</code></span>
+              <i aria-hidden="true">×</i>
+            </button>
+          )}
           <ClearableInput
             aria-label="搜索 URL 分类"
             className="group-search"
@@ -785,11 +851,26 @@ function App() {
               >
                 <span>{group.host}</span><b>{group.count}</b>
               </button>
-              {expanded && group.paths.map((item) => (
-                <button key={item.path} className={path === item.path ? 'path active' : 'path'} onClick={() => setPath(item.path)}>
-                  <span>{item.path}</span><b>{item.count}</b>
-                </button>
-              ))}
+              {expanded && group.paths.map((item) => {
+                const isActivePath = host === group.host && path === item.path
+                return (
+                  <button
+                    key={item.path}
+                    className={isActivePath ? 'path active' : 'path'}
+                    onClick={() => {
+                      if (isActivePath) {
+                        setPath('')
+                      } else {
+                        setHost(group.host)
+                        setExpandedHost(group.host)
+                        setPath(item.path)
+                      }
+                    }}
+                  >
+                    <span>{item.path}</span><b>{item.count}</b>
+                  </button>
+                )
+              })}
             </div>
             )
           })}
@@ -809,7 +890,7 @@ function App() {
 
         <section className="records-panel">
           <div className="filters">
-            <ClearableInput aria-label="搜索 URL" placeholder="搜索 URL…" value={searchInput} onChange={setSearchInput} />
+            <ClearableInput inputRef={searchInputRef} aria-label="搜索 URL" placeholder="搜索 URL…（按 / 聚焦）" value={searchInput} onChange={setSearchInput} />
             <ClearableInput aria-label="客户端 IP" className="client-ip-input" placeholder="客户端 IP" value={clientIpInput} onChange={setClientIpInput} />
             <select aria-label="请求方法" value={method} onChange={(e) => setMethod(e.target.value)}>{methods.map((item) => <option key={item} value={item}>{item || '全部方法'}</option>)}</select>
             <ClearableInput aria-label="状态码" className="status-input" placeholder="状态码" value={status} onChange={(value) => setStatus(value.replace(/\D/g, '').slice(0, 3))} />
@@ -832,6 +913,7 @@ function App() {
                 {records.map((record) => (
                   <tr
                     key={record.id}
+                    data-record-id={record.id}
                     className={activeRecordId === record.id ? 'selected' : ''}
                     onClick={() => {
                       if (activeRecordId === record.id) closeDetail()
@@ -856,7 +938,7 @@ function App() {
                       >{formatClientAddr(record.client_ip, record.client_port)}</button>
                     </td>
                     <td><span className={`method method-${record.method.toLowerCase()}`}>{record.method}</span></td>
-                    <td className="url-cell"><strong>{record.host}</strong><span>{record.path}{record.query ? `?${record.query}` : ''}</span></td>
+                    <td className="url-cell" title={fullUrl(record)}><strong>{record.host}</strong><span>{record.path}{record.query ? `?${record.query}` : ''}</span></td>
                     <td><span className={`status-badge status-${statusTone(record.status)}`}>{record.status ?? '…'}</span></td>
                     <td className="mono muted">{formatDuration(record.duration_ms)}</td>
                     <td><span className={`state state-${record.capture_state}`}>{formatCaptureState(record.capture_state)}</span></td>
@@ -866,13 +948,15 @@ function App() {
             </table>
             {!records.length && <div className="empty-table"><span>◎</span><p>{emptyHint}</p><small>{emptySub}</small></div>}
           </div>
-          <div className="table-footer">
-            {!pinToLatest && <button className="jump-latest" onClick={jumpToLatest}>{historyDirty ? '请求有更新，回到最新' : '回到最新'}</button>}
-            {loadingMore && <span className="loading-more">正在加载更早记录…</span>}
-            {!loadingMore && nextBefore === null && records.length > 0 && !pinToLatest && (
-              <span className="loading-more">已到最早记录</span>
-            )}
-          </div>
+          {showTableFooter && (
+            <div className="table-footer">
+              {!pinToLatest && <button className={`jump-latest ${historyDirty ? 'dirty' : ''}`} onClick={jumpToLatest}>{historyDirty ? '● 请求有更新，回到最新' : '↑ 回到最新'}</button>}
+              {loadingMore && <span className="loading-more">正在加载更早记录…</span>}
+              {!loadingMore && nextBefore === null && records.length > 0 && !pinToLatest && (
+                <span className="loading-more">已到最早记录</span>
+              )}
+            </div>
+          )}
         </section>
 
         {showDetail && (
@@ -914,6 +998,18 @@ function App() {
       )}
       {stubEditor && <StubRulesDialog record={stubEditor.record} onClose={() => setStubEditor(null)} />}
       {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
+      <ConfirmDialog
+        open={confirmClearOpen}
+        title="清空所有 MITM 明文记录？"
+        confirmLabel={clearingRecords ? '清空中…' : '确认清空'}
+        cancelLabel="取消"
+        busy={clearingRecords}
+        error={clearError}
+        onConfirm={clearRecords}
+        onCancel={() => setConfirmClearOpen(false)}
+      >
+        <p>将删除数据库中的全部 <strong>{recordsTotal}</strong> 条明文抓取记录，此操作不可撤销。已配置的解密域名后缀与 Stub 规则会保留。</p>
+      </ConfirmDialog>
     </main>
   )
 }
@@ -933,7 +1029,18 @@ function RecentRequestsModal({
 }) {
   const [selections, setSelections] = useState<Record<number, string>>({})
   const [addingId, setAddingId] = useState<number | null>(null)
+  const [filter, setFilter] = useState('')
   const existing = useMemo(() => new Set(targets.map((target) => target.suffix)), [targets])
+  const query = filter.trim().toLowerCase()
+  const filteredRequests = useMemo(() => {
+    if (!query) return requests
+    return requests.filter((request) =>
+      request.host.toLowerCase().includes(query)
+      || request.url.toLowerCase().includes(query)
+      || request.client_ip.toLowerCase().includes(query)
+      || request.method.toLowerCase().includes(query),
+    )
+  }, [requests, query])
 
   async function add(request: RecentProxyRequest, suffix: string) {
     setAddingId(request.id)
@@ -952,15 +1059,26 @@ function RecentRequestsModal({
         <header className="recent-modal-head">
           <div>
             <h2 id="recent-requests-title">最近代理请求</h2>
-            <p>显示本应用进程内最近 {requests.length} 条代理请求，可选择域名后缀级别后加入目标。</p>
+            <p>
+              {query
+                ? `匹配 ${filteredRequests.length} / 共 ${requests.length} 条代理请求`
+                : `显示本应用进程内最近 ${requests.length} 条代理请求，可选择域名后缀级别后加入目标。`}
+            </p>
           </div>
           <div className="recent-modal-actions">
+            <ClearableInput
+              aria-label="筛选最近代理请求"
+              className="recent-filter-input"
+              placeholder="筛选域名 / URL / IP…"
+              value={filter}
+              onChange={setFilter}
+            />
             <button className="ghost" onClick={onRefresh}>刷新</button>
             <button className="modal-close" aria-label="关闭最近请求" onClick={onClose}>×</button>
           </div>
         </header>
         <div className="recent-list">
-          {requests.map((request) => {
+          {filteredRequests.map((request) => {
             const suffixes = domainSuffixes(request.host)
             const selectedSuffix = selections[request.id] ?? suffixes[0] ?? ''
             const alreadyAdded = existing.has(selectedSuffix)
@@ -1001,11 +1119,11 @@ function RecentRequestsModal({
               </article>
             )
           })}
-          {!requests.length && (
+          {!filteredRequests.length && (
             <div className="recent-empty">
               <span>◎</span>
-              <p>还没有代理请求</p>
-              <small>通过本代理访问 HTTP 或 HTTPS 地址后，请求会出现在这里。</small>
+              <p>{query ? '没有匹配的代理请求' : '还没有代理请求'}</p>
+              <small>{query ? '试试更换关键词或清空筛选条件。' : '通过本代理访问 HTTP 或 HTTPS 地址后，请求会出现在这里。'}</small>
             </div>
           )}
         </div>
@@ -1064,14 +1182,16 @@ function ClearableInput({
   value,
   onChange,
   className,
+  inputRef,
   ...props
 }: {
   value: string
   onChange: (value: string) => void
+  inputRef?: RefObject<HTMLInputElement | null>
 } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'className'> & { className?: string }) {
   return (
     <span className={className ? `clearable ${className}` : 'clearable'}>
-      <input {...props} value={value} onChange={(event) => onChange(event.target.value)} />
+      <input ref={inputRef} {...props} value={value} onChange={(event) => onChange(event.target.value)} />
       {value && (
         <button type="button" className="input-clear" aria-label="清空" tabIndex={-1} onClick={() => onChange('')}>×</button>
       )}
@@ -1137,7 +1257,10 @@ function MaxRecordsControl({
           setSaved(false)
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            void commit()
+          } else if (event.key === 'Escape') {
             setDraft(String(value))
             setDirty(false)
             event.currentTarget.blur()
@@ -1229,6 +1352,9 @@ function Detail({
   onZoomImage: (dataUrl: string) => void
 }) {
   const [pretty, setPretty] = useState(true)
+  const [wrapBody, setWrapBody] = useState(true)
+  const [headersCollapsed, setHeadersCollapsed] = useState(false)
+  const [headerFilter, setHeaderFilter] = useState('')
   const asideRef = useRef<HTMLElement>(null)
   const scrollToBottomIfPinned = useCallback(() => {
     const el = asideRef.current
@@ -1243,6 +1369,14 @@ function Detail({
   const request = tab === 'request'
   const edits = (request ? detail.stub?.request_headers : detail.stub?.response_headers) ?? []
   const headers = request ? detail.request_headers : detail.response_headers
+  const normalizedHeaderQuery = headerFilter.trim().toLowerCase()
+  const visibleHeaders = useMemo(() => {
+    const indexed = headers.map((pair, index) => ({ pair, index }))
+    if (!normalizedHeaderQuery) return indexed
+    return indexed.filter(({ pair: [name, value] }) =>
+      name.toLowerCase().includes(normalizedHeaderQuery) || value.toLowerCase().includes(normalizedHeaderQuery),
+    )
+  }, [headers, normalizedHeaderQuery])
   const rawBody = request ? detail.request_body : detail.response_body
   const body = pretty ? prettyBody(rawBody) : rawBody
   const note = request ? detail.request_body_note : detail.response_body_note
@@ -1255,69 +1389,102 @@ function Detail({
   const url = fullUrl(detail)
   return (
     <aside className="detail" ref={asideRef} onScroll={onDetailScroll}>
-      <div className="detail-head">
-        <div>
-          <span className={`method method-${detail.method.toLowerCase()}`}>{detail.method}</span>
-          <b className={`status-badge status-${statusTone(detail.status)}`}>{detail.status ?? 'PENDING'}</b>
-          <span className={`state state-${detail.capture_state}`}>{formatCaptureState(detail.capture_state)}</span>
+      <div className="detail-sticky-top">
+        <div className="detail-head">
+          <div>
+            <span className={`method method-${detail.method.toLowerCase()}`}>{detail.method}</span>
+            <b className={`status-badge status-${statusTone(detail.status)}`}>{detail.status ?? 'PENDING'}</b>
+            <span className={`state state-${detail.capture_state}`}>{formatCaptureState(detail.capture_state)}</span>
+          </div>
+          <button aria-label="关闭详情" title="关闭详情 (Esc)" onClick={onClose}>×</button>
         </div>
-        <button aria-label="关闭详情" onClick={onClose}>×</button>
+        <div className="tabs">
+          <button className={tab === 'request' ? 'active' : ''} onClick={() => onTabChange('request')}>
+            Request
+            <span className="tab-meta">{detail.request_headers.length}{detail.request_body_bytes > 0 ? ` · ${formatBytes(detail.request_body_bytes)}` : ''}</span>
+          </button>
+          <button className={tab === 'response' ? 'active' : ''} onClick={() => onTabChange('response')}>
+            Response
+            <span className="tab-meta">{detail.response_headers.length}{detail.response_body_bytes > 0 ? ` · ${formatBytes(detail.response_body_bytes)}` : ''}</span>
+          </button>
+        </div>
       </div>
-      <div className="detail-url-row">
+
+      <div className="detail-url-box">
         <p className="detail-url">{url}</p>
-        <div className="detail-actions">
-          <button className="ghost" onClick={onCreateStub}>为此请求创建 Stub</button>
-          <button className="ghost" onClick={() => void onCopy(url, 'URL')}>复制 URL</button>
-          <button className="ghost" onClick={() => void onCopy(toCurl(detail), 'cURL')}>复制 cURL</button>
-          <button className="ghost" onClick={() => void onCopy(toHttpResponse(detail), '响应')}>复制响应</button>
-          <button className="ghost" onClick={() => downloadText(exportFilename(detail), toExportText(detail))}>导出文本</button>
+        <div className="detail-meta">
+          <span>{formatClientAddr(detail.client_ip, detail.client_port)}</span>
+          {detail.proxy_username && <span>{detail.proxy_username}</span>}
+          <span>{formatDuration(detail.duration_ms)}</span>
+          {detail.request_version && <span>{detail.request_version}{detail.response_version ? ` → ${detail.response_version}` : ''}</span>}
         </div>
       </div>
-      <div className="detail-meta">
-        <span>{formatClientAddr(detail.client_ip, detail.client_port)}</span>
-        <span>{detail.proxy_username}</span>
-        <span>{formatDuration(detail.duration_ms)}</span>
-        {detail.request_version && <span>{detail.request_version}</span>}
-        {detail.response_version && <span>→ {detail.response_version}</span>}
+
+      <div className="detail-actions">
+        <button className="detail-stub-btn" title="为此请求创建或打开 Stub 规则" onClick={onCreateStub}>✦ 创建 Stub</button>
+        <button className="ghost" onClick={() => void onCopy(url, 'URL')}>复制 URL</button>
+        <button className="ghost" onClick={() => void onCopy(toCurl(detail), 'cURL')}>复制 cURL</button>
+        <button className="ghost" onClick={() => void onCopy(toHttpResponse(detail), '响应')}>复制响应</button>
+        <button className="ghost" onClick={() => downloadText(exportFilename(detail), toExportText(detail))}>导出文本</button>
       </div>
-      <div className="tabs">
-        <button className={tab === 'request' ? 'active' : ''} onClick={() => onTabChange('request')}>Request</button>
-        <button className={tab === 'response' ? 'active' : ''} onClick={() => onTabChange('response')}>Response</button>
-      </div>
+
       {detail.stub && <div className="stub-origin-note"><b>mitm-stub · {detail.stub.source === 'file' ? ((detail.stub.rule_ids?.length ?? 0) > 1 ? '配置文件 + UI 规则' : '配置文件') : 'UI 规则'}{(detail.stub.rule_ids?.length ?? 0) > 1 ? ` · ${detail.stub.rule_ids!.length} 条规则累积` : ''}</b><span>{request
         ? `${detail.stub.mode === 'upstream' ? '请求转发至替代上游；' : detail.stub.mode === 'response' ? '直接返回配置响应，未发送到上游；' : ''}${edits.length ? '下方标记的请求头由规则修改。' : '请求内容来自客户端。'}`
         : detail.stub.mode === 'response' ? 'Body 与状态码来自 Stub 覆写。' : detail.stub.mode === 'upstream' ? 'Body 与状态码来自 Stub 上游。' : 'Body 与状态码来自原始服务。'}{!request && edits.length > 0 ? ' 标记的响应头由规则修改。' : ''}</span>{detail.stub.upstream && <code>{detail.stub.upstream}</code>}{edits.length > 0 && <div className="stub-applied-headers">{edits.map((edit, i) => <span key={i}>{headerOpLabel[edit.op]} {edit.name}{edit.note && <small title={edit.note}> · {edit.note}</small>}</span>)}</div>}</div>}
-      <h3>
-        Headers
+
+      <div className="detail-section-head">
+        <button type="button" className="section-toggle" aria-expanded={!headersCollapsed} onClick={() => setHeadersCollapsed((v) => !v)}>
+          <i aria-hidden="true">{headersCollapsed ? '▸' : '▾'}</i>
+          Headers
+          <small>{normalizedHeaderQuery ? `${visibleHeaders.length}/${headers.length}` : headers.length}</small>
+        </button>
         <span className="heading-actions">
-          <small>{headers.length}</small>
-          <button className="ghost compact" onClick={() => void onCopy(headers.map(([name, value]) => `${name}: ${value}`).join('\n'), 'Headers')}>复制</button>
+          {!headersCollapsed && (headers.length >= 6 || headerFilter) && (
+            <ClearableInput
+              aria-label="筛选 Headers"
+              className="header-filter-input"
+              placeholder="筛选 Header…"
+              value={headerFilter}
+              onChange={setHeaderFilter}
+            />
+          )}
+          <button className="ghost compact" disabled={headers.length === 0} onClick={() => void onCopy(headers.map(([name, value]) => `${name}: ${value}`).join('\n'), 'Headers')}>复制</button>
         </span>
-      </h3>
-      <div className="header-list">
-        {headers.length === 0 && <div className="empty-headers">(none)</div>}
-        {headers.map(([name, value], index) => {
-          const headerEdits = edits.filter((edit) => edit.name.toLowerCase() === name.toLowerCase())
-          // An append keeps the upstream values; only the final appended rows belong to the rule.
-          const fromStub = (!request && detail.stub?.mode === 'response') || headerEdits.some((edit) => edit.op === 'set') ||
-            (headerEdits.some((edit) => edit.op === 'remove') && headerEdits.some((edit) => edit.op === 'add')) ||
-            headers.slice(index).filter(([other]) => other.toLowerCase() === name.toLowerCase()).length <= headerEdits.filter((edit) => edit.op === 'add').length
-          return <div className={`header-row ${SENSITIVE_HEADERS.has(name.toLowerCase()) ? 'sensitive' : ''}`} key={`${name}-${index}`}>
-            <span className="header-name">{name}{fromStub && <i className="stub-badge" title="此 Header 由 mitm-stub 规则修改">stub</i>}</span>
-            <span className="header-value">{value}</span>
-            <button
-              className="ghost compact header-copy"
-              aria-label={`复制 ${name}`}
-              title="复制（key 和 value 以换行分隔）"
-              onClick={() => void onCopy(`${name}\n${value}`, name)}
-            >复制</button>
-          </div>
-        })}
       </div>
-      <h3>
-        Body
+      {!headersCollapsed && (
+        <div className="header-list">
+          {headers.length === 0 && <div className="empty-headers">(none)</div>}
+          {headers.length > 0 && visibleHeaders.length === 0 && <div className="empty-headers">没有匹配的 Header</div>}
+          {visibleHeaders.map(({ pair: [name, value], index }) => {
+            const headerEdits = edits.filter((edit) => edit.name.toLowerCase() === name.toLowerCase())
+            // An append keeps the upstream values; only the final appended rows belong to the rule.
+            const fromStub = (!request && detail.stub?.mode === 'response') || headerEdits.some((edit) => edit.op === 'set') ||
+              (headerEdits.some((edit) => edit.op === 'remove') && headerEdits.some((edit) => edit.op === 'add')) ||
+              headers.slice(index).filter(([other]) => other.toLowerCase() === name.toLowerCase()).length <= headerEdits.filter((edit) => edit.op === 'add').length
+            return <div className={`header-row ${SENSITIVE_HEADERS.has(name.toLowerCase()) ? 'sensitive' : ''}`} key={`${name}-${index}`}>
+              <span className="header-name">{name}{fromStub && <i className="stub-badge" title="此 Header 由 mitm-stub 规则修改">stub</i>}</span>
+              <span className="header-value">{value}</span>
+              <button
+                className="ghost compact header-copy"
+                aria-label={`复制 ${name}`}
+                title="复制（key 和 value 以换行分隔）"
+                onClick={() => void onCopy(`${name}\n${value}`, name)}
+              >复制</button>
+            </div>
+          })}
+        </div>
+      )}
+
+      <div className="detail-section-head">
+        <h3>Body</h3>
         <span className="heading-actions">
           <small>{formatBytes(bytes)}{truncated ? ' · 已截断' : ''}{imageMediaType ? ` · ${imageMediaType}` : ''}</small>
+          {!imagePreview && !(eventStream && pretty) && (
+            <label className="pretty-toggle">
+              <input type="checkbox" checked={wrapBody} onChange={(event) => setWrapBody(event.target.checked)} />
+              换行
+            </label>
+          )}
           {!imagePreview && (
             <label className="pretty-toggle">
               <input type="checkbox" checked={pretty} onChange={(event) => setPretty(event.target.checked)} />
@@ -1328,7 +1495,7 @@ function Detail({
             ? <button className="ghost compact" onClick={() => void onCopyImage(imagePreview, '图片')}>复制图片</button>
             : <button className="ghost compact" disabled={!rawBody} onClick={() => void onCopy(body || rawBody, 'Body')}>复制</button>}
         </span>
-      </h3>
+      </div>
       {note && <div className="note">{note}</div>}
       {imagePreview
         ? (
@@ -1343,7 +1510,7 @@ function Detail({
         )
         : eventStream && pretty
           ? <SseBody key={detail.id} body={rawBody} onCopy={onCopy} />
-          : <pre className="body-content">{body || '(empty)'}</pre>}
+          : <pre className={`body-content ${wrapBody ? '' : 'nowrap'}`}>{body || '(empty)'}</pre>}
       {detail.error && <div className="note error-note">{detail.error}</div>}
     </aside>
   )
