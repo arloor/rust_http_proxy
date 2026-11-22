@@ -5,7 +5,7 @@ param(
     [string]$Repo = 'C:\Users\arloor\rust_http_proxy',
     [string]$Cargo = 'C:\Users\arloor\.cargo\bin\cargo.exe',
     [string]$ServiceName = 'rust_http_proxy',
-    [string]$Exe = 'C:\Users\arloor\.cargo\bin\rust_http_proxy_service.exe',
+    [string]$Exe = (Join-Path $env:ProgramFiles 'rust_http_proxy\rust_http_proxy_service.exe'),
     [string]$CaCert = 'C:\ProgramData\rust_http_proxy\mitm\mitm-ca-cert.pem',
     [string]$CaKey = 'C:\ProgramData\rust_http_proxy\mitm\mitm-ca-key.pem',
     [int[]]$Port = @(443, 444, 9443),
@@ -221,6 +221,11 @@ try {
         -FailureMessage '覆盖服务参数失败'
     Invoke-ScConfig -ScArguments @('config', $ServiceName, 'start=', 'auto') `
         -FailureMessage '设置自动启动失败'
+    Invoke-ScConfig -ScArguments @(
+        'failure', $ServiceName,
+        'reset=', '86400',
+        'actions=', 'restart/5000/restart/15000/restart/60000'
+    ) -FailureMessage '设置失败恢复策略失败'
 
     $stage = '启动服务'
     $service.Refresh()

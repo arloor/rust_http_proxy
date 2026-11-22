@@ -10,7 +10,7 @@
 //!
 //! ```powershell
 //! # Install service
-//! sc.exe create rust_http_proxy binPath= "C:\path\to\winservice.exe -p 3128"
+//! sc.exe create rust_http_proxy binPath= '"C:\Program Files\rust_http_proxy\rust_http_proxy_service.exe" -p 3128'
 //!
 //! # Start service
 //! sc.exe start rust_http_proxy
