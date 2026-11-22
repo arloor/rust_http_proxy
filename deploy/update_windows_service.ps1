@@ -6,8 +6,12 @@ param(
     [string]$Cargo = 'C:\Users\arloor\.cargo\bin\cargo.exe',
     [string]$ServiceName = 'rust_http_proxy',
     [string]$Exe = (Join-Path $env:ProgramFiles 'rust_http_proxy\rust_http_proxy_service.exe'),
+    [string]$ServerCert = (Join-Path $env:ProgramData 'rust_http_proxy\certs\cert.pem'),
+    [string]$ServerKey = (Join-Path $env:ProgramData 'rust_http_proxy\certs\privkey.pem'),
     [string]$CaCert = 'C:\ProgramData\rust_http_proxy\mitm\mitm-ca-cert.pem',
     [string]$CaKey = 'C:\ProgramData\rust_http_proxy\mitm\mitm-ca-key.pem',
+    [string]$LogDir = (Join-Path $env:ProgramData 'rust_http_proxy\logs'),
+    [string]$MitmDbFile = (Join-Path $env:ProgramData 'rust_http_proxy\data\mitm.sqlite3'),
     [int[]]$Port = @(443, 444, 9443),
     [Parameter(Mandatory)]
     [ValidateNotNullOrEmpty()]
@@ -147,11 +151,9 @@ function Install-ServiceExecutable {
     throw "替换服务程序失败：$($lastError.Exception.Message)"
 }
 
-$serverCert = Join-Path $Repo 'cert.pem'
-$serverKey = Join-Path $Repo 'privkey.pem'
 $cratePath = Join-Path $Repo 'rust_http_proxy'
 
-foreach ($requiredPath in @($Repo, $Cargo, $CaCert, $CaKey, $serverCert, $serverKey, $cratePath)) {
+foreach ($requiredPath in @($Repo, $Cargo, $CaCert, $CaKey, $ServerCert, $ServerKey, $cratePath)) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
         throw "缺少必要路径：$requiredPath"
     }
@@ -201,9 +203,9 @@ try {
         $binParts.Add($listenPort.ToString([Globalization.CultureInfo]::InvariantCulture))
     }
     $binParts.Add('-k')
-    $binParts.Add((Quote-ServiceArgument -Value $serverKey))
+    $binParts.Add((Quote-ServiceArgument -Value $ServerKey))
     $binParts.Add('-c')
-    $binParts.Add((Quote-ServiceArgument -Value $serverCert))
+    $binParts.Add((Quote-ServiceArgument -Value $ServerCert))
     $binParts.Add('-o')
     foreach ($user in $ProxyUser) {
         $binParts.Add('-u')
@@ -214,6 +216,11 @@ try {
     $binParts.Add((Quote-ServiceArgument -Value $CaCert))
     $binParts.Add('--mitm-ca-key')
     $binParts.Add((Quote-ServiceArgument -Value $CaKey))
+    New-Item -ItemType Directory -Path $LogDir, (Split-Path -Path $MitmDbFile -Parent) -Force | Out-Null
+    $binParts.Add('--log-dir')
+    $binParts.Add((Quote-ServiceArgument -Value $LogDir))
+    $binParts.Add('--mitm-db-file')
+    $binParts.Add((Quote-ServiceArgument -Value $MitmDbFile))
     $binPath = $binParts -join ' '
 
     $stage = '覆盖服务参数'

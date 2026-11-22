@@ -29,7 +29,18 @@ Copy-Item .\target\release\rust_http_proxy_service.exe `
 ```
 
 脚本默认把服务程序安装到
-`C:\Program Files\rust_http_proxy\rust_http_proxy_service.exe`。源码、证书和配置可以继续放在用户目录，但 `LocalSystem` 服务加载的可执行文件应放在受保护的系统级目录，避免普通用户替换程序，也更适合 Windows 功能更新迁移。
+`C:\Program Files\rust_http_proxy\rust_http_proxy_service.exe`。整机服务的证书和运行数据放在 `ProgramData`：
+
+```text
+C:\ProgramData\rust_http_proxy\certs\cert.pem
+C:\ProgramData\rust_http_proxy\certs\privkey.pem
+C:\ProgramData\rust_http_proxy\mitm\mitm-ca-cert.pem
+C:\ProgramData\rust_http_proxy\mitm\mitm-ca-key.pem
+C:\ProgramData\rust_http_proxy\logs\
+C:\ProgramData\rust_http_proxy\data\mitm.sqlite3
+```
+
+源码可以继续放在用户目录，但 `LocalSystem` 服务不应依赖用户配置目录。`Program Files` 和 `ProgramData` 更适合 Windows 功能更新迁移，也便于把目录权限限制为 SYSTEM 和管理员。
 
 脚本会异步发送停止命令并显式等待服务状态，避免 `Stop-Service` 自身的等待行为干扰更新；同时设置自动启动和 5 秒、15 秒、60 秒三次失败重启。首次从旧版本升级时，如果服务在 45 秒内仍无法退出，可允许脚本仅针对 SCM 返回的服务 PID 强制终止旧进程：
 
