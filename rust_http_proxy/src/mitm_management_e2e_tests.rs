@@ -212,6 +212,28 @@ async fn mitm_api_lists_recent_forward_proxy_requests() -> Result<(), DynError> 
 }
 
 #[tokio::test]
+async fn mitm_api_clears_tls_errors() -> Result<(), DynError> {
+    let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned()]).await?;
+
+    let cleared = request(
+        proxy.port,
+        &format!("DELETE /mitm/api/tls-errors HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"),
+    )
+    .await?;
+    assert!(cleared.starts_with("HTTP/1.1 204"));
+
+    let listed = request(
+        proxy.port,
+        &format!("GET /mitm/api/tls-errors HTTP/1.1\r\nHost: localhost\r\n{BASIC_AUTH}Connection: close\r\n\r\n"),
+    )
+    .await?;
+    assert!(listed.starts_with("HTTP/1.1 200"));
+    assert!(listed.ends_with("[]"));
+
+    proxy.shutdown().await
+}
+
+#[tokio::test]
 async fn mitm_dump_cli_override_locks_capture_setting() -> Result<(), DynError> {
     let proxy = start_proxy(vec!["--users".to_owned(), "admin:test".to_owned(), "--mitm-dump".to_owned()]).await?;
 

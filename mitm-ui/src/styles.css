@@ -94,8 +94,10 @@ a.ca-pill:hover { background: #d1fae5; border-color: #6ee7b7; }
 .ca-alert-pill:hover { background: #fee2e2; }
 .ca-alert-pill.active { box-shadow: 0 0 0 2px #fecaca; }
 .tls-error-panel { flex: 1 0 100%; max-height: 220px; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 20px rgba(15,23,42,.08); }
-.tls-error-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #fff; border-bottom: 1px solid var(--line); color: var(--text-2); font: 600 12px var(--font-sans); }
-.tls-error-head button { border: 0; background: transparent; color: var(--text-3); font-size: 15px; cursor: pointer; padding: 0 2px; }
+.tls-error-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; background: #fff; border-bottom: 1px solid var(--line); color: var(--text-2); font: 600 12px var(--font-sans); }
+.tls-error-actions { display: inline-flex; align-items: center; gap: 6px; }
+.tls-error-close { border: 0; background: transparent; color: var(--text-3); font-size: 15px; cursor: pointer; padding: 0 2px; line-height: 1; }
+.tls-error-close:hover { color: var(--text); }
 .tls-error-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
 .tls-error-row:last-child { border-bottom: 0; }
 .tls-error-target { flex: 1; min-width: 0; }

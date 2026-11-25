@@ -41,7 +41,7 @@ pub(crate) fn router(basic_auth: HashMap<String, String>) -> Router<Arc<AppState
         .route("/mitm/api/records", get(get_records).delete(clear_records))
         .route("/mitm/api/records/{id}", get(get_record))
         .route("/mitm/api/groups", get(get_groups))
-        .route("/mitm/api/tls-errors", get(get_tls_errors))
+        .route("/mitm/api/tls-errors", get(get_tls_errors).delete(clear_tls_errors))
         .route("/mitm/api/events", get(events))
         .route("/mitm/ca.crt", get(download_ca))
         .route("/mitm/{*path}", get(asset_or_index));
@@ -249,6 +249,11 @@ async fn get_tls_errors(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<crate::mitm_manager::TlsErrorGroup>>, ApiError> {
     Ok(Json(state.mitm_manager.tls_errors().await?))
+}
+
+async fn clear_tls_errors(State(state): State<Arc<AppState>>) -> Result<StatusCode, ApiError> {
+    state.mitm_manager.clear_tls_errors().await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn clear_records(State(state): State<Arc<AppState>>) -> Result<StatusCode, ApiError> {

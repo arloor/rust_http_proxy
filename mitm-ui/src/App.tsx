@@ -47,6 +47,7 @@ function App() {
   const [groups, setGroups] = useState<HostGroup[]>([])
   const [tlsErrors, setTlsErrors] = useState<TlsErrorGroup[]>([])
   const [showTlsErrors, setShowTlsErrors] = useState(false)
+  const [clearingTlsErrors, setClearingTlsErrors] = useState(false)
   const [records, setRecords] = useState<RecordSummary[]>([])
   const [recordsTotal, setRecordsTotal] = useState(0)
   const [nextBefore, setNextBefore] = useState<number | null>(null)
@@ -561,6 +562,21 @@ function App() {
     }
   }
 
+  async function clearTlsErrors() {
+    if (clearingTlsErrors) return
+    setClearingTlsErrors(true)
+    try {
+      await api<void>('/tls-errors', { method: 'DELETE' })
+      setTlsErrors([])
+      setShowTlsErrors(false)
+      await refreshMeta()
+    } catch (value) {
+      handleError(value)
+    } finally {
+      setClearingTlsErrors(false)
+    }
+  }
+
   function resetFilters() {
     setHost('')
     setExpandedHost('')
@@ -749,7 +765,20 @@ function App() {
           <div className="tls-error-panel">
             <div className="tls-error-head">
               <span>CA 未信任错误 · 按域名 + 客户端 IP 聚合</span>
-              <button aria-label="关闭" onClick={() => setShowTlsErrors(false)}>×</button>
+              <div className="tls-error-actions">
+                <button
+                  type="button"
+                  className="ghost compact"
+                  disabled={clearingTlsErrors}
+                  onClick={() => void clearTlsErrors()}
+                >{clearingTlsErrors ? '清空中…' : '清空统计'}</button>
+                <button
+                  type="button"
+                  className="tls-error-close"
+                  aria-label="关闭"
+                  onClick={() => setShowTlsErrors(false)}
+                >×</button>
+              </div>
             </div>
             {tlsErrors.map((group) => (
               <div className="tls-error-row" key={`${group.authority}|${group.client_ip}`}>

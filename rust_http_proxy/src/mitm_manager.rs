@@ -231,6 +231,7 @@ enum StoreCommand {
         authority: String,
         client_ip: String,
     },
+    ClearTlsErrors(mpsc::SyncSender<Result<(), String>>),
     StopAllCaptures,
     Clear(mpsc::SyncSender<Result<(), String>>),
 }
@@ -246,6 +247,7 @@ impl StoreCommand {
             Self::FinishRecord { .. } => "finish_record",
             Self::Error { .. } => "error",
             Self::TlsError { .. } => "tls_error",
+            Self::ClearTlsErrors(_) => "clear_tls_errors",
             Self::StopAllCaptures => "stop_all_captures",
             Self::Clear(_) => "clear",
         }
@@ -830,6 +832,21 @@ impl MitmManager {
         .await
     }
 
+    pub(crate) async fn clear_tls_errors(&self) -> Result<(), ManagerError> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        self.writer_tx
+            .try_send(StoreCommand::ClearTlsErrors(sender))
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => ManagerError::Database("MITM capture queue is full".to_owned()),
+                mpsc::TrySendError::Disconnected(_) => ManagerError::Database("MITM SQLite writer stopped".to_owned()),
+            })?;
+        tokio::task::spawn_blocking(move || receiver.recv())
+            .await
+            .map_err(|error| ManagerError::Database(format!("clear tls errors task failed: {error}")))?
+            .map_err(|_| ManagerError::Database("MITM SQLite writer stopped".to_owned()))?
+            .map_err(ManagerError::Database)
+    }
+
     pub(crate) async fn list_records(&self, query: RecordQuery) -> Result<RecordPage, ManagerError> {
         let path = self.db_path.clone();
         run_read_db(path, move |connection| query_records(connection, &query)).await
@@ -1275,6 +1292,17 @@ fn apply_store_command(
                 [MAX_TLS_ERROR_ROWS],
             )?;
             emit(events, "tls_errors", None);
+        }
+        StoreCommand::ClearTlsErrors(sender) => {
+            let result = connection
+                .execute("DELETE FROM tls_errors", [])
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            let succeeded = result.is_ok();
+            let _ = sender.send(result);
+            if succeeded {
+                emit(events, "tls_errors", None);
+            }
         }
         StoreCommand::StopAllCaptures => {
             flush_pending(connection, pending, events)?;
@@ -2030,6 +2058,13 @@ mod tests {
             .ok_or("tls error group missing")?;
         assert_eq!(pair.count, 2);
         assert!(groups.iter().all(|group| group.last_seen_ms > 0));
+
+        let mut events = manager.subscribe();
+        manager.clear_tls_errors().await?;
+        assert!(manager.tls_errors().await?.is_empty());
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv()).await??;
+        assert_eq!(event.kind, "tls_errors");
+
         drop(manager);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = fs::remove_file(path);
