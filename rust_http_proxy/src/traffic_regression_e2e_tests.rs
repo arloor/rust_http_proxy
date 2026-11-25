@@ -183,7 +183,7 @@ Connection: close\r\n\
         parent_head.starts_with("GET http://origin.invalid:8080/item?x=1 HTTP/1.1\r\n"),
         "parent proxy must receive absolute-form: {parent_head}"
     );
-    assert_eq!(header_value(&parent_head, "host"), Some(parent_target.as_str()));
+    assert_eq!(header_value(&parent_head, "host"), Some("origin.invalid:8080"));
     let parent_auth = format!("Basic {}", basic_token(&format!("{PARENT_USER}:{PARENT_PASSWORD}")));
     assert_eq!(header_value(&parent_head, "proxy-authorization"), Some(parent_auth.as_str()));
 

@@ -3,7 +3,13 @@ use std::{
     net::SocketAddr,
 };
 
-use crate::{METRICS, address::host_addr, axum_handler, config::ForwardBypassConfig, forward_proxy_client::Route};
+use crate::{
+    METRICS,
+    address::host_addr,
+    axum_handler,
+    config::ForwardBypassConfig,
+    forward_proxy_client::{Http1TargetForm, Route},
+};
 use {io_x::CounterIO, prom_label::LabelImpl};
 
 use axum::extract::Request;
@@ -100,6 +106,7 @@ impl ProxyHandler {
     /// 处理 WebSocket 升级请求（正向代理场景）
     async fn handle_websocket_upgrade_forward(
         &self, mut req: Request<Incoming>, traffic_label: AccessLabel, ipv6_first: Option<bool>,
+        target_form: Http1TargetForm,
     ) -> Result<Response<BoxBody<Bytes, io::Error>>, io::Error> {
         debug!("[forward] WebSocket upgrade request to {}", traffic_label.target);
 
@@ -108,7 +115,7 @@ impl ProxyHandler {
 
         let mut upstream_response = self
             .forward_proxy_client
-            .send_upgrade_request(req, &traffic_label, Route::Direct { ipv6_first })
+            .send_upgrade_request(req, &traffic_label, Route::Direct { ipv6_first }, target_form)
             .await?;
 
         if !promote_websocket_upgrade(&mut upstream_response, client_upgrade, None, "forward") {
@@ -146,6 +153,11 @@ impl ProxyHandler {
         };
 
         if is_websocket {
+            let target_form = if bypass.is_some() {
+                Http1TargetForm::AbsoluteForm
+            } else {
+                Http1TargetForm::OriginForm
+            };
             info!(
                 "[{}] WebSocket upgrade request: {:^35} ==> {} {:?}",
                 if bypass.is_some() { "forward_bypass" } else { "forward" },
@@ -154,17 +166,20 @@ impl ProxyHandler {
                 req.uri(),
             );
             return self
-                .handle_websocket_upgrade_forward(req, access_label, ipv6_first)
+                .handle_websocket_upgrade_forward(req, access_label, ipv6_first, target_form)
                 .await;
         }
 
-        if bypass.is_some() {
-            warn!("bypass {:?} {} {}", req.version(), req.method(), req.uri());
-        }
-        let result = self
-            .forward_proxy_client
-            .send_request(req, &access_label, Route::Direct { ipv6_first })
-            .await;
+        let result = if bypass.is_some() {
+            debug!("bypass {:?} {} {}", req.version(), req.method(), req.uri());
+            self.forward_proxy_client
+                .send_forward_proxy_request(req, &access_label, ipv6_first)
+                .await
+        } else {
+            self.forward_proxy_client
+                .send_request(req, &access_label, Route::Direct { ipv6_first })
+                .await
+        };
         if let (Some(_), Err(e)) = (bypass, &result) {
             warn!("[forward_bypass simple_proxy error] [{}]: [{}] {} ", access_label, e.kind(), e);
         }
@@ -270,32 +285,32 @@ impl ProxyHandler {
     }
 }
 
-/// 交给父代理的普通请求：换上父代理凭据，Host 改为父代理地址。
+/// 交给父代理的普通请求：换上父代理凭据，按 RFC 9112/7230 将 Host 对齐为目标源站。
 fn prepare_bypass_http_req<B>(req: &mut Request<B>, bypass: &ForwardBypassConfig) -> io::Result<()> {
     req.headers_mut().remove(http::header::PROXY_AUTHORIZATION);
     if let Some(credentials) = bypass.proxy_authorization() {
         let value = HeaderValue::from_str(&credentials).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
         req.headers_mut().insert(http::header::PROXY_AUTHORIZATION, value);
     }
-    let host_header =
-        HeaderValue::from_str(&bypass_endpoint(bypass)).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-    let origin = req.headers_mut().insert(HOST, host_header.clone());
-    if Some(&host_header) != origin.as_ref() {
-        info!("change host header: {origin:?} -> {host_header:?}");
-    }
-    Ok(())
+    set_target_host_header(req)
 }
 
 fn mod_http1_proxy_req<B>(req: &mut Request<B>) -> io::Result<()> {
     // 删除代理特有的请求头
     req.headers_mut().remove(http::header::PROXY_AUTHORIZATION.to_string());
     req.headers_mut().remove("Proxy-Connection");
-    // set host header
-    let uri = req.uri().clone();
+    set_target_host_header(req)?;
+    // change absoulte uri to relative uri
+    origin_form(req.uri_mut());
+    Ok(())
+}
+
+fn set_target_host_header<B>(req: &mut Request<B>) -> io::Result<()> {
+    let uri = req.uri();
     let hostname = uri
         .host()
         .ok_or(io::Error::new(ErrorKind::InvalidData, "host is absent in HTTP/1.1"))?;
-    let host_header = if let Some(port) = match (uri.port().map(|p| p.as_u16()), is_schema_secure(&uri)) {
+    let host_header = if let Some(port) = match (uri.port().map(|p| p.as_u16()), is_schema_secure(uri)) {
         (Some(443), true) => None,
         (Some(80), false) => None,
         _ => uri.port(),
@@ -307,11 +322,9 @@ fn mod_http1_proxy_req<B>(req: &mut Request<B>) -> io::Result<()> {
     }
     .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     let origin = req.headers_mut().insert(HOST, host_header.clone());
-    if Some(host_header.clone()) != origin {
+    if Some(&host_header) != origin.as_ref() {
         info!("change host header: {origin:?} -> {host_header:?}");
     }
-    // change absoulte uri to relative uri
-    origin_form(req.uri_mut());
     Ok(())
 }
 
@@ -350,7 +363,33 @@ mod tests {
                 usize::from(expected.is_some())
             );
             assert_eq!(req.headers().get(http::header::AUTHORIZATION).unwrap(), "Bearer origin-token");
+            assert_eq!(req.headers().get(HOST).and_then(|v| v.to_str().ok()), Some("origin.example"));
             assert_eq!(req.uri().to_string(), "http://origin.example/item?q=1");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bypass_http_request_derives_target_host_and_keeps_absolute_form() -> Result<(), crate::DynError> {
+        let bypass = ForwardBypassConfig {
+            host: "parent.example".to_owned(),
+            port: 3128,
+            is_https: false,
+            username: None,
+            password: None,
+            ipv6_first: None,
+        };
+        for (uri, expected_host) in [
+            ("http://origin.example/a?b=1", "origin.example"),
+            ("http://origin.example:80/a", "origin.example"),
+            ("http://origin.example:8080/a", "origin.example:8080"),
+            ("ws://origin.example:80/ws", "origin.example"),
+            ("http://[::1]:8080/a", "[::1]:8080"),
+        ] {
+            let mut req = Request::builder().uri(uri).header(HOST, "spoofed.invalid").body(())?;
+            prepare_bypass_http_req(&mut req, &bypass)?;
+            assert_eq!(req.headers().get(HOST).and_then(|v| v.to_str().ok()), Some(expected_host), "uri {uri}");
+            assert_eq!(req.uri().to_string(), uri, "uri {uri}");
         }
         Ok(())
     }

@@ -445,6 +445,47 @@ pub(crate) async fn start_forward_bypass_proxy() -> Result<ForwardBypassProxy, D
     Ok(ForwardBypassProxy { addr, connect_rx, task })
 }
 
+pub(crate) async fn start_tls_forward_bypass_proxy_requiring_http1_alpn() -> Result<ForwardBypassProxy, DynError> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let mut tls_config = test_server_tls_config()?;
+    tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    let (connect_tx, connect_rx) = tokio::sync::mpsc::channel(1);
+    let task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut client = acceptor.accept(stream).await?;
+        if client.get_ref().1.alpn_protocol() != Some(b"http/1.1") {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "expected http/1.1 ALPN for HTTPS parent CONNECT, got {:?}",
+                    client.get_ref().1.alpn_protocol()
+                ),
+            )
+            .into());
+        }
+        let request_head = read_http_head(&mut client).await?;
+        let request_line = request_head.lines().next().unwrap_or_default();
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or_default();
+        let target = parts.next().unwrap_or_default().to_owned();
+        if method != "CONNECT" || target.is_empty() {
+            return Err(io::Error::new(ErrorKind::InvalidData, request_head).into());
+        }
+        connect_tx
+            .send(target.clone())
+            .await
+            .map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "CONNECT target receiver dropped"))?;
+
+        let mut upstream = TcpStream::connect(target.as_str()).await?;
+        client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await?;
+        let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
+        Ok(())
+    });
+    Ok(ForwardBypassProxy { addr, connect_rx, task })
+}
+
 pub(crate) async fn recv_connect_target(forward_bypass: &mut ForwardBypassProxy) -> io::Result<String> {
     forward_bypass
         .connect_rx
@@ -560,6 +601,24 @@ pub(crate) fn write_test_ca(base_dir: &Path) -> Result<TestCa, DynError> {
         key_path,
         cert_der: cert.der().to_vec(),
     })
+}
+
+pub(crate) struct TestTlsCert {
+    pub(crate) cert_path: PathBuf,
+    pub(crate) key_path: PathBuf,
+}
+
+pub(crate) fn write_test_tls_cert(base_dir: &Path) -> Result<TestTlsCert, DynError> {
+    std::fs::create_dir_all(base_dir)?;
+    let key_pair = KeyPair::generate()?;
+    let mut params = CertificateParams::new(vec!["localhost".to_owned(), "127.0.0.1".to_owned()])?;
+    params.distinguished_name.push(DnType::CommonName, "localhost");
+    let cert = params.self_signed(&key_pair)?;
+    let cert_path = base_dir.join("server.pem");
+    let key_path = base_dir.join("server-key.pem");
+    std::fs::write(&cert_path, cert.pem())?;
+    std::fs::write(&key_path, key_pair.serialize_pem())?;
+    Ok(TestTlsCert { cert_path, key_path })
 }
 
 pub(crate) async fn connect_to_mitm_target(

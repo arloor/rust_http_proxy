@@ -144,10 +144,6 @@ fn prefer_ipv6(configured: Option<bool>, addrs: &[SocketAddr]) -> bool {
 
 /// Debug 模式：不验证证书（方便测试）
 /// Release 模式：使用平台证书验证器
-pub(crate) fn build_tls_connector() -> TlsConnector {
-    build_tls_connector_with_alpn(Vec::new())
-}
-
 pub(crate) fn build_tls_connector_with_http_alpn() -> TlsConnector {
     build_tls_connector_with_alpn(vec![b"h2".to_vec(), b"http/1.1".to_vec()])
 }
@@ -364,7 +360,7 @@ pub(crate) async fn into_bypass_stream(
     if !config.is_https {
         return Ok(EitherTlsStream::Tcp { stream: tcp_stream });
     }
-    let connector = build_tls_connector();
+    let connector = build_tls_connector_with_http1_alpn();
     let server_name = tls_server_name(&config.host)?;
     match connector.connect(server_name, tcp_stream).await {
         Ok(stream) => Ok(EitherTlsStream::Tls { stream }),

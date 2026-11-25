@@ -55,6 +55,15 @@ impl Display for Route<'_> {
     }
 }
 
+/// HTTP/1.1 请求行目标形式。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Http1TargetForm {
+    /// 发往目标源站：必须使用 origin-form（`/path?query`）。
+    OriginForm,
+    /// 发往父正向代理：必须保持 absolute-form（`http://host/path?query`）。
+    AbsoluteForm,
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DirectProtocol {
     Http1,
@@ -119,30 +128,46 @@ where
         ForwardProxyClient { pool: IdlePool::new() }
     }
 
-    /// 普通请求：优先复用池中连接，新连接允许经 ALPN 协商 HTTP/2。
+    /// 发往源站的普通请求：优先复用池中连接，新连接允许经 ALPN 协商 HTTP/2，HTTP/1.1 使用 origin-form。
     pub(crate) async fn send_request(
         &self, req: Request<B>, access_label: &AccessLabel, route: Route<'_>,
+    ) -> io::Result<Response<body::Incoming>> {
+        self.send_pooled_request(req, access_label, route, true, Http1TargetForm::OriginForm)
+            .await
+    }
+
+    /// 发往父正向代理的普通请求：强制使用 HTTP/1.1 并保持 absolute-form，避免与 HTTPS 父代理误协商 HTTP/2。
+    pub(crate) async fn send_forward_proxy_request(
+        &self, req: Request<B>, access_label: &AccessLabel, ipv6_first: Option<bool>,
+    ) -> io::Result<Response<body::Incoming>> {
+        self.send_pooled_request(req, access_label, Route::Direct { ipv6_first }, false, Http1TargetForm::AbsoluteForm)
+            .await
+    }
+
+    async fn send_pooled_request(
+        &self, req: Request<B>, access_label: &AccessLabel, route: Route<'_>, allow_http2: bool,
+        target_form: Http1TargetForm,
     ) -> io::Result<Response<body::Incoming>> {
         let connection = match self.pool.take(access_label).await {
             Some(connection) => {
                 debug!("HTTP client for host: {access_label} taken from cache");
                 connection
             }
-            None => HttpConnection::connect(access_label, route, true)
+            None => HttpConnection::connect(access_label, route, allow_http2)
                 .await
                 .map_err(|err| {
                     error!("failed to connect to host: {} {route}, error: {err}", access_label.target);
                     io::Error::new(ErrorKind::InvalidData, err)
                 })?,
         };
-        self.send_request_conn(access_label, connection, req)
+        self.send_request_conn(access_label, connection, req, target_form)
             .await
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
 
     /// Upgrade 请求：独占一条新建的 HTTP/1.1 连接，升级后连接归隧道所有，不放回池中。
     pub(crate) async fn send_upgrade_request(
-        &self, req: Request<B>, access_label: &AccessLabel, route: Route<'_>,
+        &self, req: Request<B>, access_label: &AccessLabel, route: Route<'_>, target_form: Http1TargetForm,
     ) -> io::Result<Response<body::Incoming>> {
         let mut connection = HttpConnection::connect(access_label, route, false)
             .await
@@ -152,17 +177,18 @@ where
             })?;
         trace!("HTTP/1.1-only making request to host: {access_label}, request: {req:?}");
         connection
-            .send_request(req, access_label)
+            .send_request(req, access_label, target_form)
             .await
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))
     }
 
     pub(crate) async fn send_request_conn(
         &self, access_label: &AccessLabel, mut connection: HttpConnection<B>, req: Request<B>,
+        target_form: Http1TargetForm,
     ) -> hyper::Result<Response<body::Incoming>> {
         trace!("HTTP making request to host: {access_label}, request: {req:?}");
         self.pool.share_if_multiplexed(access_label, &connection).await;
-        let response = connection.send_request(req, access_label).await?;
+        let response = connection.send_request(req, access_label, target_form).await?;
         trace!("HTTP received response from host: {access_label}, response: {response:?}");
         self.pool
             .recycle_after_response(access_label.clone(), connection, &response);
@@ -402,13 +428,13 @@ where
     }
 
     #[inline]
-    pub async fn send_request(
-        &mut self, mut req: Request<B>, access_label: &AccessLabel,
+    pub(crate) async fn send_request(
+        &mut self, mut req: Request<B>, access_label: &AccessLabel, target_form: Http1TargetForm,
     ) -> hyper::Result<Response<body::Incoming>> {
         match self {
             HttpConnection::Http1(r) => {
                 *req.version_mut() = Version::HTTP_11;
-                prepare_http1_request_for_connection_target(&mut req, access_label);
+                prepare_http1_request(&mut req, access_label, target_form);
                 sanitize_http1_request_headers(req.headers_mut());
                 r.send_request(req).await
             }
@@ -517,7 +543,7 @@ fn ensure_http2_uri<B>(req: &mut Request<B>, access_label: &AccessLabel) {
     }
 }
 
-fn prepare_http1_request_for_connection_target<B>(req: &mut Request<B>, access_label: &AccessLabel) {
+fn prepare_http1_request<B>(req: &mut Request<B>, access_label: &AccessLabel, target_form: Http1TargetForm) {
     if !req.headers().contains_key(HOST) {
         let host = req
             .uri()
@@ -529,9 +555,10 @@ fn prepare_http1_request_for_connection_target<B>(req: &mut Request<B>, access_l
         }
     }
 
-    // Direct origin connections must use origin-form ("/path?query"), while
-    // parent forward proxies must receive absolute-form ("http://host/path").
-    if uri_targets_current_connection(req.uri(), access_label) {
+    // 发往源站时必须转为 origin-form（"/path?query"），包括客户端经 HTTP/2 发来
+    // 省略默认 443 端口的 authority 或同连接访问不同 Host 的情况；
+    // 发往父正向代理时必须保留 absolute-form（"http://host/path"）。
+    if target_form == Http1TargetForm::OriginForm {
         origin_form(req.uri_mut());
     }
 }
@@ -562,12 +589,6 @@ fn replace_uri_authority<B>(req: &mut Request<B>, authority: &str) -> io::Result
     );
     *req.uri_mut() = Uri::from_parts(parts).map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
     Ok(())
-}
-
-fn uri_targets_current_connection(uri: &Uri, access_label: &AccessLabel) -> bool {
-    uri.authority()
-        .map(|authority| authority.as_str().eq_ignore_ascii_case(&access_label.target))
-        .unwrap_or_default()
 }
 
 fn sanitize_http2_request_headers(headers: &mut HeaderMap) {
@@ -676,7 +697,8 @@ mod tests {
                 .unwrap()
         };
         tokio::time::timeout(Duration::from_secs(5), async {
-            let first = client.send_request_conn(&label, HttpConnection::Http2(sender), request());
+            let first =
+                client.send_request_conn(&label, HttpConnection::Http2(sender), request(), Http1TargetForm::OriginForm);
             let second = async {
                 let cached = loop {
                     if let Some(cached) = client.pool.take(&label).await {
@@ -684,7 +706,9 @@ mod tests {
                     }
                     tokio::task::yield_now().await;
                 };
-                client.send_request_conn(&label, cached, request()).await
+                client
+                    .send_request_conn(&label, cached, request(), Http1TargetForm::OriginForm)
+                    .await
             };
             let (first, second) = tokio::join!(first, second);
             for response in [first.unwrap(), second.unwrap()] {
@@ -746,25 +770,41 @@ mod tests {
             .uri("http://origin.example:8080/a?b=1")
             .header(HOST, "origin.example:8080")
             .body(())?;
-        prepare_http1_request_for_connection_target(&mut request, &label("origin.example:8080"));
+        prepare_http1_request(&mut request, &label("origin.example:8080"), Http1TargetForm::OriginForm);
         assert_eq!(request.uri().to_string(), "/a?b=1");
         assert_eq!(request.headers().get(HOST), Some(&HeaderValue::from_static("origin.example:8080")));
         Ok(())
     }
 
     #[test]
+    fn http1_origin_form_rewrites_default_port_and_coalesced_h2_uris() -> Result<(), crate::DynError> {
+        for (uri, target, expected_host, expected_path) in [
+            ("https://example.com/a?b=1", "example.com:443", "example.com", "/a?b=1"),
+            ("https://other.example/x", "example.com:443", "other.example", "/x"),
+            ("https://example.com", "example.com:443", "example.com", "/"),
+        ] {
+            let mut request = Request::builder().uri(uri).body(())?;
+            prepare_http1_request(&mut request, &label(target), Http1TargetForm::OriginForm);
+            assert_eq!(request.uri().to_string(), expected_path, "uri {uri}");
+            assert_eq!(request.headers().get(HOST).and_then(|v| v.to_str().ok()), Some(expected_host), "uri {uri}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn http1_request_to_parent_proxy_keeps_absolute_form() -> Result<(), crate::DynError> {
-        let mut request = Request::builder().uri("http://origin.example/a").body(())?;
-        prepare_http1_request_for_connection_target(&mut request, &label("parent.example:3128"));
-        assert_eq!(request.uri().to_string(), "http://origin.example/a");
-        assert_eq!(request.headers().get(HOST), Some(&HeaderValue::from_static("origin.example")));
+        for uri in ["http://origin.example/a", "http://parent.example:3128/a"] {
+            let mut request = Request::builder().uri(uri).body(())?;
+            prepare_http1_request(&mut request, &label("parent.example:3128"), Http1TargetForm::AbsoluteForm);
+            assert_eq!(request.uri().to_string(), uri);
+        }
         Ok(())
     }
 
     #[test]
     fn http1_request_without_authority_falls_back_to_connection_target_host() -> Result<(), crate::DynError> {
         let mut request = Request::builder().uri("/a").body(())?;
-        prepare_http1_request_for_connection_target(&mut request, &label("origin.example:443"));
+        prepare_http1_request(&mut request, &label("origin.example:443"), Http1TargetForm::OriginForm);
         assert_eq!(request.uri().to_string(), "/a");
         assert_eq!(request.headers().get(HOST), Some(&HeaderValue::from_static("origin.example:443")));
         Ok(())

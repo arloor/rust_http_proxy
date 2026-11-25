@@ -11,9 +11,10 @@ use crate::e2e_test_support::{
     SSH_BANNER, WS_PAYLOAD, assert_ok, assert_switching_protocols, connect_to_mitm_target, connect_to_mitm_target_h2,
     read_exact_bytes, read_http_head, read_ws_frame_payload, recv_connect_target, recv_forward_request_target,
     start_forward_bypass_proxy, start_forward_request_proxy, start_plain_http_server, start_proxy,
-    start_tcp_banner_server, start_tcp_echo_server, start_tls_h2_http_server, start_tls_h2_routing_server,
-    start_tls_http_server, start_tls_websocket_echo_server, start_websocket_echo_server, timeout_step, unique_temp_dir,
-    write_masked_text_frame, write_test_ca,
+    start_tcp_banner_server, start_tcp_echo_server, start_tls_forward_bypass_proxy_requiring_http1_alpn,
+    start_tls_h2_http_server, start_tls_h2_routing_server, start_tls_http_server, start_tls_websocket_echo_server,
+    start_websocket_echo_server, timeout_step, unique_temp_dir, write_masked_text_frame, write_test_ca,
+    write_test_tls_cert,
 };
 
 #[tokio::test]
@@ -393,6 +394,201 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
     assert_eq!(connect_target, format!("localhost:{}", upstream.addr.port()));
 
     drop(tls_stream);
+    upstream.task.await??;
+    forward_bypass.task.await??;
+    proxy.shutdown().await?;
+    tokio::fs::remove_dir_all(temp_dir).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn https_forward_bypass_proxy_supports_http_connect_and_mitm_with_encoded_credentials() -> Result<(), DynError> {
+    let http_upstream = start_plain_http_server().await?;
+    let tcp_upstream = start_tcp_echo_server().await?;
+    let tls_upstream = start_tls_http_server().await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_https_bypass")?;
+    let server_cert = write_test_tls_cert(&temp_dir)?;
+    let ca = write_test_ca(&temp_dir)?;
+
+    // 真实 rust_http_proxy --over-tls 父代理默认通告 h2 + http/1.1 ALPN。
+    let parent_proxy = start_proxy(vec![
+        "--over-tls".to_owned(),
+        "--cert".to_owned(),
+        server_cert.cert_path.to_string_lossy().into_owned(),
+        "--key".to_owned(),
+        server_cert.key_path.to_string_lossy().into_owned(),
+        "--users".to_owned(),
+        "proxy user:p@ss:word".to_owned(),
+    ])
+    .await?;
+
+    let child_proxy = start_proxy(vec![
+        "--forward-bypass-url".to_owned(),
+        format!("https://proxy%20user:p%40ss%3Aword@127.0.0.1:{}", parent_proxy.port),
+        "--mitm-domain-suffix".to_owned(),
+        "localhost".to_owned(),
+        "--mitm-ca-cert".to_owned(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".to_owned(),
+        ca.key_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    // 1. 普通明文 HTTP 请求经 HTTPS 父代理（不能误协商 HTTP/2）
+    let mut http_stream = TcpStream::connect(("127.0.0.1", child_proxy.port)).await?;
+    http_stream
+        .write_all(
+            format!(
+                "\
+GET http://127.0.0.1:{}/plain HTTP/1.1\r\n\
+Host: 127.0.0.1:{}\r\n\
+Connection: close\r\n\
+\r\n",
+                http_upstream.addr.port(),
+                http_upstream.addr.port()
+            )
+            .as_bytes(),
+        )
+        .await?;
+    assert_ok(&timeout_step("HTTPS parent plain HTTP response", read_http_head(&mut http_stream)).await?)?;
+    let http_body = timeout_step("HTTPS parent plain HTTP body", read_exact_bytes(&mut http_stream, 16)).await?;
+    assert_eq!(http_body, b"hello-via-bypass");
+    drop(http_stream);
+
+    // 2. 非 MITM CONNECT 隧道经 HTTPS 父代理
+    let mut connect_stream = TcpStream::connect(("127.0.0.1", child_proxy.port)).await?;
+    connect_stream
+        .write_all(
+            format!(
+                "\
+CONNECT 127.0.0.1:{} HTTP/1.1\r\n\
+Host: 127.0.0.1:{}\r\n\
+\r\n",
+                tcp_upstream.addr.port(),
+                tcp_upstream.addr.port()
+            )
+            .as_bytes(),
+        )
+        .await?;
+    assert_ok(&timeout_step("HTTPS parent CONNECT response", read_http_head(&mut connect_stream)).await?)?;
+    connect_stream.write_all(WS_PAYLOAD).await?;
+    let echoed =
+        timeout_step("HTTPS parent CONNECT echo", read_exact_bytes(&mut connect_stream, WS_PAYLOAD.len())).await?;
+    assert_eq!(echoed, WS_PAYLOAD);
+    drop(connect_stream);
+
+    // 3. MITM 解密 HTTPS 请求经 HTTPS 父代理
+    let mut tls_stream = connect_to_mitm_target(child_proxy.port, tls_upstream.addr.port(), ca.cert_der).await?;
+    tls_stream
+        .write_all(
+            format!(
+                "\
+GET /plain HTTP/1.1\r\n\
+Host: localhost:{}\r\n\
+Connection: close\r\n\
+\r\n",
+                tls_upstream.addr.port()
+            )
+            .as_bytes(),
+        )
+        .await?;
+    assert_ok(&timeout_step("HTTPS parent MITM response", read_http_head(&mut tls_stream)).await?)?;
+    let mitm_body = timeout_step("HTTPS parent MITM body", read_exact_bytes(&mut tls_stream, 16)).await?;
+    assert_eq!(mitm_body, b"hello-via-bypass");
+    drop(tls_stream);
+
+    http_upstream.task.await??;
+    tcp_upstream.task.await??;
+    tls_upstream.task.await??;
+    child_proxy.shutdown().await?;
+    parent_proxy.shutdown().await?;
+    tokio::fs::remove_dir_all(temp_dir).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn https_forward_bypass_connect_offers_http1_alpn() -> Result<(), DynError> {
+    let upstream = start_tcp_echo_server().await?;
+    let mut forward_bypass = start_tls_forward_bypass_proxy_requiring_http1_alpn().await?;
+    let proxy = start_proxy(vec![
+        "--forward-bypass-url".to_owned(),
+        format!("https://127.0.0.1:{}", forward_bypass.addr.port()),
+    ])
+    .await?;
+
+    let mut stream = TcpStream::connect(("127.0.0.1", proxy.port)).await?;
+    stream
+        .write_all(
+            format!(
+                "\
+CONNECT 127.0.0.1:{} HTTP/1.1\r\n\
+Host: 127.0.0.1:{}\r\n\
+\r\n",
+                upstream.addr.port(),
+                upstream.addr.port()
+            )
+            .as_bytes(),
+        )
+        .await?;
+    assert_ok(&timeout_step("HTTPS bypass CONNECT response", read_http_head(&mut stream)).await?)?;
+    stream.write_all(WS_PAYLOAD).await?;
+    let echoed = timeout_step("HTTPS bypass CONNECT echo", read_exact_bytes(&mut stream, WS_PAYLOAD.len())).await?;
+    assert_eq!(echoed, WS_PAYLOAD);
+
+    let connect_target = timeout_step("HTTPS bypass CONNECT target", recv_connect_target(&mut forward_bypass)).await?;
+    assert_eq!(connect_target, format!("127.0.0.1:{}", upstream.addr.port()));
+
+    drop(stream);
+    upstream.task.await??;
+    forward_bypass.task.await??;
+    proxy.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn mitm_h2_client_without_port_in_authority_uses_origin_form_for_h1_upstream() -> Result<(), DynError> {
+    let upstream = start_tls_http_server().await?;
+    let mut forward_bypass = start_forward_bypass_proxy().await?;
+    let temp_dir = unique_temp_dir("rust_http_proxy_mitm_h2_default_port")?;
+    let ca = write_test_ca(&temp_dir)?;
+    let proxy = start_proxy(vec![
+        "--forward-bypass-url".to_owned(),
+        format!("http://127.0.0.1:{}", forward_bypass.addr.port()),
+        "--mitm-domain-suffix".to_owned(),
+        "localhost".to_owned(),
+        "--mitm-ca-cert".to_owned(),
+        ca.cert_path.to_string_lossy().into_owned(),
+        "--mitm-ca-key".to_owned(),
+        ca.key_path.to_string_lossy().into_owned(),
+    ])
+    .await?;
+
+    let tls_stream = connect_to_mitm_target_h2(proxy.port, upstream.addr.port(), ca.cert_der).await?;
+    let (mut sender, connection) = timeout_step(
+        "MITM HTTP/2 client handshake",
+        http2::Builder::new(TokioExecutor::new()).handshake(TokioIo::new(tls_stream)),
+    )
+    .await?;
+    let connection_task = tokio::spawn(connection);
+
+    // 模拟真实浏览器访问默认 443 端口时 HTTP/2 `:authority` 不带 `:port`，
+    // 而上游是仅支持 HTTP/1.1 且校验请求行必须为 `GET /plain HTTP/1.1` 的源站。
+    let request = Request::builder()
+        .version(Version::HTTP_2)
+        .uri("https://localhost/plain")
+        .body(Empty::<Bytes>::new())?;
+    let response = timeout_step("MITM h2 default-port response", sender.send_request(request)).await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = timeout_step("MITM h2 default-port body", response.into_body().collect()).await?;
+    assert_eq!(body.to_bytes(), Bytes::from_static(b"hello-via-bypass"));
+
+    let connect_target =
+        timeout_step("MITM h2 bypass CONNECT target", recv_connect_target(&mut forward_bypass)).await?;
+    assert_eq!(connect_target, format!("localhost:{}", upstream.addr.port()));
+
+    drop(sender);
+    connection_task.abort();
+    let _ = connection_task.await;
     upstream.task.await??;
     forward_bypass.task.await??;
     proxy.shutdown().await?;

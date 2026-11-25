@@ -241,39 +241,31 @@ impl TryFrom<Param> for Config {
                 return Err("forward_bypass must have host".into());
             }
         }
-        let forward_bypass = param.forward_bypass_url.as_ref().map(|uri| {
-            // 从 authority 中提取 username 和 password
-            // authority 格式: [userinfo@]host[:port]
-            // userinfo 格式: username[:password]
-            let (username, password) = uri
-                .authority()
-                .and_then(|auth| {
-                    let auth_str = auth.as_str();
-                    if let Some(at_pos) = auth_str.find('@') {
-                        let userinfo = &auth_str[..at_pos];
-                        if let Some(colon_pos) = userinfo.find(':') {
-                            Some((Some(userinfo[..colon_pos].to_string()), Some(userinfo[colon_pos + 1..].to_string())))
-                        } else {
-                            Some((Some(userinfo.to_string()), None))
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or((None, None));
+        let forward_bypass = param
+            .forward_bypass_url
+            .as_ref()
+            .map(|uri| -> Result<ForwardBypassConfig, DynError> {
+                // 从 authority 中提取并 percent-decode username 和 password
+                // authority 格式: [userinfo@]host[:port]
+                // userinfo 格式: username[:password]
+                let (username, password) = match uri.authority() {
+                    Some(auth) => parse_bypass_userinfo(auth.as_str())?,
+                    None => (None, None),
+                };
 
-            ForwardBypassConfig {
-                #[allow(clippy::expect_used)]
-                host: uri.host().expect("host").to_string(),
-                port: uri
-                    .port_u16()
-                    .unwrap_or_else(|| if uri.scheme_str() == Some("https") { 443 } else { 80 }),
-                is_https: uri.scheme_str() == Some("https"),
-                username,
-                password,
-                ipv6_first: param.ipv6_first,
-            }
-        });
+                Ok(ForwardBypassConfig {
+                    #[allow(clippy::expect_used)]
+                    host: uri.host().expect("host").to_string(),
+                    port: uri
+                        .port_u16()
+                        .unwrap_or_else(|| if uri.scheme_str() == Some("https") { 443 } else { 80 }),
+                    is_https: uri.scheme_str() == Some("https"),
+                    username,
+                    password,
+                    ipv6_first: param.ipv6_first,
+                })
+            })
+            .transpose()?;
         let basic_auth = parse_basic_auth_users(param.users).map_err(|e| format!("--users: {e}"))?;
         let mitm_basic_auth = if param.mitm_users.is_empty() {
             basic_auth.clone()
@@ -352,6 +344,24 @@ impl TryFrom<Param> for Config {
             mitm_body_limit_bytes: param.mitm_body_limit_bytes,
             mitm_stub_specs,
         })
+    }
+}
+
+fn parse_bypass_userinfo(auth_str: &str) -> Result<(Option<String>, Option<String>), DynError> {
+    let Some(at_pos) = auth_str.rfind('@') else {
+        return Ok((None, None));
+    };
+    let userinfo = &auth_str[..at_pos];
+    let decode = |raw: &str, field: &str| -> Result<String, DynError> {
+        percent_encoding::percent_decode_str(raw)
+            .decode_utf8()
+            .map(|value| value.into_owned())
+            .map_err(|_| format!("--forward-bypass-url: invalid UTF-8 in {field}").into())
+    };
+    if let Some((raw_user, raw_pass)) = userinfo.split_once(':') {
+        Ok((Some(decode(raw_user, "username")?), Some(decode(raw_pass, "password")?)))
+    } else {
+        Ok((Some(decode(userinfo, "username")?), None))
     }
 }
 
@@ -632,6 +642,34 @@ mod tests {
         assert_eq!(config.basic_auth.get(&proxy_key), Some(&"alice".to_string()));
         assert_eq!(config.mitm_basic_auth.get(&mitm_key), Some(&"bob".to_string()));
         assert!(!config.mitm_basic_auth.contains_key(&proxy_key));
+        Ok(())
+    }
+
+    #[test]
+    fn forward_bypass_url_percent_decodes_credentials() -> Result<(), crate::DynError> {
+        let param = Param::parse_from([
+            "rust_http_proxy",
+            "--forward-bypass-url",
+            "https://proxy%20user:p%40ss%3Aword%231%25@parent.example:8443",
+        ]);
+        let config = Config::try_from(param)?;
+        let bypass = config.forward_bypass.expect("forward_bypass config");
+        assert_eq!(bypass.host, "parent.example");
+        assert_eq!(bypass.port, 8443);
+        assert!(bypass.is_https);
+        assert_eq!(bypass.username.as_deref(), Some("proxy user"));
+        assert_eq!(bypass.password.as_deref(), Some("p@ss:word#1%"));
+
+        let invalid = Param::parse_from([
+            "rust_http_proxy",
+            "--forward-bypass-url",
+            "http://alice:secret%FF@parent.example:3128",
+        ]);
+        let error = Config::try_from(invalid)
+            .err()
+            .expect("invalid UTF-8 must fail")
+            .to_string();
+        assert!(!error.contains("secret"), "error must not leak password: {error}");
         Ok(())
     }
 }

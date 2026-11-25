@@ -17,7 +17,7 @@ use prom_label::LabelImpl;
 use crate::{
     METRICS,
     config::ForwardBypassConfig,
-    forward_proxy_client::{DirectProtocol, ForwardProxyClient, Route},
+    forward_proxy_client::{DirectProtocol, ForwardProxyClient, Http1TargetForm, Route},
     hyper_x::CounterBody,
     ip_x::SocketAddrFormat,
     location::{BuiltUpstreamRequest, build_upstream_req},
@@ -342,7 +342,7 @@ async fn handle_mitm_websocket_upgrade(
     let client_upgrade = hyper::upgrade::on(&mut req);
     let req = map_mitm_request_body(req, context.manager.clone(), record_id.clone());
     let mut upstream_response = mitm_proxy_client
-        .send_upgrade_request(req, &access_label, context.route(&client_ip))
+        .send_upgrade_request(req, &access_label, context.route(&client_ip), Http1TargetForm::OriginForm)
         .await
         .map_err(|error| record_mitm_error(&context.manager, record_id.as_deref(), error))?;
     if let Some(trace) = trace {
