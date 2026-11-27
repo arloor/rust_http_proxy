@@ -65,7 +65,7 @@ use std::error::Error as stdError;
 use tokio::sync::broadcast::Sender;
 
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(if !cfg!(debug_assertions) { 600 } else { 60 });
@@ -77,7 +77,17 @@ pub const HTTP2_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 
 pub type DynError = Box<dyn stdError + Send + Sync>; // wrapper for dyn Error
 
+pub const VERSION: &str = env!("APP_VERSION");
+pub const GIT_SHA: &str = env!("APP_GIT_SHA");
+pub const BUILD_FEATURES: &str = env!("APP_BUILD_FEATURES");
 pub const BUILD_TIME: &str = build_time::build_time_local!("%Y-%m-%d %H:%M:%S %:z");
+
+static LONG_VERSION: LazyLock<String> =
+    LazyLock::new(|| format!("{VERSION} (commit {GIT_SHA}, built {BUILD_TIME}, features: {BUILD_FEATURES})"));
+
+pub fn long_version() -> &'static str {
+    LONG_VERSION.as_str()
+}
 
 #[derive(Clone)]
 struct ProxyInterceptor(Arc<ProxyHandler>);

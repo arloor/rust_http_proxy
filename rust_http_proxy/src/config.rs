@@ -16,7 +16,13 @@ use crate::{DynError, IDLE_TIMEOUT};
 
 /// A HTTP proxy server based on Hyper and Rustls, which features TLS proxy and static file serving.
 #[derive(Parser)]
-#[command(author, version=None, about, long_about = None)]
+#[command(
+    author,
+    version = crate::VERSION,
+    long_version = crate::long_version(),
+    about,
+    long_about = None
+)]
 pub struct Param {
     #[arg(long, value_name = "LOG_DIR", default_value = "/tmp")]
     pub log_dir: String,
@@ -439,7 +445,7 @@ fn normalize_mitm_domain_suffixes(suffixes: Vec<String>) -> Vec<String> {
 }
 
 pub(crate) fn load_config(param: Param) -> Result<Config, DynError> {
-    info!("build time: {}", crate::BUILD_TIME);
+    info!("version: {}", crate::long_version());
     #[cfg(all(feature = "ring", not(feature = "aws_lc_rs")))]
     {
         info!("use ring as default crypto provider");
@@ -671,5 +677,21 @@ mod tests {
             .to_string();
         assert!(!error.contains("secret"), "error must not leak password: {error}");
         Ok(())
+    }
+
+    #[test]
+    fn cli_exposes_short_and_long_version_metadata() {
+        use clap::CommandFactory as _;
+
+        let cmd = Param::command();
+        let short = cmd.get_version().expect("CLI short version should be configured");
+        let long = cmd.get_long_version().expect("CLI long version should be configured");
+
+        assert_eq!(short, crate::VERSION);
+        assert!(short.starts_with(env!("CARGO_PKG_VERSION")));
+        assert!(long.starts_with(short));
+        assert!(long.contains(crate::GIT_SHA));
+        assert!(long.contains(crate::BUILD_TIME));
+        assert!(long.contains(crate::BUILD_FEATURES));
     }
 }

@@ -1,15 +1,96 @@
 name: Combined Build and Release
 on:
   push:
-    branches: ["release","release/*"]
+    branches: ["master"]
+    tags: ["v*"]
   pull_request:
     branches: ["master"]
 permissions:
   contents: write
 env:
   CARGO_TERM_COLOR: always
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      cargo_version: ${{ steps.meta.outputs.cargo_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      should_release: ${{ steps.meta.outputs.should_release }}
+      should_auto_tag: ${{ steps.meta.outputs.should_auto_tag }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+      sha_short: ${{ steps.meta.outputs.sha_short }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Resolve version and release mode
+        id: meta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          cargo_version="$(
+            cargo metadata --no-deps --format-version 1 |
+              jq -r '.packages[] | select(.name == "rust_http_proxy") | .version'
+          )"
+
+          if [[ ! "$cargo_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::rust_http_proxy/Cargo.toml version '$cargo_version' is not a valid SemVer version"
+            exit 1
+          fi
+
+          expected_tag="v${cargo_version}"
+          is_prerelease="false"
+          if [[ "$cargo_version" == *-* ]]; then
+            is_prerelease="true"
+          fi
+
+          sha_short="$(git rev-parse --short=8 HEAD)"
+          should_release="false"
+          should_auto_tag="false"
+          release_tag=""
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+              echo "::error::Tag '${GITHUB_REF_NAME}' does not match rust_http_proxy/Cargo.toml version '${cargo_version}' (expected '${expected_tag}')"
+              exit 1
+            fi
+            if gh release view "${expected_tag}" >/dev/null 2>&1; then
+              echo "::error::GitHub Release '${expected_tag}' already exists; official releases are immutable"
+              exit 1
+            fi
+            should_release="true"
+            should_auto_tag="false"
+            release_tag="${expected_tag}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            git fetch --tags origin
+            if git rev-parse -q --verify "refs/tags/${expected_tag}" >/dev/null; then
+              echo "Tag ${expected_tag} already exists; running CI verification only."
+            elif gh release view "${expected_tag}" >/dev/null 2>&1; then
+              echo "::error::GitHub Release '${expected_tag}' already exists without a matching tag"
+              exit 1
+            else
+              echo "Version ${cargo_version} has no tag ${expected_tag} yet; will auto-tag and publish release after builds succeed."
+              should_release="true"
+              should_auto_tag="true"
+              release_tag="${expected_tag}"
+            fi
+          fi
+
+          {
+            echo "cargo_version=${cargo_version}"
+            echo "release_tag=${release_tag}"
+            echo "should_release=${should_release}"
+            echo "should_auto_tag=${should_auto_tag}"
+            echo "is_prerelease=${is_prerelease}"
+            echo "sha_short=${sha_short}"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: [prepare]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -19,15 +100,13 @@ jobs:
             build_args:
             extra_deps:
             binary-name: rust_http_proxy
-            docker-tag: latest
             use_zigbuild: true
             zig_glibc_version: "2.17"
             after_install: ""
           - build-type: bpf-dyn-link
             build_args: --features bpf
-            extra_deps:  zlib1g-dev libelf-dev clang pkg-config make
+            extra_deps: zlib1g-dev libelf-dev clang pkg-config make
             binary-name: rust_http_proxy_bpf
-            docker-tag: bpf
             use_zigbuild: true
             zig_glibc_version: "2.17"
             after_install: |
@@ -60,14 +139,15 @@ jobs:
             # Build libelf and zlib with Zig too. The bpf_static feature would
             # reuse host-built static archives, which may require a newer glibc.
             build_args: --features bpf_vendored
-            extra_deps:  clang pkg-config make autoconf autopoint flex bison gawk
+            extra_deps: clang pkg-config make autoconf autopoint flex bison gawk
             binary-name: rust_http_proxy_bpf_static
-            docker-tag: bpf_static
             use_zigbuild: true
             zig_glibc_version: "2.17"
             after_install: ""
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -83,14 +163,15 @@ jobs:
         # Releases embed the freshly built UI even if committed dist is stale.
         if: github.event_name == 'pull_request'
         run: git diff --exit-code -- mitm-ui/dist
-      - name: Set outputs
-        id: vars
-        run: echo "sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
 
       # 构建二进制文件
       - name: Build ${{ matrix.build-type }} Version
         id: build
         uses: arloor/rust_musl_action@latest
+        env:
+          APP_RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          APP_GIT_SHA: ${{ needs.prepare.outputs.sha_short }}
+          APP_GIT_DIRTY: "false"
         with:
           use_musl: false
           use_zigbuild: ${{ matrix.use_zigbuild }}
@@ -109,7 +190,7 @@ jobs:
           cp ${{ steps.build.outputs.release_dir }}/rust_http_proxy ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
           ls -lh ${{ github.workspace }}/release_binaries/
 
-      - name: Verify glibc 2.17 compatibility
+      - name: Verify glibc 2.17 compatibility and version metadata
         shell: bash
         run: |
           set -euo pipefail
@@ -139,6 +220,18 @@ jobs:
             exit 1
           fi
 
+          short_ver="$("$binary" -V)"
+          long_ver="$("$binary" --version)"
+          echo "Short version: $short_ver"
+          echo "Long version:  $long_ver"
+          if [[ "${{ needs.prepare.outputs.should_release }}" == "true" ]]; then
+            expected="rust_http_proxy ${{ needs.prepare.outputs.cargo_version }}"
+            if [[ "$short_ver" != "$expected" ]]; then
+              echo "::error::Expected release version '$expected', got '$short_ver'"
+              exit 1
+            fi
+          fi
+
       # 上传构建好的二进制文件作为构建工件
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -147,41 +240,8 @@ jobs:
           path: ${{ github.workspace }}/release_binaries/${{ matrix.binary-name }}
           retention-days: 1
 
-      # Docker镜像构建和推送（仅适用于release分支）
-      - name: Set up Docker Buildx
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to Docker Hub
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
-        uses: docker/login-action@v4
-        with:
-          registry: docker.io
-          username: arloor
-          password: ${{ secrets.REGISTRY_PASSWORD }}
-
-      - name: Login to Quay.io
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
-        uses: docker/login-action@v4
-        with:
-          registry: quay.io
-          username: arloor
-          password: ${{ secrets.QUAY_REGISTRY_PASSWORD }}
-
-      - name: Build and push Docker image
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile.dyn
-          push: true
-          tags: |
-            docker.io/arloor/rust_http_proxy:${{ matrix.docker-tag }}
-            quay.io/arloor/rust_http_proxy:${{ matrix.docker-tag }}
-          cache-from: type=gha,scope=${{ matrix.build-type }}
-          cache-to: type=gha,scope=${{ matrix.build-type }},mode=max
-
   extension:
+    needs: [prepare]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -207,19 +267,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # 创建GitHub Release
+  # 创建 Git Tag（自动模式）和不可变 GitHub Release
   release:
-    needs: [build, extension]
+    needs: [prepare, build, extension]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
+    if: needs.prepare.outputs.should_release == 'true'
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      # 创建目录存放下载的二进制文件
       - name: Create directory for binaries
         run: mkdir -p release_binaries
 
-      # 下载所有构建好的二进制文件
       - name: Download standard binary
         uses: actions/download-artifact@v8
         with:
@@ -244,39 +304,137 @@ jobs:
           name: mitm-browser-extension
           path: release_binaries
 
-      # 列出所有下载的文件
-      - name: List binaries
+      - name: List release assets
         run: find release_binaries -type f -ls
 
-      # 创建master分支release（包含三个二进制文件和浏览器扩展）
-      - name: Create Master Release
-        if: github.ref == 'refs/heads/release'
+      - name: Create and push git tag from Cargo.toml version
+        if: needs.prepare.outputs.should_auto_tag == 'true'
+        shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
-          version=latest
-          if $(gh release delete ${version} -y --cleanup-tag);
-            then echo "delete old release";
-            else echo "no old release";
+          set -euo pipefail
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::Tag ${RELEASE_TAG} already exists on origin; aborting auto-tag to prevent duplicate release"
+            exit 1
           fi
-          git config --local user.email "admin@arloor.com"
-          git config --local user.name "arloor"
-          gh release create ${version} release_binaries/* -n "最新构建包含三个版本：标准版、动态链接BPF版和静态链接BPF版；另附 Chrome / Edge MITM 扩展 ZIP，解压后在扩展管理页加载" --latest -t "${version}"
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${RELEASE_TAG}"
 
-      # 创建版本release（同样包含三个二进制文件和浏览器扩展）
-      - name: Create Version Release
-        if: startsWith(github.ref, 'refs/heads/release/')
+      - name: Create GitHub Release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
         run: |
-          # 从Cargo.toml中提取版本号
-          version=$(grep -E ^version rust_http_proxy/Cargo.toml|awk -F "[\"]" '{print $2}')
-          version="v${version}"
-          if [ -z "$version" ]; then echo "version not found"; exit 1; fi
-          if $(gh release delete ${version} -y --cleanup-tag);
-            then echo "delete old release";
-            else echo "no old release";
+          set -euo pipefail
+          release_args=(
+            "${RELEASE_TAG}"
+            release_binaries/*
+            --title "${RELEASE_TAG}"
+            --notes "${RELEASE_TAG} 包含三个版本：标准版、动态链接BPF版和静态链接BPF版；另附 Chrome / Edge MITM 扩展 ZIP，解压后在扩展管理页加载"
+            --generate-notes
+          )
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
+            release_args+=(--prerelease --latest=false)
+          else
+            release_args+=(--latest)
           fi
-          git config --local user.email "admin@arloor.com"
-          git config --local user.name "arloor"
-          gh release create ${version} release_binaries/* -n "${version} 包含三个版本：标准版、动态链接BPF版和静态链接BPF版；另附 Chrome / Edge MITM 扩展 ZIP，解压后在扩展管理页加载" -t "${version}"
+          gh release create "${release_args[@]}"
+
+  # Docker 镜像构建和推送（在 Release 成功后推送版本号标签与稳定浮动标签）
+  docker:
+    needs: [prepare, build, extension, release]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        build-type: [non-bpf, bpf-dyn-link, bpf-static-link]
+        include:
+          - build-type: non-bpf
+            binary-name: rust_http_proxy
+            version-suffix: ""
+            floating-tag: latest
+          - build-type: bpf-dyn-link
+            binary-name: rust_http_proxy_bpf
+            version-suffix: "-bpf"
+            floating-tag: bpf
+          - build-type: bpf-static-link
+            binary-name: rust_http_proxy_bpf_static
+            version-suffix: "-bpf_static"
+            floating-tag: bpf_static
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download binary artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.binary-name }}
+          path: release_binaries
+
+      - name: Stage binary for Dockerfile.dyn
+        run: |
+          mkdir -p target/x86_64-unknown-linux-gnu/release
+          install -m 0755 "release_binaries/${{ matrix.binary-name }}" target/x86_64-unknown-linux-gnu/release/rust_http_proxy
+
+      - name: Compute Docker image tags
+        id: docker_meta
+        shell: bash
+        env:
+          CARGO_VERSION: ${{ needs.prepare.outputs.cargo_version }}
+          IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
+          VERSION_SUFFIX: ${{ matrix.version-suffix }}
+          FLOATING_TAG: ${{ matrix.floating-tag }}
+        run: |
+          set -euo pipefail
+          version_tag="${CARGO_VERSION}${VERSION_SUFFIX}"
+          tags=(
+            "docker.io/arloor/rust_http_proxy:${version_tag}"
+            "quay.io/arloor/rust_http_proxy:${version_tag}"
+          )
+          if [[ "${IS_PRERELEASE}" != "true" ]]; then
+            tags+=(
+              "docker.io/arloor/rust_http_proxy:${FLOATING_TAG}"
+              "quay.io/arloor/rust_http_proxy:${FLOATING_TAG}"
+            )
+          fi
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: arloor
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v4
+        with:
+          registry: quay.io
+          username: arloor
+          password: ${{ secrets.QUAY_REGISTRY_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.dyn
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.prepare.outputs.cargo_version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.build-type }}
+          cache-to: type=gha,scope=${{ matrix.build-type }},mode=max

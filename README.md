@@ -47,7 +47,7 @@
 ### 方式一：Linux AMD64 可执行文件
 
 ```bash
-curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/download/latest/rust_http_proxy -o /tmp/rust_http_proxy
+curl -SLf https://us.arloor.dev/https://github.com/arloor/rust_http_proxy/releases/latest/download/rust_http_proxy -o /tmp/rust_http_proxy
 install /tmp/rust_http_proxy /usr/bin/rust_http_proxy
 /usr/bin/rust_http_proxy -p 7788
 ```
@@ -149,7 +149,7 @@ npm run build:extension
 - “明文抓取”开关修改服务端共享设置；由 `--mitm-dump` 锁定时不可切换。关闭弹窗或管理页不会停止服务端抓包。
 - 扩展构建输出与 Web 构建分离；`npm run build` 仍生成原来的 `mitm-ui/dist`。
 
-CI 会先测试并重新构建 Web UI，再将生成的 `mitm-ui/dist` 嵌入 Rust 二进制。推送 `release` 或 `release/*` 分支时，即使仓库中的 dist 未同步更新，也会使用当次构建产物继续发布；UI 测试或构建失败仍会中止发布。PR 构建保留 dist 一致性检查，前端变更请同时提交 `npm run build` 生成的产物。
+CI 会先测试并重新构建 Web UI，再将生成的 `mitm-ui/dist` 嵌入 Rust 二进制。正式发布由推送 `v<版本号>` Tag 或 `master` 上更新 `rust_http_proxy/Cargo.toml` 版本号自动打 Tag 触发，即使仓库中的 dist 未同步更新，也会使用当次构建产物继续发布；UI 测试或构建失败仍会中止发布。PR 构建保留 dist 一致性检查，前端变更请同时提交 `npm run build` 生成的产物。
 
 #### 扩展发行包
 
@@ -164,7 +164,7 @@ npm run package:extension
 # 输出：mitm-ui/release/rust-http-proxy-mitm-extension-v<版本号>.zip
 ```
 
-PR 构建也会验证并上传扩展工件；推送 `release` 或 `release/*` 分支时，ZIP 会和三个 Rust 二进制一起附加到 GitHub Release。开发构建的版本号保留在源 manifest 中，打包时仅覆盖 ZIP 内的版本号。
+PR 构建也会验证并上传扩展工件；发版时，ZIP 会和三个 Rust 二进制一起附加到对应的 `v<版本号>` GitHub Release。开发构建的版本号保留在源 manifest 中，打包时仅覆盖 ZIP 内的版本号。
 
 扩展工具栏、管理列表、弹窗和标签页使用统一的青绿色 M / 连接节点图标。图标位于 `mitm-ui/extension/icons/`，含 16、32、48、128 像素 PNG；修改图标生成脚本后，可使用安装了 Pillow 的 Python 执行 `python3 mitm-ui/scripts/generate-extension-icons.py` 重新生成。CI 直接使用已提交的 PNG，无需安装图形依赖。
 
