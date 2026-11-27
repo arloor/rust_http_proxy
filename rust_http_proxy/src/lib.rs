@@ -24,6 +24,7 @@ mod linux_monitor;
 mod location;
 mod metrics;
 mod mitm;
+pub mod mitm_embedded;
 #[cfg(test)]
 mod mitm_management_e2e_tests;
 mod mitm_manager;
@@ -137,6 +138,15 @@ fn create_future(
 pub fn create_futures(
     param: Param,
 ) -> Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, Sender<()>), DynError> {
+    let (future, handle) = create_embedded(param)?;
+    let shutdown_tx = handle.shutdown_sender();
+    Ok((future, shutdown_tx))
+}
+
+#[allow(clippy::type_complexity)]
+pub fn create_embedded(
+    param: Param,
+) -> Result<(impl Future<Output = Vec<Result<(), std::io::Error>>>, mitm_embedded::EmbeddedMitmHandle), DynError> {
     let config = Arc::new(load_config(param)?);
     let ports = config.port.clone();
     let (shutdown_tx, _) = broadcast::channel(1);
@@ -149,6 +159,11 @@ pub fn create_futures(
         config.mitm_body_limit_bytes,
     )?;
     mitm_manager.set_file_stubs(config.mitm_stub_specs.clone());
+    let ca_cert_pem = config
+        .mitm_authority
+        .as_ref()
+        .map(|authority| authority.ca_cert_pem().to_owned());
+    let handle = mitm_embedded::EmbeddedMitmHandle::new(mitm_manager.clone(), ca_cert_pem, shutdown_tx.clone());
     let proxy_handler = Arc::new(ProxyHandler::new(config.clone(), mitm_manager.clone(), shutdown_tx.clone())?);
     #[cfg(all(target_os = "linux", feature = "bpf"))]
     crate::ebpf::init_once();
@@ -178,5 +193,5 @@ pub fn create_futures(
         })
         .map(Box::pin)
         .collect::<Vec<_>>();
-    Ok((join_all(main_futures), shutdown_tx))
+    Ok((join_all(main_futures), handle))
 }

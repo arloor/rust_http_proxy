@@ -9,7 +9,7 @@ use crate::mitm::{
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct HeaderEdit {
+pub struct HeaderEdit {
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub op: HeaderOperation,
@@ -26,7 +26,7 @@ const fn default_true() -> bool {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum HeaderOperation {
+pub enum HeaderOperation {
     Add,
     Set,
     Remove,
@@ -89,7 +89,7 @@ pub(crate) fn apply_headers(headers: &mut HeaderMap, edits: &[HeaderEdit]) {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum RuleMode {
+pub enum RuleMode {
     Response,
     Upstream,
     Headers,
@@ -99,7 +99,7 @@ pub(crate) enum RuleMode {
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MatchType {
+pub enum MatchType {
     /// CONNECT authority plus request path, ignoring the query.
     #[default]
     Exact,
@@ -109,7 +109,7 @@ pub(crate) enum MatchType {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct UiStubRule {
+pub struct UiStubRule {
     #[serde(default)]
     pub id: String,
     #[serde(default)]
@@ -288,7 +288,7 @@ impl UiStubRule {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct StubTrace {
+pub struct StubTrace {
     pub source: String,
     pub mode: RuleMode,
     pub rule_id: String,

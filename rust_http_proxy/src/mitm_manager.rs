@@ -26,7 +26,7 @@ const WRITER_QUEUE_CAPACITY: usize = 1024;
 const MAX_RECENT_PROXY_REQUESTS: usize = 200;
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct MitmSettings {
+pub struct MitmSettings {
     pub capture_enabled: bool,
     pub capture_cli_managed: bool,
     pub ca_available: bool,
@@ -37,14 +37,14 @@ pub(crate) struct MitmSettings {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct MitmSettingsPatch {
+pub struct MitmSettingsPatch {
     pub capture_enabled: Option<bool>,
     pub max_records: Option<usize>,
     pub body_limit_bytes: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct MitmTarget {
+pub struct MitmTarget {
     pub id: i64,
     pub suffix: String,
     pub created_at_ms: i64,
@@ -53,7 +53,7 @@ pub(crate) struct MitmTarget {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct RecentProxyRequest {
+pub struct RecentProxyRequest {
     pub id: u64,
     pub started_at_ms: i64,
     pub client_ip: String,
@@ -106,7 +106,7 @@ pub(crate) enum BodyDirection {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct RecordSummary {
+pub struct RecordSummary {
     pub id: String,
     pub started_at_ms: i64,
     pub completed_at_ms: Option<i64>,
@@ -124,7 +124,7 @@ pub(crate) struct RecordSummary {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct RecordDetail {
+pub struct RecordDetail {
     #[serde(flatten)]
     pub summary: RecordSummary,
     pub request_version: String,
@@ -146,7 +146,7 @@ pub(crate) struct RecordDetail {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-pub(crate) struct RecordQuery {
+pub struct RecordQuery {
     pub before: Option<i64>,
     pub limit: Option<usize>,
     pub host: Option<String>,
@@ -158,7 +158,7 @@ pub(crate) struct RecordQuery {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct RecordPage {
+pub struct RecordPage {
     pub records: Vec<RecordSummary>,
     pub next_before: Option<i64>,
     // 数据库中的记录总条数（不受筛选条件影响）
@@ -166,14 +166,14 @@ pub(crate) struct RecordPage {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct UrlPathGroup {
+pub struct UrlPathGroup {
     pub path: String,
     pub count: i64,
     pub last_seen_ms: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct UrlHostGroup {
+pub struct UrlHostGroup {
     pub host: String,
     pub count: i64,
     pub last_seen_ms: i64,
@@ -182,7 +182,7 @@ pub(crate) struct UrlHostGroup {
 
 // 客户端不信任 MITM CA 导致的 TLS 握手失败，按 authority + 客户端 IP 聚合计数
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct TlsErrorGroup {
+pub struct TlsErrorGroup {
     pub authority: String,
     pub client_ip: String,
     pub count: i64,
@@ -190,7 +190,7 @@ pub(crate) struct TlsErrorGroup {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct MitmEvent {
+pub struct MitmEvent {
     pub kind: &'static str,
     pub record_id: Option<String>,
 }
@@ -910,7 +910,7 @@ impl MitmManager {
 }
 
 #[derive(Debug)]
-pub(crate) enum ManagerError {
+pub enum ManagerError {
     BadRequest(String),
     Conflict(String),
     Database(String),
