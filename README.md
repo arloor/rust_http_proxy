@@ -167,3 +167,7 @@ npm run package:extension
 PR 构建也会验证并上传扩展工件；推送 `release` 或 `release/*` 分支时，ZIP 会和三个 Rust 二进制一起附加到 GitHub Release。开发构建的版本号保留在源 manifest 中，打包时仅覆盖 ZIP 内的版本号。
 
 扩展工具栏、管理列表、弹窗和标签页使用统一的青绿色 M / 连接节点图标。图标位于 `mitm-ui/extension/icons/`，含 16、32、48、128 像素 PNG；修改图标生成脚本后，可使用安装了 Pillow 的 Python 执行 `python3 mitm-ui/scripts/generate-extension-icons.py` 重新生成。CI 直接使用已提交的 PNG，无需安装图形依赖。
+
+### 原生桌面客户端 (`mitm-desktop`)
+
+除内置 Web 面板和浏览器扩展外，另提供独立维护和分发的跨平台原生桌面客户端 [mitm-desktop](https://github.com/arloor/mitm-desktop)（基于 Zed GPUI 构建，内置 `rust_http_proxy` 进程内直连、菜单栏/托盘常驻、系统代理一键接管/还原、CA 一键信任与请求重放，并支持管理远程实例）。
